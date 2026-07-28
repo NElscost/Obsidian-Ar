@@ -1,0 +1,42 @@
+.note-bridge-token
+.note-bridge-processes.json
+note-bridge.config.json
+PendenteParaOtimização.json
+note-bridge-logs/
+note-bridge-rs/target/
+model-pipeline/node_modules/
+space-ar.config.json
+.pnpm-store/
+graphify-out/
+model-build/
+
+# Grafo e modelos gerados a partir do vault
+graph.json
+graph2.bin
+graph2.gltf
+Space.bin
+Space.gltf
+space2.blend
+
+# Implementações antigas mantidas apenas para referência local
+index.html
+obsidian-note-bridge.mjs
+
+# Arquivos locais/gerados do site
+sites-space-ar/.git/
+.sites-space-ar.git.backup/
+sites-space-ar/.model-upload-token
+sites-space-ar/.openai/hosting.json
+sites-space-ar/.wrangler/
+sites-space-ar/.next/
+sites-space-ar/build/
+sites-space-ar/dist/
+sites-space-ar/node_modules/
+sites-space-ar/public/Space.bin
+sites-space-ar/public/Space.gltf
+
+# Arquivos do sistema e IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

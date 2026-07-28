@@ -1,0 +1,12 @@
+{
+  "name": "space-ar-model-pipeline",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Ferramentas offline para validar e otimizar os modelos glTF do Space AR.",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@gltf-transform/cli": "4.4.2"
+  }
+}

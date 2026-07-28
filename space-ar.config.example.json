@@ -1,0 +1,7 @@
+{
+  "vaultPath": "C:\\Caminho\\Absoluto\\MeuVault",
+  "blenderPath": "C:\\Program Files\\Blender Foundation\\Blender 3.6\\blender.exe",
+  "obsidianPath": "C:\\Program Files\\Obsidian\\Obsidian.exe",
+  "questIp": "192.168.1.50",
+  "siteUrl": "https://seu-site-https.example"
+}

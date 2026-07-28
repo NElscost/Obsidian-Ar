@@ -1,0 +1,3024 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#070b12">
+  <title>Space AR · Meta Quest</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #070b12;
+      color: #f7f9fc;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 50% 20%, rgba(53, 120, 255, 0.22), transparent 38rem),
+        #070b12;
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .shell {
+      position: relative;
+      z-index: 2;
+      min-height: 100%;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      pointer-events: none;
+    }
+
+    .panel {
+      width: min(450px, 100%);
+      padding: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 28px;
+      background: rgba(7, 11, 18, 0.78);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+      backdrop-filter: blur(20px);
+      pointer-events: auto;
+    }
+
+    .eyebrow {
+      margin: 0 0 10px;
+      color: #8db4ff;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(28px, 6vw, 42px);
+      line-height: 1;
+      letter-spacing: -0.055em;
+    }
+
+    .intro {
+      margin: 12px 0 14px;
+      color: #b8c1d1;
+      font-size: 15px;
+      line-height: 1.45;
+    }
+
+    .steps {
+      display: grid;
+      gap: 7px;
+      margin: 0 0 14px;
+      padding: 0;
+      list-style: none;
+      counter-reset: step;
+    }
+
+    .steps li {
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      gap: 10px;
+      align-items: center;
+      color: #dce3ee;
+      font-size: 14px;
+    }
+
+    .steps li::before {
+      counter-increment: step;
+      content: counter(step);
+      display: grid;
+      place-items: center;
+      width: 28px;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background: rgba(95, 149, 255, 0.16);
+      color: #a8c6ff;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    button {
+      width: 100%;
+      min-height: 52px;
+      border: 0;
+      border-radius: 16px;
+      padding: 0 20px;
+      background: linear-gradient(135deg, #79a8ff, #477dff);
+      color: #061022;
+      font: inherit;
+      font-weight: 850;
+      cursor: pointer;
+      transition: transform 160ms ease, opacity 160ms ease;
+    }
+
+    button:hover { transform: translateY(-1px); }
+    button:disabled { cursor: wait; opacity: 0.58; transform: none; }
+
+    .status {
+      min-height: 20px;
+      margin: 14px 0 0;
+      color: #8f9bad;
+      font-size: 13px;
+      text-align: center;
+    }
+
+    .bridge-config {
+      display: grid;
+      gap: 10px;
+      margin: 0 0 12px;
+    }
+
+    .bridge-config input {
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 12px;
+      padding: 0 13px;
+      background: rgba(255, 255, 255, 0.06);
+      color: #fff;
+      font: inherit;
+    }
+
+    .bridge-config button { min-height: 44px; }
+    .bridge-feedback {
+      min-height: 18px;
+      margin: -3px 2px 0;
+      color: #91a0b6;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .bridge-feedback.success { color: #79e2a6; }
+    .bridge-feedback.error { color: #ff9c9c; }
+
+    .xr-hud {
+      position: fixed;
+      z-index: 4;
+      left: 50%;
+      bottom: max(24px, env(safe-area-inset-bottom));
+      width: min(520px, calc(100% - 32px));
+      transform: translateX(-50%);
+      display: none;
+      gap: 10px;
+      align-items: center;
+      padding: 12px 14px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 18px;
+      background: rgba(7, 11, 18, 0.72);
+      backdrop-filter: blur(14px);
+    }
+
+    .xr-hud.visible { display: flex; }
+
+    .xr-hud p {
+      flex: 1;
+      margin: 0;
+      color: #f1f5fb;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .xr-hud button {
+      width: auto;
+      min-height: 40px;
+      padding: 0 14px;
+      background: rgba(255, 255, 255, 0.12);
+      color: #fff;
+      font-size: 12px;
+    }
+
+    .note-panel {
+      position: fixed;
+      z-index: 5;
+      top: 50%;
+      left: 50%;
+      display: none;
+      width: min(680px, calc(100% - 32px));
+      max-height: min(76vh, 720px);
+      overflow: hidden;
+      padding: 0;
+      border: 1px solid rgba(141, 180, 255, 0.32);
+      border-radius: 20px;
+      background: rgba(7, 11, 18, 0.9);
+      backdrop-filter: blur(18px);
+      transform: translate(-50%, -50%);
+      pointer-events: auto;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.48);
+    }
+
+    .note-panel.visible { display: block; }
+    .note-header {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(141, 180, 255, 0.2);
+      background: rgba(10, 16, 27, 0.96);
+    }
+    .note-header h2 {
+      flex: 1;
+      margin: 0;
+      font-size: 18px;
+      overflow-wrap: anywhere;
+    }
+    .note-content {
+      max-height: calc(min(76vh, 720px) - 65px);
+      overflow: auto;
+      padding: 18px 20px 26px;
+      color: #dce3ee;
+      font-size: 15px;
+      line-height: 1.58;
+      overflow-wrap: anywhere;
+      overscroll-behavior: contain;
+    }
+    .note-content > :first-child { margin-top: 0; }
+    .note-content > :last-child { margin-bottom: 0; }
+    .note-content h1, .note-content h2, .note-content h3 {
+      color: #f7f9fc;
+      line-height: 1.25;
+    }
+    .note-content a { color: #8db4ff; }
+    .note-content blockquote {
+      margin-inline: 0;
+      padding: 8px 14px;
+      border-left: 3px solid #8db4ff;
+      background: rgba(141, 180, 255, 0.08);
+    }
+    .note-content code {
+      padding: 0.12em 0.35em;
+      border-radius: 5px;
+      background: rgba(255, 255, 255, 0.09);
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    .note-content pre {
+      overflow: auto;
+      padding: 12px;
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.3);
+      white-space: pre;
+    }
+    .note-content pre code { padding: 0; background: none; }
+    .note-content code.hljs { color: #d6deeb; }
+    .note-content .hljs-keyword,
+    .note-content .hljs-selector-tag,
+    .note-content .hljs-literal { color: #c792ea; }
+    .note-content .hljs-string,
+    .note-content .hljs-attr,
+    .note-content .hljs-template-tag { color: #addb67; }
+    .note-content .hljs-number,
+    .note-content .hljs-symbol,
+    .note-content .hljs-variable { color: #f78c6c; }
+    .note-content .hljs-title,
+    .note-content .hljs-function,
+    .note-content .hljs-section { color: #82aaff; }
+    .note-content .hljs-comment,
+    .note-content .hljs-quote { color: #637777; font-style: italic; }
+    .note-content .hljs-built_in,
+    .note-content .hljs-type { color: #ffcb6b; }
+    .note-content .hljs-meta,
+    .note-content .hljs-doctag { color: #89ddff; }
+    .note-content math {
+      color: #f7f9fc;
+      font-family: math, "Cambria Math", serif;
+      font-size: 0.94em;
+    }
+    .note-content math[display="block"] {
+      display: block math;
+      margin: 0.45em auto;
+      overflow-wrap: anywhere;
+    }
+    .note-content .menv-cells-left > mtr > mtd { text-align: left; }
+    .note-content .menv-right-solid { border-right: 1px solid currentColor; }
+    .note-content table { width: 100%; border-collapse: collapse; }
+    .note-content th, .note-content td {
+      padding: 6px 8px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      text-align: left;
+    }
+    .note-content mark {
+      border-radius: 3px;
+      background: rgba(255, 213, 79, 0.32);
+      color: inherit;
+    }
+    .note-content img {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin: 10px auto;
+      border-radius: 8px;
+    }
+    .note-content .katex-display {
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 4px 0;
+    }
+    .note-content.xr-capture {
+      position: relative;
+      z-index: -1000;
+      left: 0;
+      top: 0;
+      width: 900px;
+      max-height: none;
+      overflow: visible;
+      padding: 22px 26px;
+      background: #0a101b;
+      color: #dce3ee;
+      font-size: 20px;
+      line-height: 1.5;
+    }
+    .note-panel.xr-capture-host {
+      display: block;
+      position: fixed;
+      left: -10000px;
+      top: 0;
+      width: 952px;
+      max-height: none;
+      overflow: visible;
+      transform: none;
+    }
+    .note-content.xr-capture .katex-display { overflow: visible; }
+    .note-content.xr-page-capture {
+      position: fixed;
+      left: -10000px;
+      top: 0;
+      z-index: -1000;
+      width: 900px;
+      height: 570px;
+      max-height: none;
+      overflow: hidden;
+      padding: 0;
+      background: #0a101b;
+      color: #dce3ee;
+      font-size: 20px;
+      line-height: 1.5;
+    }
+    .note-panel button {
+      width: auto;
+      min-height: 36px;
+      padding: 0 12px;
+    }
+    #close-note {
+      flex: 0 0 auto;
+      margin: 0;
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    .session-active .panel { display: none; }
+
+    @media (max-height: 700px) {
+      .shell { padding: 10px; }
+      .panel { padding: 16px; border-radius: 20px; }
+      .intro { display: none; }
+      .steps { gap: 4px; margin-bottom: 10px; }
+      .steps li { font-size: 12px; }
+      .steps li::before { width: 23px; }
+      .bridge-config { gap: 7px; }
+      .bridge-config input, .bridge-config button { min-height: 38px; }
+      button { min-height: 44px; }
+      .status { margin-top: 7px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; }
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <main class="shell">
+    <section class="panel" aria-labelledby="title">
+      <p class="eyebrow">WebXR · Meta Quest</p>
+      <h1 id="title">Space em realidade aumentada.</h1>
+      <p class="intro">
+        Posicione o modelo no ambiente real com passthrough. A experiência usa
+        detecção de superfície, âncora espacial e rastreamento das mãos.
+      </p>
+      <ol class="steps">
+        <li>Olhe para uma superfície até o marcador aparecer.</li>
+        <li>Faça uma pinça ou pressione o gatilho para ancorar.</li>
+        <li>Use duas pinças e afaste ou aproxime as mãos para mudar a escala.</li>
+      </ol>
+      <div class="bridge-config">
+        <input id="bridge-url" type="url" placeholder="URL HTTPS da ponte do Obsidian">
+        <input id="bridge-token" type="password" placeholder="Token da ponte">
+        <button id="save-bridge" type="button">Salvar acesso às notas</button>
+        <p id="bridge-feedback" class="bridge-feedback" role="status"></p>
+      </div>
+      <button id="enter-ar" type="button" disabled>Verificando compatibilidade…</button>
+      <p id="status" class="status" role="status">Carregando Space.gltf…</p>
+    </section>
+  </main>
+
+  <aside id="xr-hud" class="xr-hud" aria-live="polite">
+    <p id="xr-message">Procure uma superfície e faça uma pinça para posicionar.</p>
+    <button id="replace" type="button">Reposicionar</button>
+  </aside>
+  <aside id="note-panel" class="note-panel" aria-live="polite">
+    <header class="note-header">
+      <h2 id="note-title">Nota</h2>
+      <button id="close-note" type="button" aria-label="Fechar nota">Fechar</button>
+    </header>
+    <article id="note-content" class="note-content"></article>
+  </aside>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+    import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
+    import { marked } from "https://cdn.jsdelivr.net/npm/marked@15.0.12/+esm";
+    import DOMPurify from "https://cdn.jsdelivr.net/npm/dompurify@3.2.6/+esm";
+
+    const FALLBACK_MODEL_URL = "./Space.gltf";
+    const TARGET_SIZE_METERS = 0.28;
+    const MIN_SCALE_FACTOR = 0.25;
+    const MAX_SCALE_FACTOR = 4;
+    const PINCH_THRESHOLD_METERS = 0.022;
+    const NOTE_BRIDGE_STORAGE_KEY = "space-ar-note-bridge";
+    const RECENT_NOTES_STORAGE_KEY = "space-ar-recent-notes";
+
+    const enterButton = document.querySelector("#enter-ar");
+    const replaceButton = document.querySelector("#replace");
+    const statusLabel = document.querySelector("#status");
+    const xrHud = document.querySelector("#xr-hud");
+    const xrMessage = document.querySelector("#xr-message");
+    const bridgeUrlInput = document.querySelector("#bridge-url");
+    const bridgeTokenInput = document.querySelector("#bridge-token");
+    const saveBridgeButton = document.querySelector("#save-bridge");
+    const bridgeFeedback = document.querySelector("#bridge-feedback");
+    const notePanel = document.querySelector("#note-panel");
+    const noteTitle = document.querySelector("#note-title");
+    const noteContent = document.querySelector("#note-content");
+    const closeNoteButton = document.querySelector("#close-note");
+    let rustMathPromise = null;
+    let katexFallbackPromise = null;
+
+    function loadKatexFallback() {
+      if (katexFallbackPromise) return katexFallbackPromise;
+      const stylesheetPromise = new Promise((resolve, reject) => {
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href =
+          "https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css";
+        link.onload = resolve;
+        link.onerror = () => reject(new Error("Falha ao carregar CSS do KaTeX."));
+        document.head.append(link);
+      });
+      katexFallbackPromise = Promise.all([
+        import("https://cdn.jsdelivr.net/npm/katex@0.16.22/+esm"),
+        stylesheetPromise
+      ]).then(([module]) => module.default);
+      return katexFallbackPromise;
+    }
+
+    async function loadRustMath() {
+      if (rustMathPromise) return rustMathPromise;
+      rustMathPromise = (async () => {
+        const bindings = await import(
+          "./vendor/pulldown-latex/pulldown_latex_wasm_bg.js"
+        );
+        const wasmUrl =
+          "./vendor/pulldown-latex/pulldown_latex_wasm_bg.wasm";
+        const imports = { "./pulldown_latex_wasm_bg.js": bindings };
+        const response = await fetch(wasmUrl, { cache: "force-cache" });
+        if (!response.ok) throw new Error(`WASM HTTP ${response.status}`);
+        let result;
+        try {
+          result = await WebAssembly.instantiateStreaming(
+            Promise.resolve(response.clone()),
+            imports
+          );
+        } catch {
+          result = await WebAssembly.instantiate(
+            await response.arrayBuffer(),
+            imports
+          );
+        }
+        bindings.__wbg_set_wasm(result.instance.exports);
+        result.instance.exports.__wbindgen_start?.();
+        return bindings;
+      })();
+      return rustMathPromise;
+    }
+
+    async function renderNoteMarkdown(source) {
+      const math = [];
+      const stashMath = (latex, displayMode) => {
+        const index = math.push({ latex, displayMode }) - 1;
+        return `<span data-note-math="${index}"></span>`;
+      };
+      let markdown = String(source ?? "")
+        .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
+        .replace(/%%[\s\S]*?%%/g, "")
+        .replace(/^(```|~~~)\[([^\]\r\n]+)\]\s*$/gm, "$1$2")
+        .replace(/\$\$([\s\S]+?)\$\$/g, (_, latex) => stashMath(latex, true))
+        .replace(/(^|[^\\])\$([^$\n]+?)\$/g, (_, prefix, latex) =>
+          `${prefix}${stashMath(latex, false)}`
+        )
+        .replace(
+          /!\[\[([^\]|#]+\.(?:avif|gif|jpe?g|png|svg|webp))(?:\|([^\]]+))?\]\]/gi,
+          (_, target, sizeOrLabel) => {
+            const numericWidth = /^\d+$/.test(sizeOrLabel ?? "") ? sizeOrLabel : "";
+            const alt = numericWidth ? "" : (sizeOrLabel ?? target);
+            return numericWidth
+              ? `<img src="${target}" alt="" width="${numericWidth}">`
+              : `![${alt}](${target})`;
+          }
+        )
+        .replace(/!?\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g, (_, target, label) =>
+          label ?? target
+        )
+        .replace(/==([^=\n]+)==/g, "<mark>$1</mark>");
+
+      const dirty = marked.parse(markdown, {
+        gfm: true,
+        breaks: true
+      });
+      noteContent.innerHTML = DOMPurify.sanitize(dirty, {
+        ALLOWED_TAGS: [
+          "a", "blockquote", "br", "code", "del", "em", "h1", "h2", "h3",
+          "h4", "h5", "h6", "hr", "img", "li", "mark", "ol", "p", "pre", "span",
+          "strong", "table", "tbody", "td", "th", "thead", "tr", "ul"
+        ],
+        ALLOWED_ATTR: [
+          "alt", "class", "height", "href", "src", "title", "width",
+          "data-note-math"
+        ],
+        ALLOW_DATA_ATTR: true
+      });
+      let rustMath = null;
+      if (math.length && "WebAssembly" in window) {
+        try {
+          rustMath = await loadRustMath();
+        } catch (error) {
+          console.warn("Renderizador Rust indisponível; usando KaTeX.", error);
+        }
+      }
+      for (const element of noteContent.querySelectorAll("[data-note-math]")) {
+        const item = math[Number(element.dataset.noteMath)];
+        if (!item) continue;
+        try {
+          if (rustMath) {
+            const mathml = item.displayMode
+              ? rustMath.display_math_to_mathml(item.latex)
+              : rustMath.inline_math_to_mathml(item.latex);
+            element.innerHTML = DOMPurify.sanitize(mathml, {
+              USE_PROFILES: { mathMl: true },
+              ADD_ATTR: ["class", "display", "stretchy", "mathvariant"]
+            });
+            if (!element.querySelector("math")) {
+              throw new Error("MathML vazio.");
+            }
+            continue;
+          }
+          throw new Error("Rust/WASM indisponível.");
+        } catch (rustError) {
+          try {
+            const katex = await loadKatexFallback();
+            katex.render(item.latex, element, {
+              displayMode: item.displayMode,
+              output: "html",
+              throwOnError: false,
+              strict: "warn",
+              trust: false
+            });
+          } catch {
+            console.warn("Fórmula não suportada pelo Rust nem pelo KaTeX.", rustError);
+            element.textContent = item.displayMode
+              ? `$$${item.latex}$$`
+              : `$${item.latex}$`;
+          }
+        }
+      }
+      for (const link of noteContent.querySelectorAll("a")) {
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+      }
+      noteContent.scrollTop = 0;
+    }
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 30);
+    camera.position.set(0, 1.4, 2);
+    scene.add(camera);
+
+    const renderer = new THREE.WebGLRenderer({
+      alpha: true,
+      antialias: false,
+      powerPreference: "high-performance",
+      precision: "mediump"
+    });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.xr.enabled = true;
+    renderer.xr.setReferenceSpaceType("local-floor");
+    document.body.prepend(renderer.domElement);
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x33405f, 2.1));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.7);
+    keyLight.position.set(2, 4, 2);
+    scene.add(keyLight);
+
+    const placementRoot = new THREE.Group();
+    placementRoot.visible = false;
+    scene.add(placementRoot);
+
+    const arNoteGroup = new THREE.Group();
+    arNoteGroup.position.set(0, 0, -0.82);
+    arNoteGroup.visible = false;
+    camera.add(arNoteGroup);
+    let arNoteTexture = null;
+    let arNoteSurface = null;
+    let arNoteControls = [];
+    let pointedNoteControl = null;
+    let candidateNoteControl = null;
+    let candidateNoteControlSince = 0;
+    let lastNoteControlHitAt = 0;
+    let arNoteCanvas = null;
+    let arNotePages = [];
+    let arNotePage = 0;
+    let arNoteTitle = "";
+    let noteWindowPinned = false;
+    let noteWindowAnchor = null;
+
+    function disposeArNote() {
+      cancelNoteCapture();
+      arNoteGroup.visible = false;
+      arNoteGroup.traverse((object) => {
+        if (!object.isMesh) return;
+        object.geometry?.dispose();
+        object.material?.dispose();
+      });
+      arNoteGroup.clear();
+      arNoteTexture?.dispose();
+      arNoteSurface = null;
+      arNoteControls = [];
+      arNoteTexture = null;
+      arNoteCanvas = null;
+      arNotePages = [];
+      arNotePage = 0;
+      pointedNoteControl = null;
+      candidateNoteControl = null;
+    }
+
+    function closeNote() {
+      notePanel.classList.remove("visible");
+      disposeArNote();
+      resetNoteMicroGestures();
+      for (const ray of handPointerRays) ray.visible = false;
+      if (xrSession) setXrMessage("Nota fechada.");
+    }
+
+    function readableMath(text) {
+      return text
+        .replaceAll("\\alpha", "α").replaceAll("\\beta", "β")
+        .replaceAll("\\gamma", "γ").replaceAll("\\delta", "δ")
+        .replaceAll("\\theta", "θ").replaceAll("\\lambda", "λ")
+        .replaceAll("\\mu", "μ").replaceAll("\\pi", "π")
+        .replaceAll("\\sigma", "σ").replaceAll("\\phi", "φ")
+        .replaceAll("\\omega", "ω").replaceAll("\\times", "×")
+        .replaceAll("\\cdot", "·").replaceAll("\\leq", "≤")
+        .replaceAll("\\geq", "≥").replaceAll("\\neq", "≠")
+        .replaceAll("\\infty", "∞")
+        .replaceAll("\\sum", "∑").replaceAll("\\int", "∫")
+        .replaceAll("\\prod", "∏").replaceAll("\\partial", "∂")
+        .replaceAll("\\nabla", "∇").replaceAll("\\pm", "±")
+        .replaceAll("\\approx", "≈").replaceAll("\\equiv", "≡")
+        .replaceAll("\\leftrightarrow", "↔")
+        .replaceAll("\\Rightarrow", "⇒").replaceAll("\\Leftarrow", "⇐")
+        .replaceAll("\\sim", "∼")
+        .replaceAll("\\vdots", "⋮").replaceAll("\\cdots", "⋯")
+        .replaceAll("\\ldots", "…").replaceAll("\\ddots", "⋱")
+        .replaceAll("\\rightarrow", "→").replaceAll("\\leftarrow", "←")
+        .replaceAll("\\left", "").replaceAll("\\right", "")
+        .replace(/\\sqrt\{([^{}]+)\}/g, "√($1)")
+        .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, "($1)/($2)")
+        .replace(/\\mathbf\s*\{?([A-Za-z0-9]+)\}?/g, "$1")
+        .replace(/\\(?:mathrm|mathbf|text|operatorname|boxed)\{([^{}]+)\}/g, "$1")
+        .replace(/\\vec\{([^{}]+)\}/g, "$1⃗")
+        .replace(/\\hat\{([^{}]+)\}/g, "$1̂")
+        .replace(/\\bar\{([^{}]+)\}/g, "$1̄")
+        .replace(/\^\{([0-9+\-=()]+)\}/g, "^$1")
+        .replace(/_\{([A-Za-z0-9+\-=()]+)\}/g, "_$1")
+        .replace(/\^([0-9+\-=()]+)/g, (_, value) =>
+          [...value].map((character) => ({
+            "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+            "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+            "+": "⁺", "-": "⁻", "=": "⁼", "(": "⁽", ")": "⁾"
+          })[character] ?? character).join("")
+        )
+        .replace(/_([A-Za-z0-9+\-=()]+)/g, (_, value) =>
+          [...value].map((character) => ({
+            "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄",
+            "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
+            "+": "₊", "-": "₋", "=": "₌", "(": "₍", ")": "₎",
+            "a": "ₐ", "e": "ₑ", "h": "ₕ", "i": "ᵢ", "j": "ⱼ",
+            "k": "ₖ", "l": "ₗ", "m": "ₘ", "n": "ₙ", "o": "ₒ",
+            "p": "ₚ", "r": "ᵣ", "s": "ₛ", "t": "ₜ", "u": "ᵤ",
+            "v": "ᵥ", "x": "ₓ"
+          })[character] ?? character).join("")
+        )
+        .replace(/[{}]/g, "");
+    }
+
+    const formulaTextureCache = new Map();
+    let mathJaxPromise = null;
+    let snapDomPromise = null;
+    let noteImageObjectUrls = [];
+    let noteCaptureGeneration = 0;
+    const noteSessionCache = new Map();
+    const NOTE_CACHE_MAX_ENTRIES = 8;
+    const NOTE_CACHE_MAX_BYTES = 48 * 1024 * 1024;
+    const NOTE_PERSISTENT_CACHE_MAX_ENTRIES = 12;
+    const NOTE_PERSISTENT_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+    const NOTE_CACHE_DB = "space-ar-note-cache";
+    const NOTE_CACHE_STORE = "rendered-notes";
+    let noteCacheDbPromise = null;
+    let highlightCorePromise = null;
+    const highlightLanguagePromises = new Map();
+    const highlightAliases = new Map([
+      ["c++", "cpp"], ["cs", "csharp"], ["c#", "csharp"],
+      ["htm", "xml"], ["html", "xml"], ["js", "javascript"],
+      ["jsx", "javascript"], ["md", "markdown"], ["py", "python"],
+      ["ps1", "powershell"], ["sh", "bash"], ["shell", "bash"],
+      ["ts", "typescript"], ["tsx", "typescript"], ["yml", "yaml"]
+    ]);
+    const supportedHighlightLanguages = new Set([
+      "bash", "c", "cpp", "csharp", "css", "dockerfile", "go", "java",
+      "javascript", "json", "kotlin", "lua", "markdown", "matlab", "php",
+      "powershell", "python", "r", "ruby", "rust", "sql", "swift",
+      "typescript", "xml", "yaml"
+    ]);
+
+    function normalizedCodeLanguage(code) {
+      const className = [...code.classList]
+        .find((name) => name.startsWith("language-"));
+      const raw = className?.slice(9).trim().toLowerCase() ?? "";
+      return highlightAliases.get(raw) ?? raw;
+    }
+
+    async function loadHighlightCore() {
+      if (!highlightCorePromise) {
+        highlightCorePromise = import(
+          "https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/es/core.js/+esm"
+        ).then((module) => module.default);
+      }
+      return highlightCorePromise;
+    }
+
+    async function loadHighlightLanguage(language) {
+      if (!supportedHighlightLanguages.has(language)) return null;
+      if (!highlightLanguagePromises.has(language)) {
+        highlightLanguagePromises.set(language, (async () => {
+          const hljs = await loadHighlightCore();
+          const module = await import(
+            `https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/es/languages/${language}.js/+esm`
+          );
+          if (!hljs.getLanguage(language)) {
+            hljs.registerLanguage(language, module.default);
+          }
+          return hljs;
+        })());
+      }
+      return highlightLanguagePromises.get(language);
+    }
+
+    async function highlightNoteCode() {
+      const blocks = [...noteContent.querySelectorAll("pre > code")];
+      let highlightedCharacters = 0;
+      for (const code of blocks) {
+        const language = normalizedCodeLanguage(code);
+        if (!supportedHighlightLanguages.has(language)) continue;
+        const source = code.textContent ?? "";
+        // Every colored token becomes another DOM span for html2canvas to inspect.
+        // Bound that cost tightly so syntax color never stalls the XR frame loop.
+        if (source.length > 12_000 || highlightedCharacters + source.length > 24_000) {
+          continue;
+        }
+        try {
+          await waitForRenderingIdle();
+          const hljs = await loadHighlightLanguage(language);
+          if (!hljs) continue;
+          const result = hljs.highlight(source, {
+            language,
+            ignoreIllegals: true
+          });
+          code.innerHTML = result.value;
+          code.classList.add("hljs");
+          highlightedCharacters += source.length;
+        } catch (error) {
+          console.warn(`Realce indisponível para ${language}.`, error);
+        }
+      }
+    }
+
+    function cachedPagesBytes(pages) {
+      return pages.reduce((total, page) => {
+        const canvas = page instanceof HTMLCanvasElement ? page : page?.canvas;
+        return total + (
+          canvas instanceof HTMLCanvasElement
+            ? canvas.width * canvas.height * 4
+            : 0
+        );
+      }, 0);
+    }
+
+    function trimNoteSessionCache(protectedPath = "") {
+      let totalBytes = 0;
+      for (const entry of noteSessionCache.values()) {
+        entry.bytes = cachedPagesBytes(entry.pages);
+        totalBytes += entry.bytes;
+      }
+      while (
+        noteSessionCache.size > NOTE_CACHE_MAX_ENTRIES ||
+        totalBytes > NOTE_CACHE_MAX_BYTES
+      ) {
+        const oldest = [...noteSessionCache.entries()]
+          .filter(([path]) => path !== protectedPath)
+          .sort((left, right) => left[1].usedAt - right[1].usedAt)[0];
+        if (!oldest) break;
+        noteSessionCache.delete(oldest[0]);
+        totalBytes -= oldest[1].bytes;
+      }
+    }
+
+    function getCachedNote(path) {
+      const entry = noteSessionCache.get(path);
+      const firstPage = entry?.pages?.[0];
+      const firstPageReady =
+        Array.isArray(firstPage) ||
+        firstPage instanceof HTMLCanvasElement ||
+        firstPage?.canvas instanceof HTMLCanvasElement;
+      if (!firstPageReady) return null;
+      entry.usedAt = performance.now();
+      return entry;
+    }
+
+    function openNoteCacheDb() {
+      if (!("indexedDB" in window)) return Promise.resolve(null);
+      if (noteCacheDbPromise) return noteCacheDbPromise;
+      noteCacheDbPromise = new Promise((resolve, reject) => {
+        const request = indexedDB.open(NOTE_CACHE_DB, 1);
+        request.onupgradeneeded = () => {
+          const db = request.result;
+          if (!db.objectStoreNames.contains(NOTE_CACHE_STORE)) {
+            const store = db.createObjectStore(NOTE_CACHE_STORE, { keyPath: "path" });
+            store.createIndex("savedAt", "savedAt");
+          }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      }).catch((error) => {
+        console.warn("Cache persistente indisponível.", error);
+        return null;
+      });
+      return noteCacheDbPromise;
+    }
+
+    async function canvasToCacheBlob(canvas) {
+      return new Promise((resolve) => {
+        canvas.toBlob(
+          (blob) => resolve(blob),
+          "image/webp",
+          0.86
+        );
+      });
+    }
+
+    async function cacheBlobToCanvas(blob) {
+      const bitmap = await createImageBitmap(blob);
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      canvas.getContext("2d").drawImage(bitmap, 0, 0);
+      bitmap.close();
+      return canvas;
+    }
+
+    async function trimPersistentNoteCache(db) {
+      const entries = await new Promise((resolve, reject) => {
+        const request = db.transaction(NOTE_CACHE_STORE).objectStore(NOTE_CACHE_STORE).getAll();
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const expiredBefore = Date.now() - NOTE_PERSISTENT_CACHE_MAX_AGE;
+      const remove = entries
+        .filter((entry) => entry.savedAt < expiredBefore)
+        .map((entry) => entry.path);
+      entries
+        .filter((entry) => entry.savedAt >= expiredBefore)
+        .sort((left, right) => right.savedAt - left.savedAt)
+        .slice(NOTE_PERSISTENT_CACHE_MAX_ENTRIES)
+        .forEach((entry) => remove.push(entry.path));
+      if (!remove.length) return;
+      const transaction = db.transaction(NOTE_CACHE_STORE, "readwrite");
+      for (const path of new Set(remove)) transaction.objectStore(NOTE_CACHE_STORE).delete(path);
+    }
+
+    async function persistRenderedNote(path, title, source, pages) {
+      if (!path || !pages.length || pages.some((page) => !page?.canvas)) return;
+      await waitForRenderingIdle();
+      const db = await openNoteCacheDb();
+      if (!db) return;
+      const blobs = [];
+      for (const page of pages) {
+        const blob = await canvasToCacheBlob(page.canvas);
+        if (!blob) return;
+        blobs.push(blob);
+      }
+      await new Promise((resolve, reject) => {
+        const transaction = db.transaction(NOTE_CACHE_STORE, "readwrite");
+        transaction.objectStore(NOTE_CACHE_STORE).put({
+          path,
+          title,
+          source,
+          pages: blobs,
+          savedAt: Date.now()
+        });
+        transaction.oncomplete = resolve;
+        transaction.onerror = () => reject(transaction.error);
+      });
+      await trimPersistentNoteCache(db);
+    }
+
+    async function getPersistentCachedNote(path) {
+      const db = await openNoteCacheDb();
+      if (!db) return null;
+      const stored = await new Promise((resolve, reject) => {
+        const request = db.transaction(NOTE_CACHE_STORE).objectStore(NOTE_CACHE_STORE).get(path);
+        request.onsuccess = () => resolve(request.result ?? null);
+        request.onerror = () => reject(request.error);
+      });
+      if (!stored || Date.now() - stored.savedAt > NOTE_PERSISTENT_CACHE_MAX_AGE) {
+        if (stored) {
+          db.transaction(NOTE_CACHE_STORE, "readwrite")
+            .objectStore(NOTE_CACHE_STORE).delete(path);
+        }
+        return null;
+      }
+      const pages = [];
+      for (const blob of stored.pages) {
+        pages.push({ canvas: await cacheBlobToCanvas(blob), status: "ready" });
+      }
+      const entry = {
+        title: stored.title,
+        source: stored.source,
+        pages,
+        complete: true,
+        usedAt: performance.now(),
+        bytes: cachedPagesBytes(pages)
+      };
+      noteSessionCache.set(path, entry);
+      trimNoteSessionCache(path);
+      return entry;
+    }
+
+    function cacheRenderedNote(path, title, source, pages, complete = false) {
+      if (!path) return;
+      const entry = noteSessionCache.get(path) ?? {};
+      Object.assign(entry, {
+        title,
+        source,
+        pages,
+        complete,
+        usedAt: performance.now(),
+        bytes: cachedPagesBytes(pages)
+      });
+      noteSessionCache.set(path, entry);
+      trimNoteSessionCache(path);
+      if (complete) {
+        void persistRenderedNote(path, title, source, pages).catch((error) => {
+          console.warn(`Cache persistente falhou para ${path}.`, error);
+        });
+      }
+    }
+
+    function finishNoteCapture(generation) {
+      if (generation !== noteCaptureGeneration) return;
+      noteContent.classList.remove("xr-capture");
+      notePanel.classList.remove("xr-capture-host");
+    }
+
+    function cancelNoteCapture() {
+      noteCaptureGeneration += 1;
+      noteContent.classList.remove("xr-capture");
+      notePanel.classList.remove("xr-capture-host");
+    }
+
+    function loadSnapDom() {
+      if (!snapDomPromise) {
+        snapDomPromise = import("./vendor/snapdom/snapdom.mjs")
+          .then((module) => module.snapdom ?? module.default ?? window.snapdom);
+      }
+      return snapDomPromise;
+    }
+
+    function isRemoteImageSource(source) {
+      return /^(?:https?:|data:|blob:)/i.test(source);
+    }
+
+    async function prepareNoteImages(config, notePath) {
+      for (const objectUrl of noteImageObjectUrls) URL.revokeObjectURL(objectUrl);
+      noteImageObjectUrls = [];
+      const images = [...noteContent.querySelectorAll("img[src]")];
+      await Promise.all(images.map(async (image) => {
+        const source = image.getAttribute("src")?.trim();
+        if (!source) return;
+        try {
+          if (!isRemoteImageSource(source)) {
+            const response = await fetch(`${config.url}/asset`, {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${config.token}`,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({ notePath, assetPath: source })
+            });
+            if (!response.ok) throw new Error(`Imagem HTTP ${response.status}`);
+            const objectUrl = URL.createObjectURL(await response.blob());
+            noteImageObjectUrls.push(objectUrl);
+            image.src = objectUrl;
+          }
+          if (image.decode) await image.decode();
+        } catch (error) {
+          console.warn(`Imagem não carregada: ${source}`, error);
+          image.replaceWith(document.createTextNode(`[Imagem: ${image.alt || source}]`));
+        }
+      }));
+    }
+
+    function waitForRenderingIdle() {
+      return new Promise((resolve) => {
+        if ("requestIdleCallback" in window) {
+          window.requestIdleCallback(resolve, { timeout: 120 });
+        } else {
+          setTimeout(resolve, 16);
+        }
+      });
+    }
+
+    function buildNotePageCapture(pageIndex) {
+      const pageTop = pageIndex * 570;
+      const noteBounds = noteContent.getBoundingClientRect();
+      const capture = document.createElement("article");
+      capture.className = "note-content xr-page-capture";
+      for (const child of noteContent.children) {
+        const bounds = child.getBoundingClientRect();
+        const top = bounds.top - noteBounds.top;
+        const bottom = bounds.bottom - noteBounds.top;
+        if (bottom <= pageTop || top >= pageTop + 570) continue;
+        const clone = child.cloneNode(true);
+        clone.style.position = "absolute";
+        clone.style.left = `${bounds.left - noteBounds.left}px`;
+        clone.style.top = `${top - pageTop}px`;
+        clone.style.width = `${bounds.width}px`;
+        clone.style.margin = "0";
+        capture.appendChild(clone);
+      }
+      document.body.appendChild(capture);
+      return capture;
+    }
+
+    async function captureOneNotePage(snapdom, page, pageIndex) {
+      page.status = "rendering";
+      const capture = buildNotePageCapture(pageIndex);
+      try {
+        page.canvas = await snapdom.toCanvas(capture, {
+          backgroundColor: "#0a101b",
+          cache: "soft",
+          compress: false,
+          dpr: 1,
+          embedFonts: false,
+          fast: true,
+          outerShadows: false,
+          outerTransforms: false,
+          reconcile: false,
+          scale: 1,
+          width: 900,
+          height: 570
+        });
+        page.status = "ready";
+      } finally {
+        capture.remove();
+      }
+    }
+
+    async function captureRemainingNotePages(
+      snapdom,
+      pages,
+      generation,
+      onComplete
+    ) {
+      let completed = false;
+      try {
+        for (let index = 1; index < pages.length; index += 1) {
+          if (generation !== noteCaptureGeneration) return;
+          await waitForRenderingIdle();
+          if (generation !== noteCaptureGeneration) return;
+          await captureOneNotePage(snapdom, pages[index], index);
+          if (arNotePage === index && arNoteGroup.visible) drawArNotePage();
+        }
+        completed = generation === noteCaptureGeneration;
+      } catch (error) {
+        console.warn("Uma página da nota não pôde ser preparada.", error);
+      } finally {
+        if (completed) onComplete?.();
+        finishNoteCapture(generation);
+      }
+    }
+
+    async function captureRenderedNotePages() {
+      const snapdom = await loadSnapDom();
+      const generation = ++noteCaptureGeneration;
+      notePanel.classList.add("xr-capture-host");
+      noteContent.classList.add("xr-capture");
+      try {
+        await document.fonts?.ready;
+        const pageCount = Math.max(1, Math.ceil(noteContent.scrollHeight / 570));
+        const pages = Array.from({ length: pageCount }, () => ({
+          canvas: null,
+          status: "pending"
+        }));
+        await captureOneNotePage(snapdom, pages[0], 0);
+        return { pages, snapdom, generation };
+      } catch (error) {
+        finishNoteCapture(generation);
+        throw error;
+      }
+    }
+
+    function estimateFormulaHeight(latex) {
+      const rows = Math.max(1, (latex.match(/\\\\/g)?.length ?? 0) + 1);
+      const nested = (latex.match(/\\begin\{/g)?.length ?? 0) > 1;
+      return Math.min(200, Math.max(60, 32 + rows * (nested ? 34 : 28)));
+    }
+
+    function loadMathJax() {
+      if (window.MathJax?.tex2svgPromise) return Promise.resolve(window.MathJax);
+      if (mathJaxPromise) return mathJaxPromise;
+      mathJaxPromise = new Promise((resolve, reject) => {
+        window.MathJax = {
+          loader: { load: ["[tex]/ams"] },
+          tex: { packages: { "[+]": ["ams"] } },
+          // Embed glyph paths in each SVG. This is slightly larger in memory, but
+          // survives serialization into a CanvasTexture on Quest reliably.
+          svg: { fontCache: "none" },
+          startup: { typeset: false }
+        };
+        const script = document.createElement("script");
+        script.src = "https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js";
+        script.async = true;
+        script.onload = async () => {
+          try {
+            await window.MathJax.startup.promise;
+            resolve(window.MathJax);
+          } catch (error) {
+            reject(error);
+          }
+        };
+        script.onerror = () => reject(new Error("Falha ao carregar MathJax."));
+        document.head.append(script);
+      });
+      return mathJaxPromise;
+    }
+
+    async function prepareFormulaTexture(entry, latex, displayMode) {
+      try {
+        const mathJax = await loadMathJax();
+        const container = await mathJax.tex2svgPromise(latex, { display: displayMode });
+        const svg = container.querySelector("svg");
+        if (!svg) throw new Error("MathJax não retornou SVG.");
+        const viewBox = svg.getAttribute("viewBox")?.split(/\s+/).map(Number);
+        const ratio =
+          viewBox?.length === 4 && viewBox[3] > 0
+            ? Math.max(0.08, Math.min(20, viewBox[2] / viewBox[3]))
+            : 4;
+        if (viewBox?.length === 4 && viewBox.every(Number.isFinite)) {
+          const paddingX = Math.max(40, viewBox[2] * 0.035);
+          const paddingY = Math.max(40, viewBox[3] * 0.08);
+          svg.setAttribute(
+            "viewBox",
+            [
+              viewBox[0] - paddingX,
+              viewBox[1] - paddingY,
+              viewBox[2] + paddingX * 2,
+              viewBox[3] + paddingY * 2
+            ].join(" ")
+          );
+        }
+        svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+        svg.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
+        for (const use of svg.querySelectorAll("use")) {
+          const reference =
+            use.getAttribute("href") ??
+            use.getAttribute("xlink:href") ??
+            use.getAttributeNS("http://www.w3.org/1999/xlink", "href");
+          if (reference) use.setAttribute("href", reference);
+        }
+        svg.setAttribute("width", "1800");
+        svg.setAttribute("height", String(Math.max(90, Math.round(1800 / ratio))));
+        svg.style.color = "#ffffff";
+        const serialized = new XMLSerializer().serializeToString(svg);
+        const image = new Image();
+        image.onload = () => {
+          entry.status = "ready";
+          entry.image = image;
+          if (arNoteGroup.visible) drawArNotePage();
+        };
+        image.onerror = () => {
+          entry.status = "error";
+          if (arNoteGroup.visible) drawArNotePage();
+        };
+        image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(serialized)}`;
+      } catch (error) {
+        console.warn("MathJax não conseguiu preparar a fórmula para WebXR.", error);
+        entry.status = "error";
+        if (arNoteGroup.visible) drawArNotePage();
+      }
+    }
+
+    function getFormulaTexture(latex, displayMode = true) {
+      const key = `${displayMode ? "D" : "I"}:${latex.trim()}`;
+      if (formulaTextureCache.has(key)) return formulaTextureCache.get(key);
+      const entry = { status: "loading", image: null };
+      formulaTextureCache.set(key, entry);
+      void prepareFormulaTexture(entry, latex.trim(), displayMode);
+      return entry;
+    }
+
+    function layoutNotePages(context, source) {
+      const pages = [[]];
+      let usedHeight = 0;
+      const maxWidth = 900;
+      const maxHeight = 570;
+      const reserveHeight = (height) => {
+        if (usedHeight + height > maxHeight && pages.at(-1).length) {
+          pages.push([]);
+          usedHeight = 0;
+        }
+      };
+      const addLine = (
+        text,
+        size = 24,
+        color = "#dce3ee",
+        gap = 12,
+        weight = "normal",
+        family = "system-ui, sans-serif"
+      ) => {
+        context.font = `${weight} ${size}px ${family}`;
+        const words = text.split(/\s+/).filter(Boolean);
+        const wrapped = [];
+        let current = "";
+        for (const word of words) {
+          const candidate = current ? `${current} ${word}` : word;
+          if (current && context.measureText(candidate).width > maxWidth) {
+            wrapped.push(current);
+            current = word;
+          } else {
+            current = candidate;
+          }
+        }
+        wrapped.push(current);
+        for (const line of wrapped) {
+          const lineHeight = size * 1.35 + gap;
+          reserveHeight(lineHeight);
+          pages.at(-1).push({ text: line, size, color, lineHeight, weight, family });
+          usedHeight += lineHeight;
+        }
+      };
+
+      const cleanInlineMarkdown = (text) => readableMath(
+        text
+          .replace(/!\[([^\]]*)\]\([^)]+\)/g, "🖼 $1")
+          .replace(/\[([^\]]+)\]\([^)]+\)/g, "🔗 $1")
+          .replace(/\$([^$\n]+?)\$/g, "$1")
+          .replace(/\*\*([^*]+)\*\*/g, "$1")
+          .replace(/__([^_]+)__/g, "$1")
+          .replace(/~~([^~]+)~~/g, "$1")
+          .replace(/\*([^*]+)\*/g, "$1")
+          .replace(/`([^`]+)`/g, "$1")
+      );
+
+      const addMathLine = (latex) => {
+        const normalized = latex.trim();
+        const lineHeight = estimateFormulaHeight(normalized);
+        reserveHeight(lineHeight);
+        pages.at(-1).push({
+          type: "formula",
+          latex: normalized,
+          lineHeight
+        });
+        usedHeight += lineHeight;
+      };
+
+      const addTable = (tableLines) => {
+        const parsedRows = tableLines.map((line) =>
+          line.replace(/^\||\|$/g, "").split("|").map((cell) => {
+            const raw = cell.trim();
+            const formula =
+              raw.match(/^\$([^$]+)\$$/)?.[1] ??
+              raw.match(/^\\\(([\s\S]+)\\\)$/)?.[1] ??
+              raw.match(/^\\\[([\s\S]+)\\\]$/)?.[1];
+            return {
+              text: formula ? "" : cleanInlineMarkdown(raw),
+              latex: formula ?? null
+            };
+          })
+        );
+        const hasHeader =
+          parsedRows.length > 1 &&
+          parsedRows[1].every((cell) => /^:?-{3,}:?$/.test(cell.text));
+        if (hasHeader) parsedRows.splice(1, 1);
+        const columnCount = Math.max(...parsedRows.map((row) => row.length), 1);
+        const columnWidth = 900 / columnCount;
+        context.font = "16px system-ui, sans-serif";
+        parsedRows.forEach((cells, rowIndex) => {
+          const wrappedCells = cells.map((cell) => {
+            if (cell.latex) return [];
+            const lines = [];
+            let current = "";
+            for (const word of cell.text.split(/\s+/).filter(Boolean)) {
+              const candidate = current ? `${current} ${word}` : word;
+              if (
+                current &&
+                context.measureText(candidate).width > columnWidth - 22
+              ) {
+                lines.push(current);
+                current = word;
+              } else {
+                current = candidate;
+              }
+            }
+            lines.push(current);
+            return lines;
+          });
+          const lineCount = Math.max(...wrappedCells.map((cell) => cell.length), 1);
+          const hasFormula = cells.some((cell) => cell.latex);
+          const lineHeight = Math.max(hasFormula ? 54 : 38, lineCount * 21 + 13);
+          reserveHeight(lineHeight);
+          pages.at(-1).push({
+            type: "tableRow",
+            cells,
+            wrappedCells,
+            columnCount,
+            header: hasHeader && rowIndex === 0,
+            lineHeight
+          });
+          usedHeight += lineHeight;
+        });
+      };
+
+      const addFormulaEnvironment = (formulaSource) => addMathLine(formulaSource);
+
+      let cleaned = String(source ?? "")
+        .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
+        .replace(/%%[\s\S]*?%%/g, "")
+        .replace(
+          /!?\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g,
+          (_, target, label) => label ?? target
+        )
+        .replace(/\$\$([\s\S]+?)\$\$/g, (_, latex) =>
+          `\n§FORMULA§ ${latex.replace(/\s+/g, " ").trim()}\n`
+        )
+        .replace(/==([^=]+)==/g, "$1");
+
+      const sourceLines = cleaned.split(/\r?\n/);
+      let inCodeBlock = false;
+      for (let lineIndex = 0; lineIndex < sourceLines.length; lineIndex += 1) {
+        const rawLine = sourceLines[lineIndex];
+        const originalLine = rawLine.trim();
+        const environmentStart = originalLine.match(/\\begin\{([^}]+)\}/);
+        if (environmentStart && !originalLine.startsWith("§FORMULA§ ")) {
+          const environmentName = environmentStart[1];
+          const environmentLines = [rawLine];
+          while (
+            lineIndex + 1 < sourceLines.length &&
+            !environmentLines.at(-1).includes(`\\end{${environmentName}}`)
+          ) {
+            lineIndex += 1;
+            environmentLines.push(sourceLines[lineIndex]);
+          }
+          addFormulaEnvironment(environmentLines.join("\n"));
+          continue;
+        }
+        const nextLine = sourceLines[lineIndex + 1] ?? "";
+        const separatorCells = nextLine
+          .trim()
+          .replace(/^\||\|$/g, "")
+          .split("|")
+          .map((cell) => cell.trim());
+        const startsTable =
+          rawLine.includes("|") &&
+          separatorCells.length >= 2 &&
+          separatorCells.every((cell) => /^:?-{3,}:?$/.test(cell));
+        if (startsTable) {
+          const tableLines = [];
+          while (
+            lineIndex < sourceLines.length &&
+            sourceLines[lineIndex].includes("|") &&
+            sourceLines[lineIndex].trim()
+          ) {
+            tableLines.push(sourceLines[lineIndex].trim());
+            lineIndex += 1;
+          }
+          lineIndex -= 1;
+          addTable(tableLines);
+          continue;
+        }
+        if (originalLine.startsWith("§FORMULA§ ")) {
+          addFormulaEnvironment(originalLine.slice(11));
+          continue;
+        }
+        if (
+          originalLine.startsWith("\\left") ||
+          originalLine.startsWith("\\[") ||
+          originalLine.includes("\\frac")
+        ) {
+          addMathLine(
+            originalLine
+              .replace(/^\$+|\$+$/g, "")
+              .replace(/^\\\[|\\\]$/g, "")
+              .replaceAll("&", " ")
+          );
+          continue;
+        }
+        if (originalLine.startsWith("```")) {
+          inCodeBlock = !inCodeBlock;
+          addLine("────────────────", 15, "#708199", 4, "normal", "ui-monospace, monospace");
+          continue;
+        }
+        if (inCodeBlock) {
+          addLine(rawLine || " ", 17, "#c8d5e8", 6, "normal", "ui-monospace, monospace");
+          continue;
+        }
+        const headingMatch = originalLine.match(/^(#{1,6})\s+(.+)$/);
+        const isBold = /\*\*[^*]+\*\*|__[^_]+__/.test(originalLine);
+        const isItalic = /(?:^|[^*])\*[^*]+\*(?:$|[^*])/.test(originalLine);
+        const isStruck = /~~[^~]+~~/.test(originalLine);
+        const line = cleanInlineMarkdown(originalLine);
+        if (!line) {
+          addLine(" ", 14, "#dce3ee", 6);
+        } else if (headingMatch) {
+          const headingLevel = headingMatch[1].length;
+          const headingSizes = [29, 26, 23, 21, 20, 19];
+          addLine(
+            cleanInlineMarkdown(headingMatch[2]),
+            headingSizes[headingLevel - 1],
+            "#ffffff",
+            Math.max(7, 15 - headingLevel),
+            "bold"
+          );
+        } else if (/^[-*+] \[[ xX]\] /.test(line)) {
+          const checked = /^[-*+] \[[xX]\]/.test(line);
+          addLine(`${checked ? "☑" : "☐"} ${line.replace(/^[-*+] \[[ xX]\] /, "")}`, 20);
+        } else if (/^[-*+] /.test(line)) {
+          addLine(`• ${line.slice(2)}`, 20);
+        } else if (/^\d+\. /.test(line)) {
+          addLine(line, 20);
+        } else if (/^> \[![^\]]+\]/i.test(line)) {
+          addLine(
+            `◆ ${line.replace(/^> \[![^\]]+\][+-]?\s*/i, "") || "Observação"}`,
+            20,
+            "#9fc2ff",
+            10,
+            "bold"
+          );
+        } else if (line.startsWith("> ")) {
+          addLine(`▌ ${line.slice(2)}`, 19, "#aecdff");
+        } else if (/^(---+|\*\*\*+|___+)$/.test(line)) {
+          addLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", 15, "#52647c", 8);
+        } else {
+          addLine(
+            isStruck ? `̶ ${line}` : line,
+            20,
+            isStruck ? "#7f8da1" : "#dce3ee",
+            12,
+            isBold ? "bold" : isItalic ? "italic" : "normal"
+          );
+        }
+      }
+      return pages.length ? pages : [[{
+        text: "(nota vazia)",
+        size: 20,
+        color: "#9aa8ba",
+        lineHeight: 36,
+        weight: "normal",
+        family: "system-ui, sans-serif"
+      }]];
+    }
+
+    function drawCanvasFormula(context, operation, x, y, maxWidth = 846) {
+      const texture = getFormulaTexture(
+        operation.latex,
+        operation.displayMode !== false
+      );
+      if (texture.status === "ready" && texture.image) {
+        const naturalRatio = texture.image.width / texture.image.height;
+        const isMultiline =
+          /\\begin\{/.test(operation.latex) || /\\\\/.test(operation.latex);
+        const heightLimit =
+          operation.displayMode === false || isMultiline
+            ? operation.lineHeight - 8
+            : Math.min(38, operation.lineHeight - 8);
+        const height = Math.min(heightLimit, maxWidth / naturalRatio);
+        const width = Math.min(maxWidth, height * naturalRatio);
+        context.drawImage(texture.image, x, y, width, height);
+        return;
+      }
+      context.fillStyle = texture.status === "error" ? "#ffb4b4" : "#9fb0c8";
+      context.font = "18px Cambria Math, serif";
+      context.fillText(
+        texture.status === "error" ? readableMath(operation.latex) : "Renderizando fórmula…",
+        x,
+        y + 30
+      );
+    }
+
+    function drawArNotePage() {
+      if (!arNoteCanvas || !arNoteTexture) return;
+      const context = arNoteCanvas.getContext("2d");
+      context.fillStyle = "#0a101b";
+      context.fillRect(0, 0, 1024, 768);
+      context.fillStyle = "#15233a";
+      context.fillRect(0, 0, 1024, 92);
+      context.fillStyle = "#f7f9fc";
+      context.font = "bold 29px system-ui, sans-serif";
+      context.fillText(arNoteTitle.slice(0, 42), 52, 58);
+      let y = 132;
+      const currentPage = arNotePages[arNotePage];
+      const renderedCanvas =
+        currentPage instanceof HTMLCanvasElement
+          ? currentPage
+          : currentPage?.canvas;
+      if (renderedCanvas instanceof HTMLCanvasElement) {
+        context.drawImage(renderedCanvas, 62, 108, 900, 570);
+      } else if (currentPage?.status) {
+        context.fillStyle = "#9fb0c8";
+        context.font = "20px system-ui, sans-serif";
+        context.textAlign = "center";
+        context.fillText("Preparando esta página…", 512, 385);
+        context.textAlign = "start";
+      }
+      for (
+        const line of renderedCanvas instanceof HTMLCanvasElement || currentPage?.status
+          ? []
+          : (currentPage ?? [])
+      ) {
+        if (line.type === "formula") {
+          drawCanvasFormula(context, line, 54, y - 24);
+          y += line.lineHeight;
+          continue;
+        }
+        if (line.type === "tableRow") {
+          const tableX = 54;
+          const tableWidth = 916;
+          const columnWidth = tableWidth / line.columnCount;
+          context.font = `${line.header ? "bold" : "normal"} 16px system-ui, sans-serif`;
+          const rowTop = y - 29;
+          for (let index = 0; index < line.columnCount; index += 1) {
+            const x = tableX + index * columnWidth;
+            context.fillStyle = line.header ? "#203552" : "#101b2b";
+            context.fillRect(x, rowTop, columnWidth, line.lineHeight);
+            context.strokeStyle = "#4b6382";
+            context.lineWidth = 1;
+            context.strokeRect(x, rowTop, columnWidth, line.lineHeight);
+            context.save();
+            context.beginPath();
+            context.rect(x + 7, rowTop + 2, columnWidth - 14, line.lineHeight - 4);
+            context.clip();
+            context.fillStyle = line.header ? "#ffffff" : "#dce3ee";
+            const cell = line.cells[index];
+            if (cell?.latex) {
+              drawCanvasFormula(
+                context,
+                {
+                  latex: cell.latex,
+                  displayMode: false,
+                  lineHeight: line.lineHeight - 6
+                },
+                x + 9,
+                rowTop + 5,
+                columnWidth - 18
+              );
+              context.restore();
+              continue;
+            }
+            for (
+              let cellLineIndex = 0;
+              cellLineIndex < (line.wrappedCells[index]?.length ?? 0);
+              cellLineIndex += 1
+            ) {
+              context.fillText(
+                line.wrappedCells[index][cellLineIndex],
+                x + 9,
+                rowTop + 24 + cellLineIndex * 21
+              );
+            }
+            context.restore();
+          }
+          y += line.lineHeight;
+          continue;
+        }
+        context.fillStyle = line.color;
+        context.font = `${line.weight} ${line.size}px ${line.family}`;
+        context.fillText(line.text, 54, y);
+        y += line.lineHeight;
+      }
+      context.fillStyle = "#8fa0b8";
+      context.font = "20px system-ui, sans-serif";
+      context.textAlign = "center";
+      context.fillText(
+        `Página ${arNotePage + 1} de ${arNotePages.length}`,
+        512,
+        738
+      );
+      context.textAlign = "start";
+      arNoteTexture.needsUpdate = true;
+    }
+
+    function addArNoteControl(action, x, y, color) {
+      const control = new THREE.Mesh(
+        new THREE.CircleGeometry(0.019, 14),
+        new THREE.MeshBasicMaterial({
+          color,
+          depthTest: false,
+          toneMapped: false,
+          transparent: true
+        })
+      );
+      control.position.set(x, y, 0.004);
+      control.renderOrder = 1001;
+      control.userData.noteAction = action;
+      arNoteControls.push(control);
+      arNoteGroup.add(control);
+    }
+
+    async function toggleNoteWindowPin(event) {
+      if (noteWindowPinned) {
+        if (noteWindowAnchor?.delete) noteWindowAnchor.delete();
+        noteWindowAnchor = null;
+        noteWindowPinned = false;
+        camera.add(arNoteGroup);
+        arNoteGroup.position.set(0, 0, -0.82);
+        arNoteGroup.quaternion.identity();
+        setXrMessage("Janela solta: ela acompanhará sua visão.");
+        return;
+      }
+
+      arNoteGroup.updateWorldMatrix(true, false);
+      scene.attach(arNoteGroup);
+      noteWindowPinned = true;
+      if (event?.frame?.createAnchor && referenceSpace) {
+        const position = arNoteGroup.position;
+        const orientation = arNoteGroup.quaternion;
+        try {
+          noteWindowAnchor = await event.frame.createAnchor(
+            new XRRigidTransform(
+              { x: position.x, y: position.y, z: position.z },
+              {
+                x: orientation.x,
+                y: orientation.y,
+                z: orientation.z,
+                w: orientation.w
+              }
+            ),
+            referenceSpace
+          );
+          setXrMessage("Janela fixada com anchor. As próximas notas usarão esta posição.");
+        } catch (error) {
+          console.warn("Anchor da janela indisponível; usando pose fixa.", error);
+          setXrMessage("Janela fixada nesta posição.");
+        }
+      } else {
+        setXrMessage("Janela fixada nesta posição.");
+      }
+    }
+
+    function activateNoteControl(action, event) {
+      if (action === "close") {
+        closeNote();
+        return;
+      }
+      if (action === "pin") {
+        void toggleNoteWindowPin(event);
+        return;
+      }
+      if (action === "previous" && arNotePage > 0) arNotePage -= 1;
+      if (action === "next" && arNotePage < arNotePages.length - 1) arNotePage += 1;
+      drawArNotePage();
+      setXrMessage(`Página ${arNotePage + 1} de ${arNotePages.length}.`);
+    }
+
+    async function showNoteInAr(
+      title,
+      source,
+      path = "",
+      cachedPages = null
+    ) {
+      if (!xrSession) return;
+      disposeArNote();
+      arNoteCanvas = document.createElement("canvas");
+      arNoteCanvas.width = 1024;
+      arNoteCanvas.height = 768;
+      arNoteTitle = title;
+      let progressiveCapture = null;
+      if (cachedPages) {
+        arNotePages = cachedPages;
+      } else {
+        try {
+          progressiveCapture = await captureRenderedNotePages();
+          arNotePages = progressiveCapture.pages;
+          cacheRenderedNote(path, title, source, arNotePages, arNotePages.length === 1);
+        } catch (error) {
+          console.warn("Captura HTML indisponível; usando renderizador simples.", error);
+          arNotePages = layoutNotePages(arNoteCanvas.getContext("2d"), source);
+        }
+      }
+      arNoteTexture = new THREE.CanvasTexture(arNoteCanvas);
+      arNoteTexture.colorSpace = THREE.SRGBColorSpace;
+      arNoteTexture.minFilter = THREE.LinearFilter;
+      arNoteTexture.generateMipmaps = false;
+
+      const width = 0.62;
+      const height = 0.465;
+      arNoteSurface = new THREE.Mesh(
+        new THREE.PlaneGeometry(width, height),
+        new THREE.MeshBasicMaterial({
+          map: arNoteTexture,
+          transparent: false,
+          depthTest: false,
+          toneMapped: false
+        })
+      );
+      arNoteSurface.renderOrder = 1000;
+      arNoteGroup.add(arNoteSurface);
+      addArNoteControl("close", width / 2 - 0.03, height / 2 - 0.03, 0xff6b6b);
+      addArNoteControl(
+        "pin",
+        -width / 2 + 0.03,
+        height / 2 - 0.03,
+        noteWindowPinned ? 0x63e6be : 0xffd166
+      );
+      if (arNotePages.length > 1) {
+        addArNoteControl("previous", -width / 2 + 0.032, -height / 2 + 0.03, 0x75a7ff);
+        addArNoteControl("next", width / 2 - 0.032, -height / 2 + 0.03, 0x75a7ff);
+      }
+      drawArNotePage();
+      if (noteWindowPinned) {
+        if (arNoteGroup.parent !== scene) scene.attach(arNoteGroup);
+      } else {
+        camera.add(arNoteGroup);
+        arNoteGroup.position.set(0, 0, -0.82);
+        arNoteGroup.quaternion.identity();
+      }
+      arNoteGroup.visible = true;
+      notePanel.classList.remove("visible");
+      if (progressiveCapture) {
+        void captureRemainingNotePages(
+          progressiveCapture.snapdom,
+          progressiveCapture.pages,
+          progressiveCapture.generation,
+          () => cacheRenderedNote(path, title, source, progressiveCapture.pages, true)
+        );
+      }
+    }
+
+    const contentRoot = new THREE.Group();
+    placementRoot.add(contentRoot);
+
+    const reticle = new THREE.Mesh(
+      new THREE.RingGeometry(0.055, 0.072, 36).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({
+        color: 0x75a7ff,
+        transparent: true,
+        opacity: 0.92,
+        side: THREE.DoubleSide,
+        depthWrite: false
+      })
+    );
+    reticle.matrixAutoUpdate = false;
+    reticle.visible = false;
+    scene.add(reticle);
+
+    let model = null;
+    let graphData = null;
+    let nodeInteractionRoot = null;
+    let selectedNode = null;
+    let highlightMesh = null;
+    let noteRequestBusy = false;
+    let noteWarmupCancelled = false;
+    let noteWarmupRunId = 0;
+    let baseModelScale = 1;
+    let userScaleFactor = 1;
+    let xrSession = null;
+    let referenceSpace = null;
+    let viewerSpace = null;
+    let hitTestSource = null;
+    let latestHitResult = null;
+    let currentAnchor = null;
+    let isPlaced = false;
+    let placementBusy = false;
+    let gestureMode = "idle";
+    let gestureStartedAt = 0;
+    let previousTwoHandDistance = null;
+    let previousRotationPoint = null;
+    let previousUiUpdate = 0;
+    let pinchStartPoint = null;
+    let pinchTravel = 0;
+    let pendingSelectionPath = null;
+    let lastNodeHitAt = 0;
+    let pointedNode = null;
+    let candidateNode = null;
+    let candidateNodeSince = 0;
+
+    const workingMatrix = new THREE.Matrix4();
+    const workingPosition = new THREE.Vector3();
+    const workingQuaternion = new THREE.Quaternion();
+    const workingScale = new THREE.Vector3();
+    const thumbPosition = new THREE.Vector3();
+    const indexPosition = new THREE.Vector3();
+    const pointerBasePosition = new THREE.Vector3();
+    const pointerTipPosition = new THREE.Vector3();
+    const pointerThumbPosition = new THREE.Vector3();
+    const pointerThumbBasePosition = new THREE.Vector3();
+    const pointerPalmWristPosition = new THREE.Vector3();
+    const pointerPalmCenterPosition = new THREE.Vector3();
+    const pointerRayOrigin = new THREE.Vector3();
+    const pointerDirection = new THREE.Vector3();
+    const pointerAimQuaternion = new THREE.Quaternion();
+    const nodeWorldPosition = new THREE.Vector3();
+    const nodeRayOffset = new THREE.Vector3();
+    const nodeRaycaster = new THREE.Raycaster();
+    const handPointerRays = Array.from({ length: 2 }, () => {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute(
+        "position",
+        new THREE.BufferAttribute(new Float32Array(6), 3)
+      );
+      const line = new THREE.Line(
+        geometry,
+        new THREE.LineBasicMaterial({
+          color: 0x8db4ff,
+          transparent: true,
+          opacity: 0.88,
+          depthTest: false,
+          toneMapped: false
+        })
+      );
+      line.visible = false;
+      line.frustumCulled = false;
+      line.renderOrder = 999;
+      scene.add(line);
+      return line;
+    });
+    let noteMicroGestureStates = new WeakMap();
+    const microGestureCameraRight = new THREE.Vector3();
+    const microGestureCameraQuaternion = new THREE.Quaternion();
+
+    function resetNoteMicroGestures() {
+      noteMicroGestureStates = new WeakMap();
+    }
+
+    function isMicroGestureHandClosed(inputSource) {
+      return noteMicroGestureStates.get(inputSource)?.handClosed === true;
+    }
+
+    try {
+      const storedBridge = JSON.parse(localStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
+      if (storedBridge?.url) bridgeUrlInput.value = storedBridge.url;
+      if (storedBridge?.token) bridgeTokenInput.value = storedBridge.token;
+    } catch {}
+
+    async function saveBridgeConfig() {
+      const url = bridgeUrlInput.value.trim().replace(/\/+$/, "");
+      const token = bridgeTokenInput.value.trim();
+      bridgeFeedback.className = "bridge-feedback";
+      if (!url.startsWith("https://") || !token) {
+        bridgeFeedback.textContent = "Informe a URL HTTPS e o token exibidos pela ponte.";
+        bridgeFeedback.classList.add("error");
+        return;
+      }
+      saveBridgeButton.disabled = true;
+      bridgeFeedback.textContent = "Testando conexão…";
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        const response = await fetch(`${url}/verify`, {
+          headers: { "Authorization": `Bearer ${token}` },
+          signal: controller.signal
+        });
+        clearTimeout(timeout);
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error ?? `HTTP ${response.status}`);
+        localStorage.setItem(NOTE_BRIDGE_STORAGE_KEY, JSON.stringify({ url, token }));
+        bridgeFeedback.textContent = `Conectado: ${result.notes} notas disponíveis.`;
+        bridgeFeedback.classList.add("success");
+        void warmRecentNotesDuringModelLoad(true);
+      } catch (error) {
+        bridgeFeedback.textContent = `Falha: ${error.name === "AbortError" ? "tempo esgotado" : error.message}`;
+        bridgeFeedback.classList.add("error");
+      } finally {
+        saveBridgeButton.disabled = false;
+      }
+    }
+
+    function setStatus(message) {
+      statusLabel.textContent = message;
+    }
+
+    function setXrMessage(message) {
+      xrMessage.textContent = message;
+    }
+
+    function rememberRecentNote(path) {
+      try {
+        const recent = JSON.parse(
+          localStorage.getItem(RECENT_NOTES_STORAGE_KEY) ?? "[]"
+        ).filter((item) => typeof item === "string" && item !== path);
+        recent.unshift(path);
+        localStorage.setItem(
+          RECENT_NOTES_STORAGE_KEY,
+          JSON.stringify(recent.slice(0, 6))
+        );
+      } catch {}
+    }
+
+    async function warmRecentNote(path, config, runId) {
+      await waitForRenderingIdle();
+      if (
+        noteWarmupCancelled ||
+        runId !== noteWarmupRunId ||
+        xrSession ||
+        noteSessionCache.has(path)
+      ) return false;
+      if (await getPersistentCachedNote(path)) return false;
+      const response = await fetch(`${config.url}/note`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${config.token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ path })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? `HTTP ${response.status}`);
+      if (noteWarmupCancelled || runId !== noteWarmupRunId || xrSession) return false;
+      noteTitle.textContent = result.title;
+      await renderNoteMarkdown(result.content);
+      await highlightNoteCode();
+      await prepareNoteImages(config, path);
+      if (noteWarmupCancelled || runId !== noteWarmupRunId || xrSession) return false;
+      const capture = await captureRenderedNotePages();
+      finishNoteCapture(capture.generation);
+      cacheRenderedNote(
+        path,
+        result.title,
+        result.content,
+        capture.pages,
+        capture.pages.length === 1
+      );
+      return true;
+    }
+
+    async function completeCachedNote(path, entry, config) {
+      if (entry.complete || xrSession === null) return;
+      await waitForRenderingIdle();
+      if (!arNoteGroup.visible || arNoteTitle !== entry.title) return;
+      await renderNoteMarkdown(entry.source);
+      await highlightNoteCode();
+      await prepareNoteImages(config, path);
+      if (!arNoteGroup.visible || arNoteTitle !== entry.title) return;
+      const snapdom = await loadSnapDom();
+      const generation = ++noteCaptureGeneration;
+      notePanel.classList.add("xr-capture-host");
+      noteContent.classList.add("xr-capture");
+      try {
+        await document.fonts?.ready;
+        for (let index = 1; index < entry.pages.length; index += 1) {
+          if (
+            generation !== noteCaptureGeneration ||
+            !arNoteGroup.visible ||
+            arNoteTitle !== entry.title
+          ) return;
+          await waitForRenderingIdle();
+          await captureOneNotePage(snapdom, entry.pages[index], index);
+          if (arNotePage === index) drawArNotePage();
+        }
+        cacheRenderedNote(path, entry.title, entry.source, entry.pages, true);
+      } catch (error) {
+        console.warn(`Conclusão progressiva falhou para ${path}.`, error);
+      } finally {
+        finishNoteCapture(generation);
+      }
+    }
+
+    async function warmRecentNotesDuringModelLoad(announce = false) {
+      const runId = ++noteWarmupRunId;
+      noteWarmupCancelled = false;
+      let config;
+      let recent;
+      try {
+        config = JSON.parse(localStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
+        recent = JSON.parse(localStorage.getItem(RECENT_NOTES_STORAGE_KEY) ?? "[]");
+      } catch {
+        return;
+      }
+      if (!config?.url || !config?.token || !Array.isArray(recent)) return;
+      let pending = [];
+      try {
+        const response = await fetch(`${config.url}/pending-optimization`, {
+          headers: { "Authorization": `Bearer ${config.token}` }
+        });
+        if (response.ok) {
+          const result = await response.json();
+          pending = (Array.isArray(result.notes) ? result.notes : [])
+            .map((entry) => entry.path)
+            .filter((path) => typeof path === "string");
+        }
+      } catch (error) {
+        console.warn("Fila de pré-processamento indisponível.", error);
+      }
+      if (runId !== noteWarmupRunId || noteWarmupCancelled || xrSession) return;
+      const queue = [...new Set([...recent.slice(0, 3), ...pending])].slice(
+        0,
+        NOTE_CACHE_MAX_ENTRIES
+      );
+      if (announce || queue.length) {
+        bridgeFeedback.textContent = queue.length
+          ? `Fila recebida: preparando 0 de ${queue.length} notas…`
+          : "Conectado, mas a fila de otimização está vazia.";
+        bridgeFeedback.className = "bridge-feedback success";
+      }
+      let prepared = 0;
+      for (let index = 0; index < queue.length; index += 1) {
+        const path = queue[index];
+        if (noteWarmupCancelled || runId !== noteWarmupRunId || xrSession) return;
+        bridgeFeedback.textContent =
+          `Otimizando ${index + 1} de ${queue.length}: ${path}`;
+        try {
+          if (await warmRecentNote(path, config, runId)) prepared += 1;
+        } catch (error) {
+          console.warn(`Pré-processamento ignorado para ${path}.`, error);
+        }
+      }
+      if (runId === noteWarmupRunId && !noteWarmupCancelled && !xrSession) {
+        bridgeFeedback.textContent =
+          `Otimização concluída: ${prepared} novas, ${noteSessionCache.size} no cache.`;
+        bridgeFeedback.className = "bridge-feedback success";
+      }
+    }
+
+    function disposeAnchor() {
+      if (currentAnchor?.delete) currentAnchor.delete();
+      currentAnchor = null;
+    }
+
+    function normalizeModel(root) {
+      const box = new THREE.Box3().setFromObject(root);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const largestDimension = Math.max(size.x, size.y, size.z, 0.001);
+
+      root.position.sub(center);
+      root.position.y += size.y * 0.5;
+      baseModelScale = TARGET_SIZE_METERS / largestDimension;
+      contentRoot.scale.setScalar(baseModelScale);
+      contentRoot.rotation.set(0, Math.PI, 0);
+
+      root.traverse((object) => {
+        if (!object.isMesh) return;
+        object.castShadow = false;
+        object.receiveShadow = false;
+        object.frustumCulled = true;
+        object.geometry.computeBoundingSphere();
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        for (const material of materials) {
+          if (!material) continue;
+          material.side = THREE.FrontSide;
+          material.dithering = true;
+          if (object.geometry.getAttribute("color")) {
+            material.vertexColors = true;
+            if (material.emissive) material.emissive.setRGB(0, 0, 0);
+            if ("emissiveIntensity" in material) material.emissiveIntensity = 0;
+            material.needsUpdate = true;
+          }
+          if (material.map) {
+            material.map.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 4);
+          }
+        }
+      });
+    }
+
+    function createNodeInteraction(nodes) {
+      nodeInteractionRoot = new THREE.Group();
+      nodeInteractionRoot.name = "node-interaction";
+      const proxyGeometry = new THREE.SphereGeometry(0.22, 8, 6);
+      const proxyMaterial = new THREE.MeshBasicMaterial({
+        transparent: true,
+        opacity: 0,
+        depthWrite: false
+      });
+      for (const node of nodes) {
+        const proxy = new THREE.Mesh(proxyGeometry, proxyMaterial);
+        proxy.position.set(node.x, node.z, -node.y);
+        proxy.userData.node = node;
+        nodeInteractionRoot.add(proxy);
+      }
+      highlightMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.095, 12, 8),
+        new THREE.MeshBasicMaterial({
+          color: 0x8db4ff,
+          transparent: true,
+          opacity: 0.78,
+          depthWrite: false
+        })
+      );
+      highlightMesh.visible = false;
+      nodeInteractionRoot.add(highlightMesh);
+      model.add(nodeInteractionRoot);
+    }
+
+    async function loadModel() {
+      const loader = new GLTFLoader();
+      const dracoLoader = new DRACOLoader();
+      dracoLoader.setDecoderPath(
+        "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/libs/draco/"
+      );
+      loader.setDRACOLoader(dracoLoader);
+      let modelUrl = FALLBACK_MODEL_URL;
+      let graphUrl = null;
+      try {
+        const response = await fetch("/model-manifest.json", { cache: "no-store" });
+        if (response.ok) {
+          const manifest = await response.json();
+          if (typeof manifest.url === "string") modelUrl = manifest.url;
+          if (typeof manifest.graphUrl === "string") graphUrl = manifest.graphUrl;
+        }
+      } catch (manifestError) {
+        console.warn("Usando modelo incluído no site.", manifestError);
+      }
+      const gltf = await loader.loadAsync(modelUrl);
+      if (graphUrl) {
+        const graphResponse = await fetch(graphUrl, { cache: "force-cache" });
+        if (graphResponse.ok) graphData = await graphResponse.json();
+      }
+      dracoLoader.dispose();
+      model = gltf.scene;
+      normalizeModel(model);
+      contentRoot.add(model);
+      if (Array.isArray(graphData?.nodes)) createNodeInteraction(graphData.nodes);
+      setStatus("Modelo pronto. Inicie a experiência no Quest.");
+    }
+
+    async function checkSupport() {
+      if (!window.isSecureContext) {
+        enterButton.textContent = "HTTPS necessário";
+        setStatus("Abra esta página por HTTPS para usar WebXR.");
+        return false;
+      }
+      if (!navigator.xr) {
+        enterButton.textContent = "WebXR indisponível";
+        setStatus("Use o Meta Quest Browser com WebXR habilitado.");
+        return false;
+      }
+
+      const supported = await navigator.xr.isSessionSupported("immersive-ar");
+      enterButton.disabled = true;
+      enterButton.textContent = supported ? "Preparando experiência…" : "AR não compatível";
+      if (!supported) setStatus("Este dispositivo não oferece sessões immersive-ar.");
+      return supported;
+    }
+
+    async function startSession() {
+      noteWarmupCancelled = true;
+      noteWarmupRunId += 1;
+      cancelNoteCapture();
+      enterButton.disabled = true;
+      try {
+        xrSession = await navigator.xr.requestSession("immersive-ar", {
+          requiredFeatures: ["hit-test"],
+          optionalFeatures: ["anchors", "hand-tracking", "local-floor", "dom-overlay"],
+          domOverlay: { root: document.body }
+        });
+
+        await renderer.xr.setSession(xrSession);
+        referenceSpace = await xrSession.requestReferenceSpace("local-floor")
+          .catch(() => xrSession.requestReferenceSpace("local"));
+        viewerSpace = await xrSession.requestReferenceSpace("viewer");
+        hitTestSource = await xrSession.requestHitTestSource({
+          space: viewerSpace,
+          entityTypes: ["plane"]
+        });
+
+        xrSession.addEventListener("select", onSelect);
+        xrSession.addEventListener("end", endSession, { once: true });
+        document.body.classList.add("session-active");
+        xrHud.classList.add("visible");
+        setXrMessage("Mova a cabeça devagar e procure uma superfície.");
+      } catch (error) {
+        console.error(error);
+        setStatus(`Não foi possível iniciar AR: ${error.message}`);
+        enterButton.disabled = false;
+      }
+    }
+
+    function controlFromSelectEvent(event) {
+      if (!event.frame || !event.inputSource?.targetRaySpace || !referenceSpace) return null;
+      const pose = event.frame.getPose(event.inputSource.targetRaySpace, referenceSpace);
+      if (!pose) return null;
+      const origin = new THREE.Vector3(
+        pose.transform.position.x,
+        pose.transform.position.y,
+        pose.transform.position.z
+      );
+      const orientation = pose.transform.orientation;
+      const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(
+        new THREE.Quaternion(
+          orientation.x,
+          orientation.y,
+          orientation.z,
+          orientation.w
+        )
+      );
+      nodeRaycaster.set(origin, direction);
+      nodeRaycaster.far = 4;
+      return nodeRaycaster.intersectObjects(arNoteControls, false)[0]?.object ?? null;
+    }
+
+    function onSelect(event) {
+      if (arNoteGroup.visible) {
+        const control = controlFromSelectEvent(event) ?? pointedNoteControl;
+        if (control) {
+          activateNoteControl(control.userData.noteAction, event);
+          resetGestureState("await-release");
+        }
+        return;
+      }
+      if (!isPlaced && latestHitResult) placeAtHit(latestHitResult);
+    }
+
+    async function placeAtHit(hitResult) {
+      if (placementBusy || !referenceSpace) return;
+      placementBusy = true;
+
+      try {
+        disposeAnchor();
+        const pose = hitResult.getPose(referenceSpace);
+        if (!pose) return;
+
+        workingMatrix.fromArray(pose.transform.matrix);
+        workingMatrix.decompose(
+          placementRoot.position,
+          placementRoot.quaternion,
+          workingScale
+        );
+        placementRoot.scale.set(1, 1, 1);
+
+        if (typeof hitResult.createAnchor === "function") {
+          try {
+            currentAnchor = await hitResult.createAnchor();
+          } catch (anchorError) {
+            console.warn("Anchor indisponível; mantendo a pose da superfície.", anchorError);
+          }
+        }
+
+        isPlaced = true;
+        placementRoot.visible = true;
+        reticle.visible = false;
+        setXrMessage("Ancorado. Faça pinça com as duas mãos para ajustar a escala.");
+      } finally {
+        placementBusy = false;
+      }
+    }
+
+    function jointPosition(frame, jointSpace, target) {
+      if (!jointSpace) return false;
+      const pose = frame.getJointPose?.(jointSpace, referenceSpace)
+        ?? frame.getPose(jointSpace, referenceSpace);
+      if (!pose) return false;
+      target.set(
+        pose.transform.position.x,
+        pose.transform.position.y,
+        pose.transform.position.z
+      );
+      return true;
+    }
+
+    function updateNoteMicroGestures(frame, time) {
+      if (!arNoteGroup.visible || arNotePages.length < 2 || !xrSession) return;
+      const xrCamera = renderer.xr.getCamera(camera);
+      xrCamera.getWorldQuaternion(microGestureCameraQuaternion);
+      microGestureCameraRight
+        .set(1, 0, 0)
+        .applyQuaternion(microGestureCameraQuaternion)
+        .normalize();
+
+      for (const inputSource of xrSession.inputSources) {
+        if (!inputSource.hand) continue;
+        let state = noteMicroGestureStates.get(inputSource);
+        if (!state) {
+          state = {
+            wrist: new THREE.Vector3(),
+            thumb: new THREE.Vector3(),
+            thumbStart: new THREE.Vector3(),
+            thumbDelta: new THREE.Vector3(),
+            tips: Array.from({ length: 4 }, () => new THREE.Vector3()),
+            bases: Array.from({ length: 4 }, () => new THREE.Vector3()),
+            tracking: false,
+            handClosed: false,
+            lastAllClosedAt: 0,
+            cooldownUntil: 0,
+            awaitingNeutral: false,
+            neutralSince: 0,
+            startedAt: 0
+          };
+          noteMicroGestureStates.set(inputSource, state);
+        }
+
+        const fingerNames = ["index-finger", "middle-finger", "ring-finger", "pinky-finger"];
+        const hasCoreJoints =
+          jointPosition(frame, inputSource.hand.get("wrist"), state.wrist) &&
+          jointPosition(frame, inputSource.hand.get("thumb-tip"), state.thumb);
+        if (!hasCoreJoints) {
+          state.tracking = false;
+          if (time - state.lastAllClosedAt > 180) state.handClosed = false;
+          continue;
+        }
+
+        let closedFingers = 0;
+        for (let index = 0; index < fingerNames.length; index += 1) {
+          const name = fingerNames[index];
+          const tipOk = jointPosition(
+            frame,
+            inputSource.hand.get(`${name}-tip`),
+            state.tips[index]
+          );
+          const baseOk = jointPosition(
+            frame,
+            inputSource.hand.get(`${name}-metacarpal`)
+              ?? inputSource.hand.get(`${name}-phalanx-proximal`),
+            state.bases[index]
+          );
+          if (
+            tipOk &&
+            baseOk &&
+            state.tips[index].distanceTo(state.wrist) <
+              state.bases[index].distanceTo(state.wrist) + 0.048
+          ) {
+            closedFingers += 1;
+          }
+        }
+        if (closedFingers === 4) {
+          state.lastAllClosedAt = time;
+          state.handClosed = true;
+        } else if (time - state.lastAllClosedAt > 180) {
+          state.handClosed = false;
+        }
+        const handClosed = state.handClosed;
+
+        if (!handClosed) {
+          state.tracking = false;
+          state.awaitingNeutral = false;
+          state.neutralSince = 0;
+          continue;
+        }
+        if (state.awaitingNeutral) {
+          const distanceToNeutral = state.thumbDelta
+            .copy(state.thumb)
+            .sub(state.thumbStart)
+            .length();
+          if (distanceToNeutral <= 0.018) {
+            if (!state.neutralSince) state.neutralSince = time;
+            if (time - state.neutralSince >= 60) {
+              state.awaitingNeutral = false;
+              state.neutralSince = 0;
+              state.thumbStart.copy(state.thumb);
+              state.startedAt = time;
+              state.cooldownUntil = time + 180;
+              state.tracking = true;
+            }
+          } else {
+            state.neutralSince = 0;
+          }
+          continue;
+        }
+        if (!state.tracking || time - state.startedAt > 1400) {
+          state.thumbStart.copy(state.thumb);
+          state.startedAt = time;
+          state.tracking = true;
+          continue;
+        }
+        if (time < state.cooldownUntil) continue;
+
+        const horizontalMovement = state.thumbDelta
+          .copy(state.thumb)
+          .sub(state.thumbStart)
+          .dot(microGestureCameraRight);
+        if (
+          Math.abs(horizontalMovement) < 0.024 ||
+          time - state.startedAt < 180
+        ) continue;
+
+        const action = horizontalMovement > 0 ? "next" : "previous";
+        const oldPage = arNotePage;
+        activateNoteControl(action);
+        state.awaitingNeutral = true;
+        state.neutralSince = 0;
+        state.cooldownUntil = time + 450;
+        if (arNotePage !== oldPage) {
+          setXrMessage(
+            horizontalMovement > 0
+              ? "Polegar para a direita: próxima página."
+              : "Polegar para a esquerda: página anterior."
+          );
+        }
+      }
+    }
+
+    function getPinchPoint(frame, inputSource) {
+      if (!inputSource.hand) return null;
+      const thumb = inputSource.hand.get("thumb-tip");
+      const index = inputSource.hand.get("index-finger-tip");
+      if (
+        !jointPosition(frame, thumb, thumbPosition) ||
+        !jointPosition(frame, index, indexPosition)
+      ) return null;
+
+      if (thumbPosition.distanceTo(indexPosition) > PINCH_THRESHOLD_METERS) return null;
+      return thumbPosition.clone().add(indexPosition).multiplyScalar(0.5);
+    }
+
+    function resetGestureState(nextMode = "idle") {
+      gestureMode = nextMode;
+      gestureStartedAt = 0;
+      previousTwoHandDistance = null;
+      previousRotationPoint = null;
+      pinchStartPoint = null;
+      pinchTravel = 0;
+      pendingSelectionPath = null;
+    }
+
+    function beginScaleGesture(points) {
+      gestureMode = "scaling";
+      previousTwoHandDistance = points[0].distanceTo(points[1]);
+      previousRotationPoint = null;
+      pinchStartPoint = null;
+      pendingSelectionPath = null;
+      setXrMessage("Escala: afaste ou aproxime as duas mãos.");
+    }
+
+    function updateHandGestures(frame, time) {
+      if (!isPlaced || !model || !xrSession) return;
+
+      const pinchPoints = [];
+      for (const inputSource of xrSession.inputSources) {
+        const point = getPinchPoint(frame, inputSource);
+        if (point) pinchPoints.push(point);
+      }
+
+      if (gestureMode === "await-release") {
+        if (pinchPoints.length === 0) resetGestureState();
+        return;
+      }
+
+      if (arNoteGroup.visible) {
+        return;
+      }
+
+      if (gestureMode === "note-pending" && pinchPoints.length >= 1) {
+        const point = pinchPoints[0];
+        if (previousRotationPoint) pinchTravel += point.distanceTo(previousRotationPoint);
+        previousRotationPoint = point.clone();
+        if (pinchTravel > 0.025) {
+          resetGestureState("await-release");
+          setXrMessage("Pinça de leitura cancelada pelo movimento. Solte e tente novamente.");
+          return;
+        }
+        if (time - gestureStartedAt >= 160) {
+          const path = pendingSelectionPath;
+          resetGestureState("await-release");
+          setXrMessage(`Solicitando ${path}…`);
+          void requestNote(path);
+        }
+        return;
+      }
+
+      if (pinchPoints.length >= 2) {
+        if (gestureMode !== "scaling") {
+          if (gestureMode !== "scale-pending") {
+            gestureMode = "scale-pending";
+            gestureStartedAt = time;
+            previousTwoHandDistance = pinchPoints[0].distanceTo(pinchPoints[1]);
+            pendingSelectionPath ??= selectedNode?.id ?? null;
+            setXrMessage("Mantenha as duas pinças para confirmar a escala.");
+            return;
+          }
+          if (time - gestureStartedAt < 280) return;
+          beginScaleGesture(pinchPoints);
+        }
+        const distance = pinchPoints[0].distanceTo(pinchPoints[1]);
+        if (previousTwoHandDistance && previousTwoHandDistance > 0.001) {
+          const ratio = THREE.MathUtils.clamp(
+            distance / previousTwoHandDistance,
+            0.92,
+            1.08
+          );
+          userScaleFactor = THREE.MathUtils.clamp(
+            userScaleFactor * ratio,
+            MIN_SCALE_FACTOR,
+            MAX_SCALE_FACTOR
+          );
+          contentRoot.scale.setScalar(baseModelScale * userScaleFactor);
+        }
+        previousTwoHandDistance = distance;
+        return;
+      }
+
+      if (gestureMode === "scaling") {
+        resetGestureState("await-release");
+        setXrMessage("Solte as duas pinças antes de iniciar a rotação.");
+        return;
+      }
+
+      if (pinchPoints.length === 0) {
+        if (gestureMode === "note-pending") {
+          if (
+            pendingSelectionPath &&
+            time - gestureStartedAt >= 60 &&
+            pinchTravel < 0.025
+          ) {
+            const path = pendingSelectionPath;
+            resetGestureState();
+            setXrMessage(`Solicitando ${path}…`);
+            void requestNote(path);
+          } else {
+            resetGestureState();
+          }
+          return;
+        }
+        if (gestureMode === "rotation-pending" || gestureMode === "scale-pending") {
+          if (
+            pendingSelectionPath &&
+            time - gestureStartedAt < 600 &&
+            pinchTravel < 0.018
+          ) {
+            void requestNote(pendingSelectionPath);
+          }
+          resetGestureState();
+          return;
+        }
+        if (gestureMode === "rotating") {
+          resetGestureState();
+          setXrMessage("Uma pinça gira; duas pinças ajustam a escala.");
+        }
+        return;
+      }
+
+      const point = pinchPoints[0];
+      if (gestureMode === "scale-pending") {
+        gestureMode = "rotation-pending";
+        previousTwoHandDistance = null;
+        previousRotationPoint = point.clone();
+        return;
+      }
+      if (gestureMode === "idle") {
+        pendingSelectionPath = selectedNode?.id ?? null;
+        gestureMode = pendingSelectionPath ? "note-pending" : "rotation-pending";
+        gestureStartedAt = time;
+        previousRotationPoint = point.clone();
+        pinchStartPoint = point.clone();
+        pinchTravel = 0;
+        if (pendingSelectionPath) {
+          setXrMessage(`Pinça detectada em ${selectedNode.label}. Mantenha brevemente para abrir.`);
+        }
+        return;
+      }
+
+      if (gestureMode === "rotation-pending") {
+        if (previousRotationPoint) pinchTravel += point.distanceTo(previousRotationPoint);
+        previousRotationPoint = point.clone();
+        const rotationDelay = pendingSelectionPath ? 420 : 220;
+        if (time - gestureStartedAt < rotationDelay) return;
+        gestureMode = "rotating";
+        setXrMessage("Rotação: mova a mão horizontal ou verticalmente.");
+        return;
+      }
+
+      if (gestureMode === "rotating" && previousRotationPoint) {
+        const deltaX = point.x - previousRotationPoint.x;
+        const deltaY = point.y - previousRotationPoint.y;
+        const deadZone = 0.0015;
+        if (Math.abs(deltaX) > deadZone) {
+          contentRoot.rotation.y -= deltaX * 4.5;
+        }
+        if (Math.abs(deltaY) > deadZone) {
+          contentRoot.rotation.x = THREE.MathUtils.clamp(
+            contentRoot.rotation.x + deltaY * 3,
+            -Math.PI / 3,
+            Math.PI / 3
+          );
+        }
+        previousRotationPoint.copy(point);
+      }
+    }
+
+    function updateNodePointing(frame, time) {
+      if (!isPlaced || !nodeInteractionRoot || !xrSession) return;
+      let nearest = null;
+      let nearestControl = null;
+      let handRayIndex = 0;
+      for (const inputSource of xrSession.inputSources) {
+        if (!inputSource.hand) continue;
+        const base = inputSource.hand.get("index-finger-phalanx-proximal")
+          ?? inputSource.hand.get("index-finger-metacarpal");
+        const tip = inputSource.hand.get("index-finger-tip");
+        if (
+          !jointPosition(frame, base, pointerBasePosition) ||
+          !jointPosition(frame, tip, pointerTipPosition)
+        ) continue;
+        const hasThumb = jointPosition(
+          frame,
+          inputSource.hand.get("thumb-tip"),
+          pointerThumbPosition
+        );
+        const hasThumbBase = jointPosition(
+          frame,
+          inputSource.hand.get("thumb-phalanx-proximal")
+            ?? inputSource.hand.get("thumb-metacarpal"),
+          pointerThumbBasePosition
+        );
+        const pinching =
+          hasThumb &&
+          pointerThumbPosition.distanceTo(pointerTipPosition) <
+            PINCH_THRESHOLD_METERS * 1.15;
+        const hasPalm =
+          jointPosition(
+            frame,
+            inputSource.hand.get("wrist"),
+            pointerPalmWristPosition
+          ) &&
+          jointPosition(
+            frame,
+            inputSource.hand.get("middle-finger-metacarpal"),
+            pointerPalmCenterPosition
+          );
+        if (hasPalm) {
+          pointerRayOrigin
+            .copy(pointerPalmWristPosition)
+            .lerp(pointerPalmCenterPosition, 0.68);
+          const targetRayPose = inputSource.targetRaySpace
+            ? frame.getPose(inputSource.targetRaySpace, referenceSpace)
+            : null;
+          if (targetRayPose) {
+            const orientation = targetRayPose.transform.orientation;
+            pointerAimQuaternion.set(
+              orientation.x,
+              orientation.y,
+              orientation.z,
+              orientation.w
+            );
+            pointerDirection
+              .set(0, 0, -1)
+              .applyQuaternion(pointerAimQuaternion)
+              .normalize();
+          } else {
+            pointerDirection
+              .copy(pointerPalmCenterPosition)
+              .sub(pointerPalmWristPosition)
+              .normalize();
+          }
+        } else if (pinching) {
+          pointerRayOrigin.copy(pointerThumbPosition);
+          if (hasThumbBase) {
+            pointerDirection
+              .copy(pointerThumbPosition)
+              .sub(pointerThumbBasePosition)
+              .normalize();
+          } else {
+            pointerDirection.copy(pointerTipPosition).sub(pointerBasePosition).normalize();
+          }
+        } else {
+          pointerRayOrigin.copy(pointerTipPosition);
+          pointerDirection.copy(pointerTipPosition).sub(pointerBasePosition).normalize();
+        }
+        nodeRaycaster.set(pointerRayOrigin, pointerDirection);
+        nodeRaycaster.far = 4;
+        if (handRayIndex < handPointerRays.length) {
+          const handRay = handPointerRays[handRayIndex++];
+          handRay.visible =
+            isPlaced &&
+            !isMicroGestureHandClosed(inputSource);
+          if (handRay.visible) {
+            const positions = handRay.geometry.attributes.position.array;
+            positions[0] = pointerRayOrigin.x;
+            positions[1] = pointerRayOrigin.y;
+            positions[2] = pointerRayOrigin.z;
+            positions[3] = pointerRayOrigin.x + pointerDirection.x * 3.5;
+            positions[4] = pointerRayOrigin.y + pointerDirection.y * 3.5;
+            positions[5] = pointerRayOrigin.z + pointerDirection.z * 3.5;
+            handRay.geometry.attributes.position.needsUpdate = true;
+          }
+        }
+        if (arNoteGroup.visible) {
+          const controlHit = nodeRaycaster.intersectObjects(arNoteControls, false)[0];
+          if (controlHit) nearestControl = controlHit.object;
+          continue;
+        }
+        let hit = null;
+        for (const proxy of nodeInteractionRoot.children) {
+          if (!proxy.userData.node) continue;
+          proxy.getWorldPosition(nodeWorldPosition);
+          nodeRayOffset.copy(nodeWorldPosition).sub(pointerRayOrigin);
+          const depth = nodeRayOffset.dot(pointerDirection);
+          if (depth <= 0.05 || depth > 4) continue;
+          const perpendicularSquared = Math.max(
+            0,
+            nodeRayOffset.lengthSq() - depth * depth
+          );
+          const angularScore = perpendicularSquared / (depth * depth);
+          if (angularScore > 0.0012) continue;
+          const score = angularScore + depth * 0.000001;
+          if (!hit || score < hit.score) {
+            hit = { object: proxy, distance: depth, score };
+          }
+        }
+        if (hit && (!nearest || hit.score < nearest.score)) nearest = hit;
+      }
+      for (let index = handRayIndex; index < handPointerRays.length; index += 1) {
+        handPointerRays[index].visible = false;
+      }
+
+      if (arNoteGroup.visible) {
+        if (nearestControl) {
+          lastNoteControlHitAt = time;
+          if (pointedNoteControl === nearestControl) {
+            candidateNoteControl = null;
+          } else if (candidateNoteControl === nearestControl) {
+            if (time - candidateNoteControlSince >= 70) {
+              pointedNoteControl = nearestControl;
+              candidateNoteControl = null;
+            }
+          } else {
+            candidateNoteControl = nearestControl;
+            candidateNoteControlSince = time;
+          }
+        } else if (time - lastNoteControlHitAt > 420) {
+          pointedNoteControl = null;
+          candidateNoteControl = null;
+        }
+        selectedNode = null;
+        candidateNode = null;
+        if (highlightMesh) highlightMesh.visible = false;
+        for (const control of arNoteControls) {
+          const active = control === pointedNoteControl;
+          control.scale.setScalar(active ? 1.35 : 1);
+          control.material.opacity = active ? 1 : 0.82;
+        }
+        if (pointedNoteControl) {
+          const action = pointedNoteControl.userData.noteAction;
+          const label = action === "close"
+            ? "fechar"
+            : action === "pin"
+              ? (noteWindowPinned ? "soltar a janela" : "fixar a janela")
+              : action === "next" ? "avançar" : "voltar";
+          setXrMessage(`Faça uma pinça para ${label}.`);
+        }
+        return;
+      }
+
+      pointedNode = nearest?.object.userData.node ?? null;
+      if (pointedNode) {
+        lastNodeHitAt = time;
+        if (selectedNode?.id === pointedNode.id) {
+          candidateNode = null;
+        } else if (candidateNode?.id === pointedNode.id) {
+          if (time - candidateNodeSince >= 110) {
+            selectedNode = pointedNode;
+            candidateNode = null;
+          }
+        } else {
+          candidateNode = pointedNode;
+          candidateNodeSince = time;
+        }
+      } else if (time - lastNodeHitAt > 280) {
+        selectedNode = null;
+        candidateNode = null;
+      }
+      if (!highlightMesh) return;
+      highlightMesh.visible = Boolean(selectedNode);
+      if (selectedNode) {
+        highlightMesh.position.set(selectedNode.x, selectedNode.z, -selectedNode.y);
+        highlightMesh.material.color.set(selectedNode.color ?? "#8db4ff");
+        const pulse = 1.18 + Math.sin(time * 0.008) * 0.12;
+        highlightMesh.scale.setScalar(pulse);
+        if (gestureMode === "idle") {
+          setXrMessage(`${selectedNode.label}. Faça uma pinça para abrir a nota.`);
+        }
+      }
+    }
+
+    async function requestNote(path) {
+      if (noteRequestBusy) return;
+      const config = JSON.parse(localStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
+      if (!config?.url || !config?.token) {
+        setXrMessage("Configure a ponte do Obsidian antes de entrar em AR.");
+        return;
+      }
+      noteRequestBusy = true;
+      const cached = getCachedNote(path) ?? await getPersistentCachedNote(path);
+      if (cached && xrSession) {
+        try {
+          rememberRecentNote(path);
+          setXrMessage(`Abrindo ${path} do cache…`);
+          noteTitle.textContent = cached.title;
+          await showNoteInAr(cached.title, cached.source, path, cached.pages);
+          setXrMessage(`Nota aberta do cache: ${cached.title}.`);
+          if (!cached.complete) void completeCachedNote(path, cached, config);
+        } finally {
+          noteRequestBusy = false;
+        }
+        return;
+      }
+      setXrMessage(`Lendo ${path}…`);
+      notePanel.classList.add("visible");
+      noteTitle.textContent = path;
+      await renderNoteMarkdown("Lendo nota no Obsidian…");
+      try {
+        const response = await fetch(`${config.url}/note`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${config.token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ path })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error ?? `HTTP ${response.status}`);
+        rememberRecentNote(path);
+        noteTitle.textContent = result.title;
+        await renderNoteMarkdown(result.content);
+        await highlightNoteCode();
+        await prepareNoteImages(config, path);
+        await showNoteInAr(result.title, result.content, path);
+        setXrMessage(`Nota aberta: ${result.title}. Use os botões 3D para navegar ou fechar.`);
+      } catch (error) {
+        await renderNoteMarkdown(`**Não foi possível ler a nota:** ${error.message}`);
+        notePanel.classList.add("visible");
+        setXrMessage(`Falha ao ler a nota: ${error.message}`);
+      } finally {
+        noteRequestBusy = false;
+      }
+    }
+
+    function updatePlacement(frame) {
+      if (noteWindowAnchor && referenceSpace) {
+        const notePose = frame.getPose(noteWindowAnchor.anchorSpace, referenceSpace);
+        if (notePose) {
+          workingMatrix.fromArray(notePose.transform.matrix);
+          workingMatrix.decompose(
+            arNoteGroup.position,
+            arNoteGroup.quaternion,
+            workingScale
+          );
+          arNoteGroup.scale.set(1, 1, 1);
+        }
+      }
+      if (currentAnchor && referenceSpace) {
+        const anchorPose = frame.getPose(currentAnchor.anchorSpace, referenceSpace);
+        if (anchorPose) {
+          workingMatrix.fromArray(anchorPose.transform.matrix);
+          workingMatrix.decompose(
+            placementRoot.position,
+            placementRoot.quaternion,
+            workingScale
+          );
+          placementRoot.scale.set(1, 1, 1);
+        }
+      }
+
+      if (isPlaced || !hitTestSource || !referenceSpace) {
+        latestHitResult = null;
+        if (!isPlaced) reticle.visible = false;
+        return;
+      }
+
+      const results = frame.getHitTestResults(hitTestSource);
+      latestHitResult = results[0] ?? null;
+      if (!latestHitResult) {
+        reticle.visible = false;
+        return;
+      }
+
+      const pose = latestHitResult.getPose(referenceSpace);
+      if (!pose) return;
+      reticle.matrix.fromArray(pose.transform.matrix);
+      reticle.visible = true;
+    }
+
+    function render(time, frame) {
+      if (frame && referenceSpace) {
+        updatePlacement(frame);
+        updateNoteMicroGestures(frame, time);
+        updateNodePointing(frame, time);
+        updateHandGestures(frame, time);
+
+        if (time - previousUiUpdate > 400 && !isPlaced) {
+          setXrMessage(
+            latestHitResult
+              ? "Superfície encontrada. Faça uma pinça ou pressione o gatilho."
+              : "Mova a cabeça devagar e procure uma superfície."
+          );
+          previousUiUpdate = time;
+        }
+      }
+      renderer.render(scene, camera);
+    }
+
+    function resetPlacement() {
+      disposeAnchor();
+      isPlaced = false;
+      placementRoot.visible = false;
+      userScaleFactor = 1;
+      resetGestureState();
+      if (model) {
+        contentRoot.scale.setScalar(baseModelScale);
+        contentRoot.rotation.set(0, Math.PI, 0);
+      }
+      setXrMessage("Procure outra superfície e faça uma pinça para posicionar.");
+    }
+
+    function endSession() {
+      hitTestSource?.cancel();
+      hitTestSource = null;
+      disposeAnchor();
+      if (noteWindowAnchor?.delete) noteWindowAnchor.delete();
+      noteWindowAnchor = null;
+      noteWindowPinned = false;
+      xrSession = null;
+      referenceSpace = null;
+      viewerSpace = null;
+      latestHitResult = null;
+      isPlaced = false;
+      resetGestureState();
+      placementRoot.visible = false;
+      reticle.visible = false;
+      document.body.classList.remove("session-active");
+      xrHud.classList.remove("visible");
+      notePanel.classList.remove("visible");
+      disposeArNote();
+      resetNoteMicroGestures();
+      for (const ray of handPointerRays) ray.visible = false;
+      enterButton.disabled = false;
+      enterButton.textContent = "Entrar novamente em AR";
+    }
+
+    function resize() {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    }
+
+    enterButton.addEventListener("click", startSession);
+    saveBridgeButton.addEventListener("click", saveBridgeConfig);
+    closeNoteButton.addEventListener("click", closeNote);
+    replaceButton.addEventListener("click", resetPlacement);
+    addEventListener("resize", resize, { passive: true });
+    renderer.setAnimationLoop(render);
+
+    if (await checkSupport()) {
+      try {
+        const modelPromise = loadModel();
+        void warmRecentNotesDuringModelLoad();
+        await modelPromise;
+        enterButton.disabled = false;
+        enterButton.textContent = "Entrar em AR";
+      } catch (error) {
+        console.error(error);
+        setStatus(`Falha ao carregar Space.gltf: ${error.message}`);
+      }
+    }
+  </script>
+</body>
+</html>
