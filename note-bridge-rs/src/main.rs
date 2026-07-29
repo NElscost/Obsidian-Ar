@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    env,
+    env, fs,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Instant, SystemTime},
@@ -25,7 +25,7 @@ use walkdir::WalkDir;
 struct AppState {
     token: Arc<str>,
     vault: Arc<PathBuf>,
-    graph: Arc<PathBuf>,
+    graph: Option<Arc<PathBuf>>,
     pending: Option<Arc<PathBuf>>,
     graph_cache: Arc<RwLock<GraphCache>>,
     note_cache: Arc<RwLock<HashMap<String, CachedNote>>>,
@@ -67,6 +67,28 @@ struct NoteResponse {
     updated_at: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LiveGraph {
+    generated_at: String,
+    nodes: Vec<LiveNode>,
+    links: Vec<LiveLink>,
+}
+
+#[derive(Serialize)]
+struct LiveNode {
+    id: String,
+    label: String,
+    color: String,
+    val: u32,
+}
+
+#[derive(Serialize)]
+struct LiveLink {
+    source: String,
+    target: String,
+}
+
 fn env_path(name: &str) -> Result<PathBuf> {
     env::var_os(name)
         .map(PathBuf::from)
@@ -89,7 +111,13 @@ fn normalize_note_path(value: &str) -> String {
 }
 
 async fn refresh_graph(state: &AppState) -> Result<usize> {
-    let metadata = tokio::fs::metadata(state.graph.as_ref()).await?;
+    let Some(graph_path) = &state.graph else {
+        let notes = vault_note_paths(state.vault.as_ref())?;
+        let count = notes.len();
+        state.graph_cache.write().await.notes = notes;
+        return Ok(count);
+    };
+    let metadata = tokio::fs::metadata(graph_path.as_ref()).await?;
     let modified = metadata.modified().ok();
     {
         let cache = state.graph_cache.read().await;
@@ -97,7 +125,7 @@ async fn refresh_graph(state: &AppState) -> Result<usize> {
             return Ok(cache.notes.len());
         }
     }
-    let bytes = tokio::fs::read(state.graph.as_ref()).await?;
+    let bytes = tokio::fs::read(graph_path.as_ref()).await?;
     let graph: Value = serde_json::from_slice(&bytes)?;
     let notes = graph["nodes"]
         .as_array()
@@ -115,6 +143,257 @@ async fn refresh_graph(state: &AppState) -> Result<usize> {
     };
     println!("[GRAPH] lista atualizada sem reiniciar: {count} notas permitidas.");
     Ok(count)
+}
+
+fn vault_note_paths(vault: &Path) -> Result<HashSet<String>> {
+    Ok(WalkDir::new(vault)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| entry.file_name() != ".obsidian")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+        })
+        .filter_map(|entry| entry.path().strip_prefix(vault).ok().map(normalize_path))
+        .collect())
+}
+
+fn normalize_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn note_key(value: &str) -> String {
+    let normalized = value
+        .replace('\\', "/")
+        .trim()
+        .trim_start_matches("./")
+        .to_lowercase();
+    normalized
+        .strip_suffix(".md")
+        .unwrap_or(&normalized)
+        .to_string()
+}
+
+fn note_label(path: &str) -> String {
+    Path::new(path)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(path)
+        .to_string()
+}
+
+fn folder_color(path: &str) -> String {
+    const PALETTE: [&str; 12] = [
+        "#78a9ff", "#7bdcb5", "#d9a7ff", "#ff9f9f", "#ffd166", "#64d8ff", "#b8e986", "#ffb86b",
+        "#8be9fd", "#bd93f9", "#50fa7b", "#ff79c6",
+    ];
+    let folder = path.split('/').next().unwrap_or("");
+    let hash = folder.bytes().fold(2_166_136_261_u32, |value, byte| {
+        (value ^ u32::from(byte)).wrapping_mul(16_777_619)
+    });
+    PALETTE[hash as usize % PALETTE.len()].to_string()
+}
+
+fn wikilink_targets(content: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+    let mut offset = 0;
+    while let Some(start) = content[offset..].find("[[") {
+        let body_start = offset + start + 2;
+        let Some(end) = content[body_start..].find("]]") else {
+            break;
+        };
+        let body_end = body_start + end;
+        let target = content[body_start..body_end]
+            .split('|')
+            .next()
+            .unwrap_or("")
+            .split('#')
+            .next()
+            .unwrap_or("")
+            .trim();
+        if !target.is_empty() {
+            targets.push(target.to_string());
+        }
+        offset = body_end + 2;
+    }
+    targets
+}
+
+fn markdown_link_targets(content: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+    let mut offset = 0;
+    while let Some(start) = content[offset..].find("](") {
+        let body_start = offset + start + 2;
+        let Some(end) = content[body_start..].find(')') else {
+            break;
+        };
+        let body_end = body_start + end;
+        let target = content[body_start..body_end]
+            .split('#')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .trim_matches('<')
+            .trim_matches('>')
+            .replace("%20", " ");
+        if target.to_lowercase().ends_with(".md")
+            && !target.contains("://")
+            && !target.starts_with('#')
+        {
+            targets.push(target);
+        }
+        offset = body_end + 1;
+    }
+    targets
+}
+
+fn resolve_wikilink(
+    source: &str,
+    target: &str,
+    exact: &HashMap<String, String>,
+    by_stem: &HashMap<String, Option<String>>,
+) -> Option<String> {
+    let key = note_key(target);
+    if let Some(path) = exact.get(&key) {
+        return Some(path.clone());
+    }
+    let source_parent = Path::new(source).parent().unwrap_or_else(|| Path::new(""));
+    let relative = normalize_path(&source_parent.join(target));
+    if let Some(path) = exact.get(&note_key(&relative)) {
+        return Some(path.clone());
+    }
+    let stem = Path::new(target)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(target)
+        .to_lowercase();
+    by_stem.get(&stem).and_then(Clone::clone)
+}
+
+fn scan_live_graph(vault: &Path) -> Result<LiveGraph> {
+    let mut paths = vault_note_paths(vault)?.into_iter().collect::<Vec<_>>();
+    paths.sort_unstable();
+    let mut exact = HashMap::new();
+    let mut by_stem: HashMap<String, Option<String>> = HashMap::new();
+    for path in &paths {
+        exact.insert(note_key(path), path.clone());
+        let stem = note_label(path).to_lowercase();
+        by_stem
+            .entry(stem)
+            .and_modify(|value| *value = None)
+            .or_insert_with(|| Some(path.clone()));
+    }
+
+    let mut links = HashSet::new();
+    let mut degree = HashMap::<String, u32>::new();
+    for source in &paths {
+        let content = fs::read_to_string(vault.join(source)).unwrap_or_default();
+        let targets = wikilink_targets(&content)
+            .into_iter()
+            .chain(markdown_link_targets(&content));
+        for raw_target in targets {
+            let Some(target) = resolve_wikilink(source, &raw_target, &exact, &by_stem) else {
+                continue;
+            };
+            if source == &target || !links.insert((source.clone(), target.clone())) {
+                continue;
+            }
+            *degree.entry(source.clone()).or_default() += 1;
+            *degree.entry(target).or_default() += 1;
+        }
+    }
+
+    let nodes = paths
+        .into_iter()
+        .map(|path| LiveNode {
+            label: note_label(&path),
+            color: folder_color(&path),
+            val: degree.get(&path).copied().unwrap_or(0).clamp(1, 12),
+            id: path,
+        })
+        .collect();
+    let mut links = links
+        .into_iter()
+        .map(|(source, target)| LiveLink { source, target })
+        .collect::<Vec<_>>();
+    links.sort_unstable_by(|left, right| {
+        (&left.source, &left.target).cmp(&(&right.source, &right.target))
+    });
+    Ok(LiveGraph {
+        generated_at: format!("{:?}", SystemTime::now()),
+        nodes,
+        links,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_wikilinks_without_aliases_or_headings() {
+        assert_eq!(
+            wikilink_targets("[[Nota A|apelido]] e ![[Pasta/Nota B#Seção]]"),
+            vec!["Nota A", "Pasta/Nota B"]
+        );
+    }
+
+    #[test]
+    fn extracts_only_markdown_note_links() {
+        assert_eq!(
+            markdown_link_targets(
+                "[nota](Pasta/Minha%20Nota.md#Parte) [site](https://example.com)"
+            ),
+            vec!["Pasta/Minha Nota.md"]
+        );
+    }
+
+    #[test]
+    fn resolves_unique_note_by_stem() {
+        let exact = HashMap::from([(
+            "matemática/álgebra/matriz".to_string(),
+            "Matemática/Álgebra/Matriz.md".to_string(),
+        )]);
+        let by_stem = HashMap::from([(
+            "matriz".to_string(),
+            Some("Matemática/Álgebra/Matriz.md".to_string()),
+        )]);
+        assert_eq!(
+            resolve_wikilink("Outra.md", "Matriz", &exact, &by_stem),
+            Some("Matemática/Álgebra/Matriz.md".to_string())
+        );
+    }
+}
+
+async fn live_graph(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let started = Instant::now();
+    if !authorized(&headers, &state.token) {
+        return error(StatusCode::UNAUTHORIZED, "Token inválido.");
+    }
+    let vault = state.vault.clone();
+    match tokio::task::spawn_blocking(move || scan_live_graph(vault.as_ref())).await {
+        Ok(Ok(graph)) => {
+            let notes = graph
+                .nodes
+                .iter()
+                .map(|node| node.id.clone())
+                .collect::<HashSet<_>>();
+            state.graph_cache.write().await.notes.extend(notes);
+            println!(
+                "[GRAPH] grafo dinâmico: {} nós, {} conexões ({} ms).",
+                graph.nodes.len(),
+                graph.links.len(),
+                started.elapsed().as_millis()
+            );
+            (StatusCode::OK, Json(graph)).into_response()
+        }
+        Ok(Err(err)) => error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        Err(err) => error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
 }
 
 async fn note_is_allowed(state: &AppState, path: &str) -> Result<bool> {
@@ -353,7 +632,9 @@ async fn main() -> Result<()> {
         .context("SPACE_NOTE_TOKEN é obrigatório")?
         .into();
     let vault = tokio::fs::canonicalize(env_path("SPACE_VAULT_PATH")?).await?;
-    let graph = env_path("SPACE_GRAPH_PATH")?;
+    let graph = env::var_os("SPACE_GRAPH_PATH")
+        .map(PathBuf::from)
+        .filter(|path| path.is_file());
     let pending = env::var_os("SPACE_PENDING_OPTIMIZATION_PATH").map(PathBuf::from);
     let allowed_origin =
         env::var("SPACE_ALLOWED_ORIGIN").context("SPACE_ALLOWED_ORIGIN é obrigatório")?;
@@ -361,7 +642,7 @@ async fn main() -> Result<()> {
     let state = AppState {
         token,
         vault: Arc::new(vault),
-        graph: Arc::new(graph),
+        graph: graph.map(Arc::new),
         pending: pending.map(Arc::new),
         graph_cache: Default::default(),
         note_cache: Default::default(),
@@ -375,6 +656,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/verify", get(verify))
+        .route("/graph", get(live_graph))
         .route("/pending-optimization", get(pending_optimization))
         .route("/note", post(read_note))
         .route("/asset", post(read_asset))

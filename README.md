@@ -13,32 +13,30 @@ Visualizador WebXR para explorar um grafo 3D do Obsidian em realidade aumentada 
 - Markdown, tabelas, blocos de código, imagens e fórmulas LaTeX;
 - cache de notas e pré-processamento fora da sessão AR;
 - ponte HTTP em Rust/Axum;
+- geração direta do grafo 3D a partir dos arquivos Markdown do vault;
+- nós coloridos por pasta, rótulos em atlas compartilhado e layout 3D em tempo real;
+- modo glTF opcional para grafos preparados no Blender;
 - pipeline offline de validação, otimização e compressão Draco do glTF.
 
 ## Arquitetura
 
 ```text
-Obsidian + 3D Graph New
-        |
-        v
-export-obsidian-graph.js
-        |
-        v
-graph.json -> Blender -> graph2.gltf/.bin
-        |                    |
-        |                    v
-        |           glTF Transform + Draco
-        |                    |
-        v                    v
-Ponte Axum <---------- Space.gltf/.bin
-        |                    |
-        +------ HTTPS -------+
-                 |
-                 v
-             Meta Quest
+                         ┌─> /graph ─> Force layout ─> Three.js
+Vault Markdown ─> Axum ──┤                         (modo direto)
+                         │
+                         └─> /note e /asset ─> painel 3D
+
+Fluxo opcional:
+
+Obsidian/graph.json ─> Blender ─> glTF + Draco ─> Three.js
+
+Todos os fluxos usam HTTPS para chegar ao Meta Quest.
 ```
 
-O `graph.json`, os modelos e as configurações locais são gerados no computador do usuário e não são versionados.
+No modo direto, o navegador solicita à ponte somente a lista de nós e conexões. O
+conteúdo das notas continua sendo carregado sob demanda. O `graph.json`, os
+modelos e as configurações locais são gerados no computador do usuário e não são
+versionados.
 
 ## Requisitos
 
@@ -46,13 +44,16 @@ O `graph.json`, os modelos e as configurações locais são gerados no computado
 
 - Windows 10 ou 11;
 - Obsidian com suporte ao CLI;
-- plugin **3D Graph New**;
-- Blender 3.6 ou superior;
 - Node.js 22.13 ou superior e npm;
 - Rust estável com Cargo;
 - Cloudflare Tunnel (`cloudflared`);
 - Android Platform Tools, somente para configuração por ADB;
 - Git, para clonar e atualizar o projeto.
+
+Para o fluxo glTF opcional:
+
+- plugin **3D Graph New**;
+- Blender 3.6 ou superior.
 
 ### Meta Quest
 
@@ -72,7 +73,10 @@ npm ci --prefix .\sites-space-ar
 cargo build --release --manifest-path .\note-bridge-rs\Cargo.toml
 ```
 
-O repositório não contém um grafo ou um arquivo `.blend` pessoal. Use `graph.example.json` como referência do formato e coloque seu template do Blender em `space2.blend` antes de executar o pipeline.
+O repositório não contém um grafo ou um arquivo `.blend` pessoal. Esses arquivos
+só são necessários para o modo glTF. Use `graph.example.json` como referência do
+formato e coloque seu template do Blender em `space2.blend` antes de executar o
+pipeline.
 
 ## Configuração
 
@@ -90,6 +94,9 @@ O assistente solicita os caminhos locais e cria:
 Esses arquivos são ignorados pelo Git. Os exemplos seguros são `space-ar.config.example.json` e `note-bridge.config.example.json`.
 
 ## Gerar e otimizar o modelo
+
+Esta etapa é opcional. Para gerar o grafo diretamente do vault, pule para
+**Ponte de notas**.
 
 Abra o Obsidian e a visualização global do **3D Graph New** antes de exportar.
 
@@ -141,6 +148,9 @@ A ponte em Rust/Axum:
 - restringe leituras ao vault configurado;
 - rejeita travessia de diretório;
 - usa token aleatório por execução;
+- varre os arquivos Markdown e expõe nós e links em `/graph`;
+- reconhece wikilinks, aliases, headings e links Markdown locais;
+- atualiza o grafo sem Blender e sem reiniciar a ponte;
 - entrega notas e artefatos pré-processados;
 - mantém cache em memória;
 - exibe diagnóstico das leituras no terminal.
@@ -174,6 +184,15 @@ npm run test --prefix .\sites-space-ar
 
 WebXR imersivo exige contexto seguro. Em um Quest, publique o site e a ponte em HTTPS; `localhost` serve apenas para desenvolvimento no próprio computador.
 
+Na página inicial, marque **Gerar o grafo diretamente do vault, sem Blender ou
+glTF**. Nesse modo:
+
+- o layout é calculado no navegador e armazenado localmente para reaberturas;
+- nós usam uma malha instanciada e as conexões usam uma geometria compartilhada;
+- os nomes das notas usam um único atlas de textura;
+- o limite de escala por gesto é `10×` (`4×` no modo glTF);
+- cores são derivadas da primeira pasta de cada nota.
+
 ## Segurança e privacidade
 
 Antes de publicar uma alteração, confirme que estes itens continuam ignorados:
@@ -194,6 +213,9 @@ Não exponha a ponte diretamente sem token. O modelo 3D também pode conter os n
 - WebXR varia entre versões do navegador do Quest;
 - anchors podem não persistir após encerrar a sessão;
 - notas muito grandes ainda podem causar um pico no primeiro processamento;
+- vaults muito grandes aumentam o tempo inicial do cálculo de layout;
+- a extração direta reconhece links de notas, mas não replica integralmente todos
+  os filtros, grupos e plugins do grafo visual do Obsidian;
 - LaTeX e Markdown são renderizados em páginas rasterizadas para uso eficiente no painel 3D;
 - o pipeline atual usa WebGL no cliente; WebGPU ainda não oferece ganho garantido no navegador do Quest;
 - Draco reduz transferência e armazenamento, mas aumenta o custo de decodificação no dispositivo;
@@ -211,7 +233,14 @@ O `.gltf` referencia um buffer externo. Publique o `.gltf` e o `.bin` da mesma e
 
 ### A nota não abre
 
-Verifique o terminal da ponte, o caminho do nó no `graph.json`, a URL HTTPS e o token configurado no Quest.
+Verifique o terminal da ponte, o caminho do nó retornado por `/graph`, a URL
+HTTPS e o token configurado no Quest.
+
+### O grafo direto não aparece
+
+Confirme que a opção de grafo direto está marcada antes de recarregar a página.
+Na tela inicial, aguarde a mensagem `Grafo dinâmico pronto` antes de entrar em
+AR. Se necessário, feche a aba do Quest para eliminar uma versão antiga em cache.
 
 ### A ponte não compila
 
@@ -242,13 +271,12 @@ Obsidian-Ar/
 ## Fluxo diário
 
 ```powershell
-# 1. Abra o Obsidian e o grafo 3D.
-# 2. Atualize o modelo.
-.\Scripts\Update-SpaceModel.ps1 -Mode All -FromObsidian
-
-# 3. Inicie a ponte.
+# 1. Inicie a ponte. O modo direto lê o vault automaticamente.
 .\Scripts\Iniciar-NoteBridge.bat
 
-# 4. Se necessário, envie a configuração ao Quest.
+# 2. Se necessário, envie a configuração ao Quest.
 .\Scripts\Enviar-NoteBridge-Quest.bat
+
+# Opcional: reconstrua o glTF quando estiver usando o modo Blender.
+.\Scripts\Update-SpaceModel.ps1 -Mode All -FromObsidian
 ```

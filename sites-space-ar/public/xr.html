@@ -153,6 +153,20 @@
     }
 
     .bridge-config button { min-height: 44px; }
+    .graph-mode {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: #cbd5e1;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .graph-mode input {
+      width: 18px;
+      min-height: 18px;
+      margin: 0;
+      accent-color: #75a7ff;
+    }
     .bridge-feedback {
       min-height: 18px;
       margin: -3px 2px 0;
@@ -423,6 +437,10 @@
       <div class="bridge-config">
         <input id="bridge-url" type="url" placeholder="URL HTTPS da ponte do Obsidian">
         <input id="bridge-token" type="password" placeholder="Token da ponte">
+        <label class="graph-mode">
+          <input id="dynamic-graph" type="checkbox" checked>
+          Gerar o grafo diretamente do vault, sem Blender ou glTF
+        </label>
         <button id="save-bridge" type="button">Salvar acesso às notas</button>
         <p id="bridge-feedback" class="bridge-feedback" role="status"></p>
       </div>
@@ -445,8 +463,6 @@
 
   <script type="module">
     import * as THREE from "three";
-    import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-    import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
     import { marked } from "https://cdn.jsdelivr.net/npm/marked@15.0.12/+esm";
     import DOMPurify from "https://cdn.jsdelivr.net/npm/dompurify@3.2.6/+esm";
 
@@ -454,8 +470,11 @@
     const TARGET_SIZE_METERS = 0.28;
     const MIN_SCALE_FACTOR = 0.25;
     const MAX_SCALE_FACTOR = 4;
+    const MAX_DYNAMIC_SCALE_FACTOR = 10;
     const PINCH_THRESHOLD_METERS = 0.022;
     const NOTE_BRIDGE_STORAGE_KEY = "space-ar-note-bridge";
+    const DYNAMIC_GRAPH_STORAGE_KEY = "space-ar-dynamic-graph";
+    const GRAPH_LAYOUT_STORAGE_KEY = "space-ar-graph-layout-v1";
     const RECENT_NOTES_STORAGE_KEY = "space-ar-recent-notes";
 
     const enterButton = document.querySelector("#enter-ar");
@@ -466,6 +485,7 @@
     const bridgeUrlInput = document.querySelector("#bridge-url");
     const bridgeTokenInput = document.querySelector("#bridge-token");
     const saveBridgeButton = document.querySelector("#save-bridge");
+    const dynamicGraphToggle = document.querySelector("#dynamic-graph");
     const bridgeFeedback = document.querySelector("#bridge-feedback");
     const notePanel = document.querySelector("#note-panel");
     const noteTitle = document.querySelector("#note-title");
@@ -1824,7 +1844,12 @@
 
     let model = null;
     let graphData = null;
+    let forceGraph = null;
+    let dynamicGraphActive = false;
+    let dynamicGraphTicking = false;
+    let graphLayoutKey = "";
     let nodeInteractionRoot = null;
+    let dynamicLabelMaterial = null;
     let selectedNode = null;
     let highlightMesh = null;
     let noteRequestBusy = false;
@@ -1909,6 +1934,8 @@
       const storedBridge = JSON.parse(localStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
       if (storedBridge?.url) bridgeUrlInput.value = storedBridge.url;
       if (storedBridge?.token) bridgeTokenInput.value = storedBridge.token;
+      dynamicGraphToggle.checked =
+        localStorage.getItem(DYNAMIC_GRAPH_STORAGE_KEY) !== "false";
     } catch {}
 
     async function saveBridgeConfig() {
@@ -1933,7 +1960,14 @@
         const result = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(result.error ?? `HTTP ${response.status}`);
         localStorage.setItem(NOTE_BRIDGE_STORAGE_KEY, JSON.stringify({ url, token }));
+        localStorage.setItem(
+          DYNAMIC_GRAPH_STORAGE_KEY,
+          String(dynamicGraphToggle.checked)
+        );
         bridgeFeedback.textContent = `Conectado: ${result.notes} notas disponíveis.`;
+        if (dynamicGraphToggle.checked && !dynamicGraphActive) {
+          bridgeFeedback.textContent += " Recarregue a página para usar o grafo dinâmico.";
+        }
         bridgeFeedback.classList.add("success");
         void warmRecentNotesDuringModelLoad(true);
       } catch (error) {
@@ -2096,16 +2130,24 @@
     }
 
     function normalizeModel(root) {
+      // ForceGraph continua alterando as posições durante o aquecimento. Sempre
+      // meça a geometria em coordenadas locais e parta de uma transformação
+      // neutra, para que uma segunda normalização não acumule o deslocamento.
+      contentRoot.scale.set(1, 1, 1);
+      contentRoot.rotation.set(0, 0, 0);
+      root.position.set(0, 0, 0);
+      root.updateMatrixWorld(true);
+
       const box = new THREE.Box3().setFromObject(root);
       const size = box.getSize(new THREE.Vector3());
       const center = box.getCenter(new THREE.Vector3());
       const largestDimension = Math.max(size.x, size.y, size.z, 0.001);
 
-      root.position.sub(center);
-      root.position.y += size.y * 0.5;
+      root.position.set(-center.x, -center.y + size.y * 0.5, -center.z);
       baseModelScale = TARGET_SIZE_METERS / largestDimension;
       contentRoot.scale.setScalar(baseModelScale);
       contentRoot.rotation.set(0, Math.PI, 0);
+      contentRoot.updateMatrixWorld(true);
 
       root.traverse((object) => {
         if (!object.isMesh) return;
@@ -2134,7 +2176,11 @@
     function createNodeInteraction(nodes) {
       nodeInteractionRoot = new THREE.Group();
       nodeInteractionRoot.name = "node-interaction";
-      const proxyGeometry = new THREE.SphereGeometry(0.22, 8, 6);
+      const proxyGeometry = new THREE.SphereGeometry(
+        dynamicGraphActive ? 3.8 : 0.22,
+        8,
+        6
+      );
       const proxyMaterial = new THREE.MeshBasicMaterial({
         transparent: true,
         opacity: 0,
@@ -2142,7 +2188,7 @@
       });
       for (const node of nodes) {
         const proxy = new THREE.Mesh(proxyGeometry, proxyMaterial);
-        proxy.position.set(node.x, node.z, -node.y);
+        setNodeLocalPosition(proxy.position, node);
         proxy.userData.node = node;
         nodeInteractionRoot.add(proxy);
       }
@@ -2160,7 +2206,331 @@
       model.add(nodeInteractionRoot);
     }
 
-    async function loadModel() {
+    function createDynamicGraphVisual(data) {
+      const root = new THREE.Group();
+      root.name = "vault-graph";
+
+      const nodeGeometry = new THREE.SphereGeometry(2.7, 8, 6);
+      const nodeMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        toneMapped: false
+      });
+      const nodeMesh = new THREE.InstancedMesh(
+        nodeGeometry,
+        nodeMaterial,
+        data.nodes.length
+      );
+      nodeMesh.name = "vault-nodes";
+      const matrix = new THREE.Matrix4();
+      const color = new THREE.Color();
+      for (let index = 0; index < data.nodes.length; index += 1) {
+        const node = data.nodes[index];
+        matrix.makeTranslation(node.x ?? 0, node.y ?? 0, node.z ?? 0);
+        nodeMesh.setMatrixAt(index, matrix);
+        nodeMesh.setColorAt(index, color.set(node.color ?? "#8db4ff"));
+      }
+      nodeMesh.instanceMatrix.needsUpdate = true;
+      if (nodeMesh.instanceColor) nodeMesh.instanceColor.needsUpdate = true;
+      nodeMaterial.needsUpdate = true;
+      nodeMesh.computeBoundingBox();
+      nodeMesh.computeBoundingSphere();
+      root.add(nodeMesh);
+
+      const nodesById = new Map(data.nodes.map((node) => [node.id, node]));
+      const linePositions = [];
+      for (const link of data.links) {
+        const source = typeof link.source === "object"
+          ? link.source
+          : nodesById.get(link.source);
+        const target = typeof link.target === "object"
+          ? link.target
+          : nodesById.get(link.target);
+        if (!source || !target) continue;
+        linePositions.push(
+          source.x ?? 0, source.y ?? 0, source.z ?? 0,
+          target.x ?? 0, target.y ?? 0, target.z ?? 0
+        );
+      }
+      if (linePositions.length) {
+        const linkGeometry = new THREE.BufferGeometry();
+        linkGeometry.setAttribute(
+          "position",
+          new THREE.Float32BufferAttribute(linePositions, 3)
+        );
+        linkGeometry.computeBoundingBox();
+        linkGeometry.computeBoundingSphere();
+        const links = new THREE.LineSegments(
+          linkGeometry,
+          new THREE.LineBasicMaterial({
+            color: 0xb8c7e3,
+            transparent: true,
+            opacity: 0.68,
+            depthTest: false,
+            depthWrite: false,
+            toneMapped: false
+          })
+        );
+        links.name = "vault-links";
+        links.renderOrder = 1;
+        root.add(links);
+      }
+
+      root.add(createDynamicGraphLabels(data.nodes));
+      return root;
+    }
+
+    function createDynamicGraphLabels(nodes) {
+      const cellWidth = 192;
+      const cellHeight = 30;
+      const columns = 8;
+      const rows = Math.ceil(nodes.length / columns);
+      const canvas = document.createElement("canvas");
+      canvas.width = cellWidth * columns;
+      canvas.height = cellHeight * rows;
+      const context = canvas.getContext("2d", { alpha: true });
+      context.font = "600 18px system-ui, sans-serif";
+      context.textBaseline = "middle";
+
+      const positions = [];
+      const corners = [];
+      const uvs = [];
+      const indices = [];
+      const sizes = [];
+
+      for (let index = 0; index < nodes.length; index += 1) {
+        const node = nodes[index];
+        const column = index % columns;
+        const row = Math.floor(index / columns);
+        const x = column * cellWidth;
+        const y = row * cellHeight;
+        const label = String(node.label ?? node.id ?? "Nota")
+          .replace(/\.md$/i, "")
+          .slice(0, 28);
+
+        context.fillStyle = "rgba(5, 9, 18, 0.78)";
+        context.fillRect(x, y + 2, cellWidth, cellHeight - 4);
+        context.fillStyle = "#ffffff";
+        context.fillText(label, x + 6, y + cellHeight * 0.5, cellWidth - 12);
+
+        const u0 = x / canvas.width;
+        const u1 = (x + cellWidth) / canvas.width;
+        const v0 = 1 - (y + cellHeight) / canvas.height;
+        const v1 = 1 - y / canvas.height;
+        const base = index * 4;
+        const px = node.x ?? 0;
+        const py = node.y ?? 0;
+        const pz = node.z ?? 0;
+        const width = THREE.MathUtils.clamp(label.length * 0.00125, 0.016, 0.038);
+
+        positions.push(px, py, pz, px, py, pz, px, py, pz, px, py, pz);
+        corners.push(-0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5);
+        uvs.push(u0, v0, u1, v0, u1, v1, u0, v1);
+        sizes.push(width, 0.0056, width, 0.0056, width, 0.0056, width, 0.0056);
+        indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      }
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.minFilter = THREE.LinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      texture.generateMipmaps = false;
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute("corner", new THREE.Float32BufferAttribute(corners, 2));
+      geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+      geometry.setAttribute("labelSize", new THREE.Float32BufferAttribute(sizes, 2));
+      geometry.setIndex(indices);
+      geometry.computeBoundingSphere();
+
+      const material = new THREE.ShaderMaterial({
+        uniforms: {
+          labelAtlas: { value: texture },
+          labelScale: { value: Math.sqrt(userScaleFactor) }
+        },
+        vertexShader: `
+          attribute vec2 corner;
+          attribute vec2 labelSize;
+          uniform float labelScale;
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
+            viewPosition.xy += corner * labelSize * labelScale;
+            viewPosition.y += 0.0075 * labelScale;
+            gl_Position = projectionMatrix * viewPosition;
+          }
+        `,
+        fragmentShader: `
+          uniform sampler2D labelAtlas;
+          varying vec2 vUv;
+          void main() {
+            vec4 sampleColor = texture2D(labelAtlas, vUv);
+            if (sampleColor.a < 0.08) discard;
+            gl_FragColor = sampleColor;
+          }
+        `,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false
+      });
+      dynamicLabelMaterial = material;
+      const labels = new THREE.Mesh(geometry, material);
+      labels.name = "vault-labels";
+      labels.frustumCulled = false;
+      labels.renderOrder = 2;
+      return labels;
+    }
+
+    function setNodeLocalPosition(target, node) {
+      if (dynamicGraphActive) {
+        target.set(node.x ?? 0, node.y ?? 0, node.z ?? 0);
+      } else {
+        target.set(node.x ?? 0, node.z ?? 0, -(node.y ?? 0));
+      }
+      return target;
+    }
+
+    function syncDynamicNodeProxies() {
+      if (!dynamicGraphActive || !nodeInteractionRoot) return;
+      for (const proxy of nodeInteractionRoot.children) {
+        if (proxy.userData.node) {
+          setNodeLocalPosition(proxy.position, proxy.userData.node);
+        }
+      }
+    }
+
+    function graphSignature(data) {
+      let hash = 2166136261;
+      const update = (value) => {
+        for (let index = 0; index < value.length; index += 1) {
+          hash ^= value.charCodeAt(index);
+          hash = Math.imul(hash, 16777619);
+        }
+      };
+      for (const node of data.nodes) update(node.id);
+      for (const link of data.links) {
+        update(typeof link.source === "string" ? link.source : link.source.id);
+        update(typeof link.target === "string" ? link.target : link.target.id);
+      }
+      return `compact-v2-${data.nodes.length}-${data.links.length}-${(hash >>> 0).toString(16)}`;
+    }
+
+    function restoreGraphLayout(data, key) {
+      try {
+        const cached = JSON.parse(localStorage.getItem(GRAPH_LAYOUT_STORAGE_KEY) ?? "null");
+        if (cached?.key !== key || !cached.positions) return false;
+        let restored = 0;
+        for (const node of data.nodes) {
+          const position = cached.positions[node.id];
+          if (!Array.isArray(position) || position.length !== 3) continue;
+          [node.x, node.y, node.z] = position;
+          node.vx = 0;
+          node.vy = 0;
+          node.vz = 0;
+          restored += 1;
+        }
+        return restored === data.nodes.length;
+      } catch {
+        return false;
+      }
+    }
+
+    function cacheGraphLayout() {
+      if (!dynamicGraphActive || !graphLayoutKey || !Array.isArray(graphData?.nodes)) return;
+      try {
+        const positions = Object.fromEntries(
+          graphData.nodes.map((node) => [
+            node.id,
+            [node.x ?? 0, node.y ?? 0, node.z ?? 0]
+          ])
+        );
+        localStorage.setItem(
+          GRAPH_LAYOUT_STORAGE_KEY,
+          JSON.stringify({ key: graphLayoutKey, positions })
+        );
+      } catch (error) {
+        console.warn("Não foi possível salvar o layout do grafo.", error);
+      }
+    }
+
+    async function loadDynamicGraph(config) {
+      setStatus("Lendo o vault e calculando o grafo 3D…");
+      const response = await fetch(`${config.url}/graph`, {
+        headers: { "Authorization": `Bearer ${config.token}` },
+        cache: "no-store"
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? `HTTP ${response.status}`);
+      if (!Array.isArray(data.nodes) || !Array.isArray(data.links)) {
+        throw new Error("A ponte retornou um grafo inválido.");
+      }
+
+      graphData = data;
+      graphLayoutKey = graphSignature(data);
+      const restored = restoreGraphLayout(data, graphLayoutKey);
+      const { default: ThreeForceGraph } = await import(
+        "https://esm.sh/three-forcegraph@1.43.1?external=three"
+      );
+      let stopLayout;
+      const layoutStopped = new Promise((resolve) => {
+        stopLayout = resolve;
+      });
+      forceGraph = new ThreeForceGraph()
+        .nodeId("id")
+        .nodeVal((node) => Math.max(1, Math.sqrt(node.val ?? 1)))
+        .nodeRelSize(7)
+        .nodeColor("color")
+        .nodeResolution(6)
+        .nodeOpacity(0.9)
+        .linkColor(() => "#8290a8")
+        .linkOpacity(0.24)
+        .linkWidth(0)
+        .warmupTicks(restored ? 0 : 180)
+        .cooldownTicks(restored ? 1 : 90)
+        .cooldownTime(restored ? 80 : 3500)
+        .onEngineStop(() => {
+          dynamicGraphTicking = false;
+          syncDynamicNodeProxies();
+          cacheGraphLayout();
+          stopLayout();
+        });
+      const charge = forceGraph.d3Force("charge");
+      if (charge?.strength) charge.strength(-26);
+      const linkForce = forceGraph.d3Force("link");
+      if (linkForce?.distance) linkForce.distance(16);
+      forceGraph.graphData(data);
+
+      dynamicGraphActive = true;
+      dynamicGraphTicking = true;
+      forceGraph.tickFrame();
+      await Promise.race([
+        layoutStopped,
+        new Promise((resolve) => setTimeout(resolve, restored ? 250 : 4500))
+      ]);
+      forceGraph.tickFrame();
+      forceGraph.pauseAnimation?.();
+      dynamicGraphTicking = false;
+      cacheGraphLayout();
+
+      // Use o ForceGraph somente para calcular o layout. A geometria visual é
+      // criada diretamente com Three.js para evitar diferenças de renderer no
+      // WebXR do Quest.
+      model = createDynamicGraphVisual(data);
+      contentRoot.add(model);
+      createNodeInteraction(data.nodes);
+      normalizeModel(model);
+      setStatus(
+        `Grafo dinâmico pronto: ${data.nodes.length} notas e ${data.links.length} conexões.`
+      );
+    }
+
+    async function loadGltfModel() {
+      const [{ GLTFLoader }, { DRACOLoader }] = await Promise.all([
+        import("three/addons/loaders/GLTFLoader.js"),
+        import("three/addons/loaders/DRACOLoader.js")
+      ]);
       const loader = new GLTFLoader();
       const dracoLoader = new DRACOLoader();
       dracoLoader.setDecoderPath(
@@ -2186,10 +2556,28 @@
       }
       dracoLoader.dispose();
       model = gltf.scene;
+      dynamicGraphActive = false;
       normalizeModel(model);
       contentRoot.add(model);
       if (Array.isArray(graphData?.nodes)) createNodeInteraction(graphData.nodes);
       setStatus("Modelo pronto. Inicie a experiência no Quest.");
+    }
+
+    async function loadModel() {
+      let config = null;
+      try {
+        config = JSON.parse(localStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
+      } catch {}
+      if (dynamicGraphToggle.checked && config?.url && config?.token) {
+        try {
+          await loadDynamicGraph(config);
+          return;
+        } catch (error) {
+          console.warn("Grafo dinâmico indisponível; usando glTF.", error);
+          setStatus(`Grafo dinâmico indisponível: ${error.message}. Carregando glTF…`);
+        }
+      }
+      await loadGltfModel();
     }
 
     async function checkSupport() {
@@ -2548,9 +2936,12 @@
           userScaleFactor = THREE.MathUtils.clamp(
             userScaleFactor * ratio,
             MIN_SCALE_FACTOR,
-            MAX_SCALE_FACTOR
+            dynamicGraphActive ? MAX_DYNAMIC_SCALE_FACTOR : MAX_SCALE_FACTOR
           );
           contentRoot.scale.setScalar(baseModelScale * userScaleFactor);
+          if (dynamicLabelMaterial) {
+            dynamicLabelMaterial.uniforms.labelScale.value = Math.sqrt(userScaleFactor);
+          }
         }
         previousTwoHandDistance = distance;
         return;
@@ -2829,10 +3220,10 @@
       if (!highlightMesh) return;
       highlightMesh.visible = Boolean(selectedNode);
       if (selectedNode) {
-        highlightMesh.position.set(selectedNode.x, selectedNode.z, -selectedNode.y);
+        setNodeLocalPosition(highlightMesh.position, selectedNode);
         highlightMesh.material.color.set(selectedNode.color ?? "#8db4ff");
         const pulse = 1.18 + Math.sin(time * 0.008) * 0.12;
-        highlightMesh.scale.setScalar(pulse);
+        highlightMesh.scale.setScalar(pulse * (dynamicGraphActive ? 16 : 1));
         if (gestureMode === "idle") {
           setXrMessage(`${selectedNode.label}. Faça uma pinça para abrir a nota.`);
         }
@@ -2938,6 +3329,10 @@
     }
 
     function render(time, frame) {
+      if (forceGraph && dynamicGraphTicking) {
+        forceGraph.tickFrame();
+        syncDynamicNodeProxies();
+      }
       if (frame && referenceSpace) {
         updatePlacement(frame);
         updateNoteMicroGestures(frame, time);
@@ -2961,6 +3356,9 @@
       isPlaced = false;
       placementRoot.visible = false;
       userScaleFactor = 1;
+      if (dynamicLabelMaterial) {
+        dynamicLabelMaterial.uniforms.labelScale.value = 1;
+      }
       resetGestureState();
       if (model) {
         contentRoot.scale.setScalar(baseModelScale);
@@ -3002,6 +3400,15 @@
 
     enterButton.addEventListener("click", startSession);
     saveBridgeButton.addEventListener("click", saveBridgeConfig);
+    dynamicGraphToggle.addEventListener("change", () => {
+      localStorage.setItem(
+        DYNAMIC_GRAPH_STORAGE_KEY,
+        String(dynamicGraphToggle.checked)
+      );
+      bridgeFeedback.textContent =
+        "Modo alterado. Recarregue a página para trocar a origem do grafo.";
+      bridgeFeedback.className = "bridge-feedback success";
+    });
     closeNoteButton.addEventListener("click", closeNote);
     replaceButton.addEventListener("click", resetPlacement);
     addEventListener("resize", resize, { passive: true });

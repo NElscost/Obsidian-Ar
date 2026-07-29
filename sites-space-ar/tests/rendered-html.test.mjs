@@ -19,7 +19,31 @@ test("mantém o carregamento do modelo e a ponte de notas", async () => {
 
   assert.match(html, /Space\.gltf/);
   assert.match(html, /GLTFLoader/);
+  assert.match(html, /three-forcegraph@1\.43\.1/);
+  assert.match(html, /\/graph/);
+  assert.match(html, /GRAPH_LAYOUT_STORAGE_KEY/);
   assert.match(html, /NOTE_BRIDGE_STORAGE_KEY/);
   assert.match(html, /Markdown|markdown/);
   assert.match(html, /pulldown/i);
+});
+
+test("reenquadra o grafo dinâmico depois que o layout termina", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  const dynamicLoader = html.indexOf("async function loadDynamicGraph");
+  const layoutWait = html.indexOf("await Promise.race", dynamicLoader);
+  const finalNormalization = html.indexOf("normalizeModel(model)", layoutWait);
+
+  assert.ok(dynamicLoader >= 0);
+  assert.ok(layoutWait > dynamicLoader);
+  assert.ok(finalNormalization > layoutWait);
+  assert.match(html, /root\.position\.set\(0,\s*0,\s*0\)/);
+  assert.match(html, /new THREE\.InstancedMesh/);
+  assert.match(html, /new THREE\.LineSegments/);
+  assert.match(html, /createDynamicGraphVisual\(data\)/);
+  assert.match(html, /createDynamicGraphLabels\(data\.nodes\)/);
+  assert.match(html, /labelAtlas/);
+  assert.match(html, /MAX_DYNAMIC_SCALE_FACTOR\s*=\s*10/);
+  assert.match(html, /compact-v2-/);
+  assert.match(html, /labelScale/);
+  assert.doesNotMatch(html, /nodeMaterial = new THREE\.MeshBasicMaterial\(\{\s*vertexColors:/);
 });

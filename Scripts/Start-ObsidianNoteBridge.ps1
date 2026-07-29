@@ -1,6 +1,7 @@
 param(
   [int]$Port = 8765,
-  [switch]$DebugConsole
+  [switch]$DebugConsole,
+  [string]$SiteUrl = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,6 +16,53 @@ $bridgeConfigPath = Join-Path $workspace "note-bridge.config.json"
 $projectConfigPath = Join-Path $workspace "space-ar.config.json"
 $pendingOptimizationPath = Join-Path $workspace "PendenteParaOtimização.json"
 $logDir = Join-Path $workspace "note-bridge-logs"
+
+function Stop-ExistingBridge {
+  $processIds = [System.Collections.Generic.HashSet[int]]::new()
+  if (Test-Path -LiteralPath $statePath) {
+    try {
+      $state = Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json
+      foreach ($processId in @($state.serverPid, $state.tunnelPid)) {
+        if ($processId) { [void]$processIds.Add([int]$processId) }
+      }
+    } catch {
+      Write-Warning "O registro anterior da ponte estava inválido e será recriado."
+    }
+  }
+  Get-Process -Name "obsidian-note-bridge" -ErrorAction SilentlyContinue |
+    Where-Object {
+      try {
+        [IO.Path]::GetFullPath($_.Path) -eq [IO.Path]::GetFullPath($serverPath)
+      } catch {
+        $false
+      }
+    } |
+    ForEach-Object { [void]$processIds.Add($_.Id) }
+
+  foreach ($processId in $processIds) {
+    Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+  }
+  if ($processIds.Count -gt 0) {
+    Wait-Process -Id @($processIds) -Timeout 8 -ErrorAction SilentlyContinue
+  }
+  if (Test-Path -LiteralPath $statePath) {
+    Remove-Item -LiteralPath $statePath -Force
+  }
+  $locked = Get-Process -Name "obsidian-note-bridge" -ErrorAction SilentlyContinue |
+    Where-Object {
+      try {
+        [IO.Path]::GetFullPath($_.Path) -eq [IO.Path]::GetFullPath($serverPath)
+      } catch {
+        $false
+      }
+    }
+  if ($locked) {
+    throw "Uma instância antiga da ponte ainda está usando $serverPath."
+  }
+}
+
+Stop-ExistingBridge
+
 $cloudflaredCommand = Get-Command cloudflared -ErrorAction SilentlyContinue
 $cloudflared = if ($cloudflaredCommand) {
   $cloudflaredCommand.Source
@@ -25,7 +73,7 @@ if (-not (Test-Path -LiteralPath $cloudflared)) {
   throw "cloudflared não está instalado. Instale com: winget install Cloudflare.cloudflared"
 }
 if (-not (Test-Path -LiteralPath $graphPath)) {
-  throw "graph.json não encontrado. Execute .\Scripts\Update-SpaceModel.ps1 -Mode Graph."
+  Write-Warning "graph.json não encontrado; a ponte criará o grafo diretamente do vault."
 }
 
 $cargoCommand = Get-Command cargo -ErrorAction SilentlyContinue
@@ -65,9 +113,39 @@ $projectConfig = if (Test-Path -LiteralPath $projectConfigPath) {
 } else {
   [pscustomobject]@{}
 }
-$siteUrl = [string]$projectConfig.siteUrl
+
+$siteUrl = if (-not [string]::IsNullOrWhiteSpace($SiteUrl)) {
+  $SiteUrl.Trim()
+} else {
+  [string]$projectConfig.siteUrl
+}
+
 if ([string]::IsNullOrWhiteSpace($siteUrl)) {
-  throw "siteUrl não configurado. Execute .\Scripts\Configurar-Projeto.bat."
+  Write-Host ""
+  Write-Host "O endereço HTTPS do site ainda não foi configurado." -ForegroundColor Yellow
+  $siteUrl = (Read-Host "Endereço HTTPS do site WebXR").Trim()
+}
+
+$siteUri = $null
+if (
+  [string]::IsNullOrWhiteSpace($siteUrl) -or
+  -not [Uri]::TryCreate($siteUrl, [UriKind]::Absolute, [ref]$siteUri) -or
+  $siteUri.Scheme -ne "https"
+) {
+  throw "siteUrl inválido. Informe um endereço HTTPS completo, por exemplo: https://seu-site.example"
+}
+
+$siteUrl = $siteUri.GetLeftPart([UriPartial]::Authority).TrimEnd("/")
+if ([string]$projectConfig.siteUrl -ne $siteUrl) {
+  $savedProjectConfig = [ordered]@{}
+  foreach ($property in $projectConfig.PSObject.Properties) {
+    $savedProjectConfig[$property.Name] = $property.Value
+  }
+  $savedProjectConfig["siteUrl"] = $siteUrl
+  $savedProjectConfig |
+    ConvertTo-Json -Depth 8 |
+    Set-Content -LiteralPath $projectConfigPath -Encoding UTF8
+  Write-Host "siteUrl salvo em $projectConfigPath" -ForegroundColor Green
 }
 $vaultPath = [string]$bridgeConfig.vaultPath
 if (
@@ -136,9 +214,13 @@ $serverEnvironment = @{
   SPACE_NOTE_PORT = "$Port"
   SPACE_NOTE_TOKEN = $token
   SPACE_VAULT_PATH = $vaultPath
-  SPACE_GRAPH_PATH = $graphPath
   SPACE_PENDING_OPTIMIZATION_PATH = $pendingOptimizationPath
   SPACE_ALLOWED_ORIGIN = ([uri]$siteUrl).GetLeftPart([UriPartial]::Authority)
+}
+if (Test-Path -LiteralPath $graphPath) {
+  $serverEnvironment.SPACE_GRAPH_PATH = $graphPath
+} else {
+  [Environment]::SetEnvironmentVariable("SPACE_GRAPH_PATH", $null, "Process")
 }
 foreach ($entry in $serverEnvironment.GetEnumerator()) {
   [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
