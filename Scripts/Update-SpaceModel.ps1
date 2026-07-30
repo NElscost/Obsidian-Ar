@@ -3,6 +3,7 @@ param(
   [switch]$FromObsidian,
   [switch]$Force,
   [switch]$SkipOptimization,
+  [switch]$UseDraco,
   [ValidateSet("Graph", "Build", "Publish", "All")]
   [string]$Mode = "Build",
   [string]$SiteUrl = "",
@@ -25,9 +26,11 @@ $reportPath = Join-Path $buildDir "pipeline-report.json"
 $inspectPath = Join-Path $buildDir "gltf-inspect.txt"
 $tokenPath = Join-Path $workspace "sites-space-ar\.model-upload-token"
 $exportScriptPath = Join-Path $workspace "export-obsidian-graph.js"
+$blenderGeneratorPath = Join-Path $scriptDir "Generate-SpaceBlend.py"
 $optimizerProject = Join-Path $workspace "model-pipeline"
 $optimizer = Join-Path $optimizerProject "node_modules\.bin\gltf-transform.cmd"
-$generateFromObsidian = $FromObsidian -or $Mode -eq "All"
+$generateFromObsidian = $FromObsidian -or $Mode -eq "All" -or
+  -not (Test-Path -LiteralPath $graphPath)
 $shouldBuild = $Mode -in @("Build", "Publish", "All")
 $shouldPublish = $Mode -in @("Publish", "All")
 
@@ -243,7 +246,7 @@ if ($Mode -eq "Graph") {
 }
 
 if (-not $shouldBuild) { return }
-foreach ($path in @($blendPath, $optimizerProject)) {
+foreach ($path in @($blenderGeneratorPath, $optimizerProject)) {
   if (-not (Test-Path -LiteralPath $path)) { throw "Dependência local ausente: $path" }
 }
 if (-not (Test-Path -LiteralPath $optimizer)) {
@@ -255,11 +258,28 @@ if (-not (Test-Path -LiteralPath $optimizer)) {
   }
 }
 
+$templateCreatedAt = $null
+if (-not (Test-Path -LiteralPath $blendPath)) {
+  Write-Host "space2.blend ausente; criando template portátil na raiz do projeto."
+  $templateCreatedAt = Get-Date
+  & $blender -b --factory-startup `
+    --python $blenderGeneratorPath `
+    -- `
+    --project-root $workspace
+  if ($LASTEXITCODE -ne 0) { throw "O Blender não conseguiu criar o template." }
+  foreach ($path in @($blendPath, $rawGltfPath, $rawBinPath)) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+      throw "Arquivo inicial não gerado: $path"
+    }
+  }
+}
+
 New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
 $inputHashPaths = @(
   $graphPath,
   $blendPath,
   $exportScriptPath,
+  $blenderGeneratorPath,
   $MyInvocation.MyCommand.Path,
   (Join-Path $optimizerProject "package-lock.json")
 )
@@ -296,11 +316,15 @@ if ($canReuse) {
   }
   Write-Host "Entradas inalteradas; reutilizando modelo otimizado $version."
 } else {
-  $buildStartedAt = Get-Date
-  & $blender -b $blendPath --python-expr `
-    "import bpy; exec(compile(bpy.data.texts['Text'].as_string(), 'Text', 'exec'))"
-  if ($LASTEXITCODE -ne 0) { throw "O Blender terminou com erro." }
-  foreach ($path in @($rawGltfPath, $rawBinPath)) {
+  $buildStartedAt = if ($templateCreatedAt) { $templateCreatedAt } else { Get-Date }
+  if (-not $templateCreatedAt) {
+    & $blender -b $blendPath `
+      --python $blenderGeneratorPath `
+      -- `
+      --project-root $workspace
+    if ($LASTEXITCODE -ne 0) { throw "O Blender terminou com erro." }
+  }
+  foreach ($path in @($blendPath, $rawGltfPath, $rawBinPath)) {
     if (-not (Test-Path -LiteralPath $path)) { throw "Arquivo não gerado: $path" }
     if ((Get-Item -LiteralPath $path).LastWriteTime -lt $buildStartedAt) {
       throw "O Blender não atualizou $path."
@@ -315,16 +339,20 @@ if ($canReuse) {
       Copy-Item -LiteralPath $rawGltfPath -Destination $stageGltf
       Copy-Item -LiteralPath $rawBinPath -Destination (Join-Path $stage "graph2.bin")
     } else {
-      & $optimizer optimize $rawGltfPath $stageGltf `
-        --compress draco `
-        --texture-compress false `
-        --simplify false `
-        --palette false `
-        --instance true `
-        --join true `
-        --flatten true `
-        --weld true `
-        --prune true
+      $compression = if ($UseDraco) { "draco" } else { "false" }
+      $optimizerArguments = @(
+        "optimize", $rawGltfPath, $stageGltf,
+        "--compress", $compression,
+        "--texture-compress", "false",
+        "--simplify", "false",
+        "--palette", "false",
+        "--instance", "false",
+        "--join", "true",
+        "--flatten", "true",
+        "--weld", "true",
+        "--prune", "true"
+      )
+      & $optimizer @optimizerArguments
       if ($LASTEXITCODE -ne 0) { throw "A otimização glTF terminou com erro." }
     }
     $stageJson = Get-Content -Raw -LiteralPath $stageGltf | ConvertFrom-Json
@@ -354,7 +382,7 @@ if ($canReuse) {
     if ($stats.packageMB -gt $MaxPackageMB) {
       throw "Modelo recusado: $($stats.packageMB) MB; limite $MaxPackageMB MB."
     }
-    if (-not $SkipOptimization -and -not $stats.draco) {
+    if ($UseDraco -and -not $stats.draco) {
       throw "Modelo recusado: extensão Draco ausente."
     }
 
@@ -385,6 +413,7 @@ if ($canReuse) {
       }
       version = $version
       optimized = -not $SkipOptimization
+      dracoRequested = [bool]$UseDraco
     } | ConvertTo-Json -Depth 6 |
       Set-Content -LiteralPath $reportPath -Encoding UTF8
 
@@ -409,12 +438,17 @@ if ($canReuse) {
 }
 
 $publicDir = Join-Path $workspace "sites-space-ar\public"
+$rootGltfPath = Join-Path $workspace "Space.gltf"
+$rootBinPath = Join-Path $workspace "Space.bin"
+$fallbackGltf = Get-Content -Raw -LiteralPath $outGltf | ConvertFrom-Json
+$fallbackGltf.buffers[0].uri = "Space.bin"
+$fallbackGltf | ConvertTo-Json -Depth 100 -Compress |
+  Set-Content -LiteralPath $rootGltfPath -Encoding UTF8
+Copy-Item -LiteralPath $outBin -Destination $rootBinPath -Force
 if (Test-Path -LiteralPath $publicDir) {
-  $fallbackGltf = Get-Content -Raw -LiteralPath $outGltf | ConvertFrom-Json
-  $fallbackGltf.buffers[0].uri = "Space.bin"
-  $fallbackGltf | ConvertTo-Json -Depth 100 -Compress |
-    Set-Content -LiteralPath (Join-Path $publicDir "Space.gltf") -Encoding UTF8
-  Copy-Item -LiteralPath $outBin -Destination (Join-Path $publicDir "Space.bin") -Force
+  Copy-Item -LiteralPath $rootGltfPath -Destination (Join-Path $publicDir "Space.gltf") -Force
+  Copy-Item -LiteralPath $rootBinPath -Destination (Join-Path $publicDir "Space.bin") -Force
+  Copy-Item -LiteralPath $graphPath -Destination (Join-Path $publicDir "graph.json") -Force
 }
 
 @{

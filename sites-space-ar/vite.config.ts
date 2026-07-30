@@ -12,6 +12,13 @@ const r2 = process.env.SPACE_R2_BINDING || "MODELS";
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
+const allowedDevHosts = [
+  "space-ar.shares.zrok.io",
+  ...(process.env.SPACE_ALLOWED_DEV_HOSTS ?? "")
+    .split(",")
+    .map((host) => host.trim())
+    .filter(Boolean),
+];
 
 const localBindingConfig = {
   main: "./worker/index.ts",
@@ -46,9 +53,12 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    server: {
+      allowedHosts: allowedDevHosts,
+      ...(isCodexSeatbeltSandbox
+        ? { watch: { useFsEvents: false, usePolling: true } }
+        : {}),
+    },
     plugins: [
       vinext(),
       sites(),

@@ -71,7 +71,22 @@ if (-not $SiteUrl) {
 } | ConvertTo-Json |
   Set-Content -LiteralPath $projectConfigPath -Encoding UTF8
 
-@{ vaultPath = $VaultPath } | ConvertTo-Json |
+$savedBridgeConfig = [ordered]@{
+  vaultPath = $VaultPath
+  tunnelMode = "quick"
+  tunnelUrl = ""
+  tunnelTokenFile = ".cloudflare-tunnel-token"
+}
+if (Test-Path -LiteralPath $bridgeConfigPath) {
+  $currentBridgeConfig = Get-Content -Raw -LiteralPath $bridgeConfigPath |
+    ConvertFrom-Json
+  foreach ($property in $currentBridgeConfig.PSObject.Properties) {
+    if ($property.Name -ne "vaultPath") {
+      $savedBridgeConfig[$property.Name] = $property.Value
+    }
+  }
+}
+$savedBridgeConfig | ConvertTo-Json |
   Set-Content -LiteralPath $bridgeConfigPath -Encoding UTF8
 
 Write-Host ""

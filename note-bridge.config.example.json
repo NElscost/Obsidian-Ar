@@ -1,3 +1,6 @@
 {
-  "vaultPath": "C:\\Caminho\\Absoluto\\MeuVault"
+  "vaultPath": "C:\\Caminho\\Absoluto\\MeuVault",
+  "tunnelMode": "quick",
+  "tunnelUrl": "",
+  "tunnelTokenFile": ".cloudflare-tunnel-token"
 }

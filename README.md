@@ -16,7 +16,7 @@ Visualizador WebXR para explorar um grafo 3D do Obsidian em realidade aumentada 
 - geração direta do grafo 3D a partir dos arquivos Markdown do vault;
 - nós coloridos por pasta, rótulos em atlas compartilhado e layout 3D em tempo real;
 - modo glTF opcional para grafos preparados no Blender;
-- pipeline offline de validação, otimização e compressão Draco do glTF.
+- pipeline offline de validação e otimização do glTF, com Draco opcional.
 
 ## Arquitetura
 
@@ -28,7 +28,7 @@ Vault Markdown ─> Axum ──┤                         (modo direto)
 
 Fluxo opcional:
 
-Obsidian/graph.json ─> Blender ─> glTF + Draco ─> Three.js
+Obsidian/graph.json ─> Blender ─> glTF otimizado ─> Three.js
 
 Todos os fluxos usam HTTPS para chegar ao Meta Quest.
 ```
@@ -84,9 +84,8 @@ O projeto também aceita Node.js 22.13 ou superior, mas o Node 24 é a versão
 recomendada e usada nos testes atuais.
 
 O repositório não contém um grafo ou um arquivo `.blend` pessoal. Esses arquivos
-só são necessários para o modo glTF. Use `graph.example.json` como referência do
-formato e coloque seu template do Blender em `space2.blend` antes de executar o
-pipeline.
+só são necessários para o modo glTF e são criados localmente pelo pipeline. Use
+`graph.example.json` apenas como referência do formato.
 
 ## Configuração
 
@@ -129,12 +128,24 @@ Atalho:
 
 O pipeline:
 
-1. valida o `graph.json`;
-2. executa o Blender em modo headless;
-3. verifica buffers e limites do glTF;
-4. aplica deduplicação, compactação e Draco;
-5. gera um manifesto versionado;
-6. copia ou envia os artefatos para o site configurado.
+1. cria `graph.json` a partir do vault aberto quando ele não existe;
+2. cria um `space2.blend` portátil na raiz quando ele não existe;
+3. executa o Blender em modo headless e gera `graph2.gltf` e `graph2.bin`;
+4. verifica buffers e limites do glTF;
+5. aplica deduplicação, união, weld e compactação estrutural;
+6. gera `Space.gltf`, `Space.bin` e um manifesto versionado;
+7. copia `Space.gltf`, `Space.bin` e `graph.json` para o site local;
+8. copia ou envia os artefatos para o site configurado.
+
+O `space2.blend` gerado armazena `//graph.json` e `//graph2.gltf`: no Blender,
+`//` significa a pasta do próprio `.blend`. Assim, um clone em qualquer
+diretório usa automaticamente a nova raiz do projeto e não conserva caminhos
+absolutos do computador onde o modelo foi criado.
+
+Quando o visualizador é exposto pelo zrok, os modelos e buffers usam
+automaticamente o cabeçalho não interativo `skip_zrok_interstitial`. Ainda pode
+ser necessário pressionar **Visit Share** uma vez ao abrir a página principal;
+as requisições internas de `.gltf`, `.bin` e manifesto não exibem esse aviso.
 
 Os arquivos gerados ficam fora do controle de versão porque podem revelar nomes e relações das notas.
 
@@ -163,9 +174,54 @@ A ponte em Rust/Axum:
 - atualiza o grafo sem Blender e sem reiniciar a ponte;
 - entrega notas e artefatos pré-processados;
 - mantém cache em memória;
+- aceita visualizadores hospedados em qualquer origem HTTPS;
 - exibe diagnóstico das leituras no terminal.
 
-O token, a URL temporária do túnel, PIDs e logs nunca devem ser commitados.
+O token da ponte é regenerado a cada inicialização. Tokens antigos deixam de
+funcionar assim que a ponte é reiniciada. O token, credenciais do Cloudflare,
+URL temporária do túnel, PIDs e logs nunca devem ser commitados.
+O CORS da ponte aceita origens HTTPS dinamicamente, portanto mudar o servidor do
+visualizador não exige reconfigurar nem reiniciar a ponte. Requisições privadas
+continuam exigindo o token Bearer. HTTP é aceito somente em `localhost` para
+desenvolvimento.
+
+### Named Tunnel e Cloudflare Access
+
+O Quick Tunnel continua disponível para desenvolvimento. Para uso recorrente,
+crie no painel da Cloudflare:
+
+1. um **Named Tunnel** apontando o hostname escolhido para
+   `http://127.0.0.1:8765`;
+2. uma aplicação **Cloudflare Access / Self-hosted** para esse hostname;
+3. um **Service Token**;
+4. uma política com ação **Service Auth** permitindo esse Service Token;
+5. em `Advanced settings > CORS`, habilite **Bypass OPTIONS requests to
+   origin**. A ponte Axum continua validando o preflight e a origem HTTPS.
+
+Execute `.\Scripts\Configurar-NoteBridge.bat`, selecione `named` e informe o
+hostname, o token do Named Tunnel e, opcionalmente, as duas partes do Service
+Token do Access.
+
+Os segredos são gravados em `.cloudflare-tunnel-token` e
+`.cloudflare-access.json`, ambos ignorados pelo Git. O token do túnel é
+transmitido ao `cloudflared` por variável de ambiente, não pela linha de
+comando. O visualizador envia `CF-Access-Client-Id` e
+`CF-Access-Client-Secret` junto com o token Bearer da ponte.
+
+As credenciais fornecidas ao visualizador ficam em `sessionStorage`: sobrevivem
+a recarregamentos da mesma aba, mas são removidas quando a sessão do navegador
+termina.
+
+O HTML aplica uma Content Security Policy que bloqueia objetos, formulários e
+origens não necessárias. Scripts e estilos permanecem limitados ao próprio site
+e ao jsDelivr usado pelas bibliotecas do visualizador; conexões HTTPS externas
+continuam permitidas para que qualquer hostname válido da ponte possa ser usado.
+
+Referências:
+
+- https://developers.cloudflare.com/tunnel/setup/
+- https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/
+- https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/cors/
 
 ## Configurar o Quest por ADB
 
@@ -192,34 +248,37 @@ somente a associação privada com a hospedagem e permanece fora do repositório
 
 ### Testar no Quest com zrok
 
-O hostname público muda quando uma nova share é criada. Primeiro exponha a porta
-mostrada pelo Vinext/Vite:
+O hostname reservado `space-ar.shares.zrok.io` já está autorizado no Vite.
+Crie o nome uma vez e publique a porta mostrada pelo Vinext/Vite:
 
 ```powershell
-zrok share public http://127.0.0.1:3001
+zrok2 create name -n public space-ar
+zrok2 share public http://localhost:3001 -n public:space-ar
 ```
 
-Copie apenas o hostname gerado, autorize-o no Vite e reinicie o servidor:
+Inicie o site:
 
 ```powershell
-$env:__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS = "HOST.shares.zrok.io"
 npm run dev --prefix .\sites-space-ar -- --port 3001 --strictPort
 ```
 
-Configure a ponte para aceitar exatamente a origem HTTPS do site e reinicie-a:
+Para autorizar outro hostname sem editar o projeto, informe uma lista separada
+por vírgulas antes de iniciar:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\Scripts\Start-ObsidianNoteBridge.ps1 `
-  -SiteUrl "https://HOST.shares.zrok.io"
+$env:SPACE_ALLOWED_DEV_HOSTS = "outro.example,segundo.example"
+npm run dev --prefix .\sites-space-ar -- --port 3001 --strictPort
 ```
 
 No site aberto pelo Quest, informe a URL HTTPS e o token exibidos pela ponte,
 mantenha **Gerar o grafo diretamente do vault** marcado e pressione **Salvar
 acesso às notas**. A página recarregará automaticamente para montar o grafo.
 
-Cada hostname do zrok é uma origem diferente para o navegador. Se a share mudar,
-a URL e o token precisam ser salvos novamente. Uma share reservada evita essa
-troca frequente.
+O visualizador pode estar no zrok, ngrok, GitHub Pages, Cloudflare Pages ou em
+qualquer outro servidor HTTPS. A ponte local continua sendo publicada
+separadamente pelo Cloudflare Tunnel iniciado por `Iniciar-NoteBridge.bat`.
+Se o endereço do visualizador mudar, não é necessário reiniciar a ponte. Se a URL
+temporária do Cloudflare Tunnel mudar, salve a nova URL da ponte no visualizador.
 
 Para validar uma compilação de produção:
 
@@ -238,12 +297,38 @@ glTF**. Nesse modo:
 - o limite de escala por gesto é `10×` (`4×` no modo glTF);
 - cores são derivadas da primeira pasta de cada nota.
 
+Ao ancorar o grafo, a experiência executa uma apresentação curta do conjunto
+completo: parte da escala normal, cresce rapidamente até `4×` e retorna à escala
+normal. Os controles gestuais são liberados assim que o pulso termina.
+
+### Microgestos de paginação
+
+Com uma nota aberta, feche indicador, médio, anelar e mínimo e deslize o polegar
+para a esquerda ou direita. O reconhecedor:
+
+- mede a flexão pelos ângulos das articulações;
+- aguarda a pose fechada estabilizar;
+- usa o polegar relativo ao pulso, eliminando translação do braço;
+- congela o eixo visual esquerda/direita no início do gesto;
+- normaliza limiares pelo tamanho da mão;
+- filtra jitter com uma média exponencial temporal;
+- valida deslocamento, velocidade, direção dominante e monotonicidade;
+- exige retorno estável ao neutro antes de aceitar outro gesto.
+
+Uma perda breve de tracking ou de um único dedo não cancela a tentativa nem
+reativa o raio imediatamente. O raio fica oculto enquanto a pose está ativa e
+por uma curta janela de tolerância. A implementação aproxima o
+comportamento de `XR_META_hand_tracking_microgestures`, pois o navegador WebXR
+ainda não entrega diretamente esses eventos nativos da Meta.
+
 ## Segurança e privacidade
 
 Antes de publicar uma alteração, confirme que estes itens continuam ignorados:
 
 - `.note-bridge-token`;
 - `.note-bridge-processes.json`;
+- `.cloudflare-tunnel-token`;
+- `.cloudflare-access.json`;
 - `.model-upload-token`;
 - `note-bridge.config.json`;
 - `space-ar.config.json`;
@@ -263,8 +348,13 @@ Não exponha a ponte diretamente sem token. O modelo 3D também pode conter os n
   os filtros, grupos e plugins do grafo visual do Obsidian;
 - LaTeX e Markdown são renderizados em páginas rasterizadas para uso eficiente no painel 3D;
 - o pipeline atual usa WebGL no cliente; WebGPU ainda não oferece ganho garantido no navegador do Quest;
-- Draco reduz transferência e armazenamento, mas aumenta o custo de decodificação no dispositivo;
-- o template `space2.blend` precisa ser fornecido localmente.
+- Draco reduz transferência, mas fica desativado por padrão porque algumas
+  versões do navegador do Quest rejeitam determinadas geometrias comprimidas;
+- a primeira criação de `space2.blend` e do glTF pode levar alguns minutos em
+  vaults grandes.
+
+Para testar Draco explicitamente, execute o pipeline PowerShell com
+`-UseDraco`.
 
 ## Diagnóstico rápido
 

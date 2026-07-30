@@ -1,5 +1,7 @@
 .note-bridge-token
 .note-bridge-processes.json
+.cloudflare-tunnel-token
+.cloudflare-access.json
 note-bridge.config.json
 PendenteParaOtimização.json
 note-bridge-logs/

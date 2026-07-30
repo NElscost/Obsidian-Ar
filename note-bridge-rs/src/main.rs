@@ -18,7 +18,11 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::RwLock;
-use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
+use tower_http::{
+    compression::CompressionLayer,
+    cors::{AllowOrigin, CorsLayer},
+    trace::TraceLayer,
+};
 use walkdir::WalkDir;
 
 #[derive(Clone)]
@@ -44,6 +48,70 @@ struct CachedNote {
     modified: SystemTime,
     size: u64,
     content: Arc<str>,
+}
+
+fn is_allowed_web_origin(origin: &HeaderValue) -> bool {
+    let Ok(origin) = origin.to_str() else {
+        return false;
+    };
+    let Ok(uri) = origin.parse::<axum::http::Uri>() else {
+        return false;
+    };
+    let Some(scheme) = uri.scheme_str() else {
+        return false;
+    };
+    let Some(authority) = uri.authority() else {
+        return false;
+    };
+
+    if scheme.eq_ignore_ascii_case("https") {
+        return true;
+    }
+
+    if !scheme.eq_ignore_ascii_case("http") {
+        return false;
+    }
+
+    matches!(
+        authority.host().to_ascii_lowercase().as_str(),
+        "localhost" | "127.0.0.1" | "::1" | "[::1]"
+    )
+}
+
+#[cfg(test)]
+mod origin_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_any_https_host() {
+        assert!(is_allowed_web_origin(&HeaderValue::from_static(
+            "https://example.github.io"
+        )));
+        assert!(is_allowed_web_origin(&HeaderValue::from_static(
+            "https://visualizador.example:8443"
+        )));
+    }
+
+    #[test]
+    fn accepts_http_only_for_local_development() {
+        assert!(is_allowed_web_origin(&HeaderValue::from_static(
+            "http://localhost:3001"
+        )));
+        assert!(is_allowed_web_origin(&HeaderValue::from_static(
+            "http://127.0.0.1:3001"
+        )));
+        assert!(!is_allowed_web_origin(&HeaderValue::from_static(
+            "http://visualizador.example"
+        )));
+    }
+
+    #[test]
+    fn rejects_non_web_and_opaque_origins() {
+        assert!(!is_allowed_web_origin(&HeaderValue::from_static("null")));
+        assert!(!is_allowed_web_origin(&HeaderValue::from_static(
+            "file://local"
+        )));
+    }
 }
 
 #[derive(Deserialize)]
@@ -636,9 +704,6 @@ async fn main() -> Result<()> {
         .map(PathBuf::from)
         .filter(|path| path.is_file());
     let pending = env::var_os("SPACE_PENDING_OPTIMIZATION_PATH").map(PathBuf::from);
-    let allowed_origin =
-        env::var("SPACE_ALLOWED_ORIGIN").context("SPACE_ALLOWED_ORIGIN é obrigatório")?;
-    let origin = HeaderValue::from_str(&allowed_origin)?;
     let state = AppState {
         token,
         vault: Arc::new(vault),
@@ -650,9 +715,16 @@ async fn main() -> Result<()> {
     };
     refresh_graph(&state).await?;
     let cors = CorsLayer::new()
-        .allow_origin(origin)
+        .allow_origin(AllowOrigin::predicate(|origin, _request| {
+            is_allowed_web_origin(origin)
+        }))
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            header::HeaderName::from_static("cf-access-client-id"),
+            header::HeaderName::from_static("cf-access-client-secret"),
+        ]);
     let app = Router::new()
         .route("/health", get(health))
         .route("/verify", get(verify))
@@ -667,6 +739,7 @@ async fn main() -> Result<()> {
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     println!("Obsidian Note Bridge Axum: http://127.0.0.1:{port}");
+    println!("CORS: qualquer visualizador HTTPS (HTTP somente em localhost)");
     println!("Cache automático por data de modificação; aguardando pedidos do Quest...");
     axum::serve(listener, app).await?;
     Ok(())

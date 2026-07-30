@@ -5,6 +5,7 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $workspace = Split-Path -Parent $scriptDir
 $statePath = Join-Path $workspace ".note-bridge-processes.json"
 $tokenPath = Join-Path $workspace ".note-bridge-token"
+$accessConfigPath = Join-Path $workspace ".cloudflare-access.json"
 $configPath = Join-Path $workspace "space-ar.config.json"
 
 $adb = Get-Command adb -ErrorAction SilentlyContinue
@@ -46,5 +47,26 @@ Read-Host | Out-Null
 & $adb.Source shell input keyevent 67 | Out-Null
 & $adb.Source shell input text $token | Out-Null
 
+if (Test-Path -LiteralPath $accessConfigPath) {
+  $access = Get-Content -Raw -LiteralPath $accessConfigPath | ConvertFrom-Json
+  $accessClientId = ([string]$access.clientId).Trim()
+  $accessClientSecret = ([string]$access.clientSecret).Trim()
+  if ($accessClientId -and $accessClientSecret) {
+    Write-Host ""
+    Write-Host "Toque no campo Cloudflare Access Client ID e pressione Enter aqui."
+    Read-Host | Out-Null
+    & $adb.Source shell input keycombination 113 29 | Out-Null
+    & $adb.Source shell input keyevent 67 | Out-Null
+    & $adb.Source shell input text $accessClientId | Out-Null
+
+    Write-Host ""
+    Write-Host "Toque no campo Cloudflare Access Client Secret e pressione Enter aqui."
+    Read-Host | Out-Null
+    & $adb.Source shell input keycombination 113 29 | Out-Null
+    & $adb.Source shell input keyevent 67 | Out-Null
+    & $adb.Source shell input text $accessClientSecret | Out-Null
+  }
+}
+
 Write-Host ""
-Write-Host "URL e token enviados. Selecione 'Salvar acesso às notas' no Quest."
+Write-Host "Credenciais enviadas. Selecione 'Salvar acesso às notas' no Quest."

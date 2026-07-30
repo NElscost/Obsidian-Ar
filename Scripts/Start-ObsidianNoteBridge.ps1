@@ -13,7 +13,6 @@ $serverPath = Join-Path $rustProjectPath "target\release\obsidian-note-bridge.ex
 $tokenPath = Join-Path $workspace ".note-bridge-token"
 $statePath = Join-Path $workspace ".note-bridge-processes.json"
 $bridgeConfigPath = Join-Path $workspace "note-bridge.config.json"
-$projectConfigPath = Join-Path $workspace "space-ar.config.json"
 $pendingOptimizationPath = Join-Path $workspace "PendenteParaOtimização.json"
 $logDir = Join-Path $workspace "note-bridge-logs"
 
@@ -108,44 +107,9 @@ if (-not (Test-Path -LiteralPath $bridgeConfigPath)) {
   & (Join-Path $scriptDir "Configurar-NoteBridge.ps1")
 }
 $bridgeConfig = Get-Content -Raw -LiteralPath $bridgeConfigPath | ConvertFrom-Json
-$projectConfig = if (Test-Path -LiteralPath $projectConfigPath) {
-  Get-Content -Raw -LiteralPath $projectConfigPath | ConvertFrom-Json
-} else {
-  [pscustomobject]@{}
-}
 
-$siteUrl = if (-not [string]::IsNullOrWhiteSpace($SiteUrl)) {
-  $SiteUrl.Trim()
-} else {
-  [string]$projectConfig.siteUrl
-}
-
-if ([string]::IsNullOrWhiteSpace($siteUrl)) {
-  Write-Host ""
-  Write-Host "O endereço HTTPS do site ainda não foi configurado." -ForegroundColor Yellow
-  $siteUrl = (Read-Host "Endereço HTTPS do site WebXR").Trim()
-}
-
-$siteUri = $null
-if (
-  [string]::IsNullOrWhiteSpace($siteUrl) -or
-  -not [Uri]::TryCreate($siteUrl, [UriKind]::Absolute, [ref]$siteUri) -or
-  $siteUri.Scheme -ne "https"
-) {
-  throw "siteUrl inválido. Informe um endereço HTTPS completo, por exemplo: https://seu-site.example"
-}
-
-$siteUrl = $siteUri.GetLeftPart([UriPartial]::Authority).TrimEnd("/")
-if ([string]$projectConfig.siteUrl -ne $siteUrl) {
-  $savedProjectConfig = [ordered]@{}
-  foreach ($property in $projectConfig.PSObject.Properties) {
-    $savedProjectConfig[$property.Name] = $property.Value
-  }
-  $savedProjectConfig["siteUrl"] = $siteUrl
-  $savedProjectConfig |
-    ConvertTo-Json -Depth 8 |
-    Set-Content -LiteralPath $projectConfigPath -Encoding UTF8
-  Write-Host "siteUrl salvo em $projectConfigPath" -ForegroundColor Green
+if (-not [string]::IsNullOrWhiteSpace($SiteUrl)) {
+  Write-Warning "-SiteUrl não é mais necessário: a ponte aceita qualquer visualizador HTTPS."
 }
 $vaultPath = [string]$bridgeConfig.vaultPath
 if (
@@ -156,6 +120,41 @@ if (
   throw "vaultPath inválido em note-bridge.config.json. Execute .\Scripts\Configurar-NoteBridge.bat."
 }
 $vaultPath = [IO.Path]::GetFullPath($vaultPath)
+$tunnelMode = ([string]$bridgeConfig.tunnelMode).Trim().ToLowerInvariant()
+if ([string]::IsNullOrWhiteSpace($tunnelMode)) { $tunnelMode = "quick" }
+if ($tunnelMode -notin @("quick", "named")) {
+  throw "tunnelMode inválido em note-bridge.config.json. Use 'quick' ou 'named'."
+}
+
+$namedTunnelUrl = ""
+$namedTunnelToken = ""
+if ($tunnelMode -eq "named") {
+  $namedTunnelUrl = ([string]$bridgeConfig.tunnelUrl).Trim().TrimEnd("/")
+  $namedTunnelUri = $null
+  if (
+    -not [Uri]::TryCreate($namedTunnelUrl, [UriKind]::Absolute, [ref]$namedTunnelUri) -or
+    $namedTunnelUri.Scheme -ne "https"
+  ) {
+    throw "tunnelUrl inválido. Configure o hostname HTTPS publicado pelo Named Tunnel."
+  }
+  $namedTunnelUrl = $namedTunnelUri.GetLeftPart([UriPartial]::Authority)
+  $tunnelTokenFile = ([string]$bridgeConfig.tunnelTokenFile).Trim()
+  if ([string]::IsNullOrWhiteSpace($tunnelTokenFile)) {
+    $tunnelTokenFile = ".cloudflare-tunnel-token"
+  }
+  if (-not [IO.Path]::IsPathRooted($tunnelTokenFile)) {
+    $tunnelTokenFile = Join-Path $workspace $tunnelTokenFile
+  }
+  if (-not (Test-Path -LiteralPath $tunnelTokenFile -PathType Leaf)) {
+    throw "Token do Named Tunnel não encontrado: $tunnelTokenFile"
+  }
+  $namedTunnelToken = (Get-Content -Raw -LiteralPath $tunnelTokenFile).Trim()
+  if ([string]::IsNullOrWhiteSpace($namedTunnelToken)) {
+    throw "O arquivo do token do Named Tunnel está vazio."
+  }
+} else {
+  Write-Warning "Quick Tunnel ativo: use tunnelMode='named' com Cloudflare Access para uso permanente."
+}
 
 $pendingNotes = Get-ChildItem -LiteralPath $vaultPath -Recurse -File -Filter "*.md" |
   Where-Object { $_.FullName -notmatch '[\\/]\.obsidian[\\/]' } |
@@ -195,14 +194,12 @@ if (Test-Path -LiteralPath $statePath) {
   }
 }
 
-if (-not (Test-Path -LiteralPath $tokenPath)) {
-  $bytes = New-Object byte[] 32
-  $random = [Security.Cryptography.RandomNumberGenerator]::Create()
-  $random.GetBytes($bytes)
-  $random.Dispose()
-  (-join ($bytes | ForEach-Object { $_.ToString("x2") })) |
-    Set-Content -LiteralPath $tokenPath -NoNewline
-}
+$bytes = New-Object byte[] 32
+$random = [Security.Cryptography.RandomNumberGenerator]::Create()
+$random.GetBytes($bytes)
+$random.Dispose()
+(-join ($bytes | ForEach-Object { $_.ToString("x2") })) |
+  Set-Content -LiteralPath $tokenPath -NoNewline
 $token = (Get-Content -Raw -LiteralPath $tokenPath).Trim()
 New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 $serverLog = Join-Path $logDir "server.log"
@@ -215,7 +212,6 @@ $serverEnvironment = @{
   SPACE_NOTE_TOKEN = $token
   SPACE_VAULT_PATH = $vaultPath
   SPACE_PENDING_OPTIMIZATION_PATH = $pendingOptimizationPath
-  SPACE_ALLOWED_ORIGIN = ([uri]$siteUrl).GetLeftPart([UriPartial]::Authority)
 }
 if (Test-Path -LiteralPath $graphPath) {
   $serverEnvironment.SPACE_GRAPH_PATH = $graphPath
@@ -230,36 +226,75 @@ $server = Start-Process -FilePath $serverPath `
   -WindowStyle Hidden -RedirectStandardOutput $serverLog `
   -RedirectStandardError $serverErrorLog -PassThru
 
-$tunnel = Start-Process -FilePath $cloudflared `
-  -ArgumentList @("tunnel", "--url", "http://127.0.0.1:$Port", "--no-autoupdate") `
-  -WindowStyle Hidden -RedirectStandardOutput $tunnelLog `
-  -RedirectStandardError $tunnelErrorLog -PassThru
+$previousTunnelToken = [Environment]::GetEnvironmentVariable("TUNNEL_TOKEN", "Process")
+try {
+  if ($tunnelMode -eq "named") {
+    [Environment]::SetEnvironmentVariable("TUNNEL_TOKEN", $namedTunnelToken, "Process")
+    $tunnelArguments = @("tunnel", "--no-autoupdate", "run")
+  } else {
+    $tunnelArguments = @(
+      "tunnel", "--url", "http://127.0.0.1:$Port", "--no-autoupdate"
+    )
+  }
+  $tunnel = Start-Process -FilePath $cloudflared `
+    -ArgumentList $tunnelArguments `
+    -WindowStyle Hidden -RedirectStandardOutput $tunnelLog `
+    -RedirectStandardError $tunnelErrorLog -PassThru
+} finally {
+  [Environment]::SetEnvironmentVariable(
+    "TUNNEL_TOKEN",
+    $previousTunnelToken,
+    "Process"
+  )
+}
 
-$deadline = (Get-Date).AddSeconds(30)
-do {
-  Start-Sleep -Milliseconds 300
-  $log = @($tunnelLog, $tunnelErrorLog) |
-    Where-Object { Test-Path -LiteralPath $_ } |
-    ForEach-Object { Get-Content -Raw -LiteralPath $_ } |
-    Out-String
-  $match = [regex]::Match($log, "https://[a-z0-9-]+\.trycloudflare\.com")
-} until ($match.Success -or (Get-Date) -ge $deadline)
+if ($tunnelMode -eq "named") {
+  $deadline = (Get-Date).AddSeconds(30)
+  $namedConnected = $false
+  do {
+    Start-Sleep -Milliseconds 300
+    if ($tunnel.HasExited) { break }
+    $log = @($tunnelLog, $tunnelErrorLog) |
+      Where-Object { Test-Path -LiteralPath $_ } |
+      ForEach-Object { Get-Content -Raw -LiteralPath $_ } |
+      Out-String
+    $namedConnected = $log -match "Registered tunnel connection"
+  } until ($namedConnected -or (Get-Date) -ge $deadline)
+  if (-not $namedConnected) {
+    Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+    Stop-Process -Id $tunnel.Id -Force -ErrorAction SilentlyContinue
+    throw "O Named Tunnel não conectou em 30 segundos. Consulte note-bridge-logs\tunnel-error.log."
+  }
+  $publishedUrl = $namedTunnelUrl
+} else {
+  $deadline = (Get-Date).AddSeconds(30)
+  do {
+    Start-Sleep -Milliseconds 300
+    $log = @($tunnelLog, $tunnelErrorLog) |
+      Where-Object { Test-Path -LiteralPath $_ } |
+      ForEach-Object { Get-Content -Raw -LiteralPath $_ } |
+      Out-String
+    $match = [regex]::Match($log, "https://[a-z0-9-]+\.trycloudflare\.com")
+  } until ($match.Success -or (Get-Date) -ge $deadline)
 
-if (-not $match.Success) {
-  Stop-Process -Id $server.Id, $tunnel.Id -Force -ErrorAction SilentlyContinue
-  throw "O túnel HTTPS não iniciou em 30 segundos. Consulte note-bridge-logs\tunnel.log."
+  if (-not $match.Success) {
+    Stop-Process -Id $server.Id, $tunnel.Id -Force -ErrorAction SilentlyContinue
+    throw "O túnel HTTPS não iniciou em 30 segundos. Consulte note-bridge-logs\tunnel.log."
+  }
+  $publishedUrl = $match.Value
 }
 
 @{
   serverPid = $server.Id
   tunnelPid = $tunnel.Id
-  url = $match.Value
+  url = $publishedUrl
+  tunnelMode = $tunnelMode
   startedAt = (Get-Date).ToUniversalTime().ToString("o")
 } | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding UTF8
 
 Write-Output ""
 Write-Output "Ponte do Obsidian pronta."
-Write-Output "URL:   $($match.Value)"
+Write-Output "URL:   $publishedUrl"
 Write-Output "Token: $token"
 Write-Output "Vault: $vaultPath"
 if ($DebugConsole) {

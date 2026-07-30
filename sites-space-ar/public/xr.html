@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#070b12">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://esm.sh; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' blob: https:; img-src 'self' data: blob: https:; font-src 'self' data: https://cdn.jsdelivr.net; media-src 'self' blob:; worker-src 'self' blob:; manifest-src 'self'">
   <title>Space AR · Meta Quest</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <style>
@@ -153,6 +154,14 @@
     }
 
     .bridge-config button { min-height: 44px; }
+    .bridge-config details {
+      display: grid;
+      gap: 7px;
+      color: #b8c1d1;
+      font-size: 12px;
+    }
+    .bridge-config details[open] summary { margin-bottom: 7px; }
+    .bridge-config details input + input { margin-top: 7px; }
     .graph-mode {
       display: flex;
       align-items: center;
@@ -437,6 +446,11 @@
       <div class="bridge-config">
         <input id="bridge-url" type="url" placeholder="URL HTTPS da ponte do Obsidian">
         <input id="bridge-token" type="password" placeholder="Token da ponte">
+        <details>
+          <summary>Cloudflare Access (opcional)</summary>
+          <input id="access-client-id" type="text" autocomplete="off" placeholder="Access Client ID">
+          <input id="access-client-secret" type="password" autocomplete="off" placeholder="Access Client Secret">
+        </details>
         <label class="graph-mode">
           <input id="dynamic-graph" type="checkbox" checked>
           Gerar o grafo diretamente do vault, sem Blender ou glTF
@@ -471,11 +485,15 @@
     const MIN_SCALE_FACTOR = 0.25;
     const MAX_SCALE_FACTOR = 4;
     const MAX_DYNAMIC_SCALE_FACTOR = 10;
+    const GRAPH_INTRO_PULSE_SCALE = 4;
+    const GRAPH_INTRO_PULSE_DURATION_MS = 950;
+    const INITIAL_MODEL_YAW = 0;
     const PINCH_THRESHOLD_METERS = 0.022;
     const NOTE_BRIDGE_STORAGE_KEY = "space-ar-note-bridge";
     const DYNAMIC_GRAPH_STORAGE_KEY = "space-ar-dynamic-graph";
     const GRAPH_LAYOUT_STORAGE_KEY = "space-ar-graph-layout-v1";
     const RECENT_NOTES_STORAGE_KEY = "space-ar-recent-notes";
+    const STATIC_ASSET_HEADERS = { "skip_zrok_interstitial": "1" };
 
     const enterButton = document.querySelector("#enter-ar");
     const replaceButton = document.querySelector("#replace");
@@ -484,6 +502,8 @@
     const xrMessage = document.querySelector("#xr-message");
     const bridgeUrlInput = document.querySelector("#bridge-url");
     const bridgeTokenInput = document.querySelector("#bridge-token");
+    const accessClientIdInput = document.querySelector("#access-client-id");
+    const accessClientSecretInput = document.querySelector("#access-client-secret");
     const saveBridgeButton = document.querySelector("#save-bridge");
     const dynamicGraphToggle = document.querySelector("#dynamic-graph");
     const bridgeFeedback = document.querySelector("#bridge-feedback");
@@ -493,6 +513,107 @@
     const closeNoteButton = document.querySelector("#close-note");
     let rustMathPromise = null;
     let katexFallbackPromise = null;
+
+    function bridgeRequestHeaders(config, includeJson = false) {
+      const headers = {
+        "Authorization": `Bearer ${config.token}`
+      };
+      if (includeJson) headers["Content-Type"] = "application/json";
+      if (config.accessClientId && config.accessClientSecret) {
+        headers["CF-Access-Client-Id"] = config.accessClientId;
+        headers["CF-Access-Client-Secret"] = config.accessClientSecret;
+      }
+      return headers;
+    }
+
+    async function fetchStaticAsset(url, options = {}) {
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          ...STATIC_ASSET_HEADERS,
+          ...(options.headers ?? {})
+        }
+      });
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!response.ok) {
+        throw new Error(`${url} respondeu com HTTP ${response.status}.`);
+      }
+      if (contentType.includes("text/html")) {
+        throw new Error(
+          `${url} retornou HTML em vez do arquivo. No zrok, abra a página ` +
+          `principal e confirme "Visit Share"; depois recarregue.`
+        );
+      }
+      return response;
+    }
+
+    function describeError(error) {
+      if (error?.message) return error.message;
+      if (typeof error === "string" && error) return error;
+      try {
+        const serialized = JSON.stringify(error);
+        if (serialized && serialized !== "{}") return serialized;
+      } catch {}
+      return String(error ?? "erro sem detalhes");
+    }
+
+    function createGlbBuffer(gltfJson, binaryBuffer) {
+      const embeddedJson = JSON.parse(JSON.stringify(gltfJson));
+      if (!Array.isArray(embeddedJson.buffers) || embeddedJson.buffers.length !== 1) {
+        throw new Error("O modo glTF local requer exatamente um buffer.");
+      }
+      const declaredLength = Number(embeddedJson.buffers[0].byteLength);
+      if (
+        !Number.isSafeInteger(declaredLength) ||
+        declaredLength < 0 ||
+        binaryBuffer.byteLength !== declaredLength
+      ) {
+        throw new Error(
+          `Space.bin incompatível: esperado ${declaredLength} bytes, ` +
+          `recebido ${binaryBuffer.byteLength}.`
+        );
+      }
+      delete embeddedJson.buffers[0].uri;
+
+      const jsonBytes = new TextEncoder().encode(JSON.stringify(embeddedJson));
+      const jsonPaddedLength = (jsonBytes.length + 3) & ~3;
+      const binaryBytes = new Uint8Array(binaryBuffer);
+      const binaryPaddedLength = (binaryBytes.length + 3) & ~3;
+      const totalLength = 12 + 8 + jsonPaddedLength + 8 + binaryPaddedLength;
+      const glb = new ArrayBuffer(totalLength);
+      const view = new DataView(glb);
+      const bytes = new Uint8Array(glb);
+
+      view.setUint32(0, 0x46546c67, true);
+      view.setUint32(4, 2, true);
+      view.setUint32(8, totalLength, true);
+      view.setUint32(12, jsonPaddedLength, true);
+      view.setUint32(16, 0x4e4f534a, true);
+      bytes.fill(0x20, 20, 20 + jsonPaddedLength);
+      bytes.set(jsonBytes, 20);
+
+      const binaryHeader = 20 + jsonPaddedLength;
+      view.setUint32(binaryHeader, binaryPaddedLength, true);
+      view.setUint32(binaryHeader + 4, 0x004e4942, true);
+      bytes.set(binaryBytes, binaryHeader + 8);
+      return glb;
+    }
+
+    async function createModelRevision(modelText) {
+      const bytes = new TextEncoder().encode(modelText);
+      if (globalThis.crypto?.subtle) {
+        const digest = await crypto.subtle.digest("SHA-256", bytes);
+        return Array.from(new Uint8Array(digest), (byte) =>
+          byte.toString(16).padStart(2, "0")
+        ).join("").slice(0, 16);
+      }
+      let hash = 2166136261;
+      for (const byte of bytes) {
+        hash ^= byte;
+        hash = Math.imul(hash, 16777619);
+      }
+      return `${bytes.length}-${(hash >>> 0).toString(16)}`;
+    }
 
     function loadKatexFallback() {
       if (katexFallbackPromise) return katexFallbackPromise;
@@ -1070,10 +1191,7 @@
           if (!isRemoteImageSource(source)) {
             const response = await fetch(`${config.url}/asset`, {
               method: "POST",
-              headers: {
-                "Authorization": `Bearer ${config.token}`,
-                "Content-Type": "application/json"
-              },
+              headers: bridgeRequestHeaders(config, true),
               body: JSON.stringify({ notePath, assetPath: source })
             });
             if (!response.ok) throw new Error(`Imagem HTTP ${response.status}`);
@@ -1857,6 +1975,7 @@
     let noteWarmupRunId = 0;
     let baseModelScale = 1;
     let userScaleFactor = 1;
+    let graphIntroPulseStartedAt = null;
     let xrSession = null;
     let referenceSpace = null;
     let viewerSpace = null;
@@ -1921,19 +2040,47 @@
     let noteMicroGestureStates = new WeakMap();
     const microGestureCameraRight = new THREE.Vector3();
     const microGestureCameraQuaternion = new THREE.Quaternion();
+    const microGestureSegmentA = new THREE.Vector3();
+    const microGestureSegmentB = new THREE.Vector3();
+    const microGestureRelative = new THREE.Vector3();
+    const microGestureDisplacement = new THREE.Vector3();
+    const microGestureStep = new THREE.Vector3();
+
+    function jointAngle(a, center, b) {
+      microGestureSegmentA.copy(a).sub(center).normalize();
+      microGestureSegmentB.copy(b).sub(center).normalize();
+      return microGestureSegmentA.angleTo(microGestureSegmentB);
+    }
 
     function resetNoteMicroGestures() {
       noteMicroGestureStates = new WeakMap();
     }
 
     function isMicroGestureHandClosed(inputSource) {
-      return noteMicroGestureStates.get(inputSource)?.handClosed === true;
+      const state = noteMicroGestureStates.get(inputSource);
+      return state?.handClosed === true ||
+        performance.now() < (state?.suppressRayUntil ?? 0);
     }
 
     try {
-      const storedBridge = JSON.parse(localStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
+      const sessionBridge = sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY);
+      const legacyBridge = localStorage.getItem(NOTE_BRIDGE_STORAGE_KEY);
+      const storedBridge = JSON.parse(sessionBridge ?? legacyBridge ?? "null");
+      if (!sessionBridge && legacyBridge && storedBridge) {
+        sessionStorage.setItem(
+          NOTE_BRIDGE_STORAGE_KEY,
+          JSON.stringify(storedBridge)
+        );
+      }
+      localStorage.removeItem(NOTE_BRIDGE_STORAGE_KEY);
       if (storedBridge?.url) bridgeUrlInput.value = storedBridge.url;
       if (storedBridge?.token) bridgeTokenInput.value = storedBridge.token;
+      if (storedBridge?.accessClientId) {
+        accessClientIdInput.value = storedBridge.accessClientId;
+      }
+      if (storedBridge?.accessClientSecret) {
+        accessClientSecretInput.value = storedBridge.accessClientSecret;
+      }
       dynamicGraphToggle.checked =
         localStorage.getItem(DYNAMIC_GRAPH_STORAGE_KEY) !== "false";
     } catch {}
@@ -1941,6 +2088,8 @@
     async function saveBridgeConfig() {
       const url = bridgeUrlInput.value.trim().replace(/\/+$/, "");
       const token = bridgeTokenInput.value.trim();
+      const accessClientId = accessClientIdInput.value.trim();
+      const accessClientSecret = accessClientSecretInput.value.trim();
       bridgeFeedback.className = "bridge-feedback";
       if (!url.startsWith("https://") || !token) {
         bridgeFeedback.textContent = "Informe a URL HTTPS e o token exibidos pela ponte.";
@@ -1952,14 +2101,15 @@
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 8000);
+        const config = { url, token, accessClientId, accessClientSecret };
         const response = await fetch(`${url}/verify`, {
-          headers: { "Authorization": `Bearer ${token}` },
+          headers: bridgeRequestHeaders(config),
           signal: controller.signal
         });
         clearTimeout(timeout);
         const result = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(result.error ?? `HTTP ${response.status}`);
-        localStorage.setItem(NOTE_BRIDGE_STORAGE_KEY, JSON.stringify({ url, token }));
+        sessionStorage.setItem(NOTE_BRIDGE_STORAGE_KEY, JSON.stringify(config));
         localStorage.setItem(
           DYNAMIC_GRAPH_STORAGE_KEY,
           String(dynamicGraphToggle.checked)
@@ -2013,10 +2163,7 @@
       if (await getPersistentCachedNote(path)) return false;
       const response = await fetch(`${config.url}/note`, {
         method: "POST",
-        headers: {
-          "Authorization": `Bearer ${config.token}`,
-          "Content-Type": "application/json"
-        },
+        headers: bridgeRequestHeaders(config, true),
         body: JSON.stringify({ path })
       });
       const result = await response.json();
@@ -2077,7 +2224,7 @@
       let config;
       let recent;
       try {
-        config = JSON.parse(localStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
+        config = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
         recent = JSON.parse(localStorage.getItem(RECENT_NOTES_STORAGE_KEY) ?? "[]");
       } catch {
         return;
@@ -2086,7 +2233,7 @@
       let pending = [];
       try {
         const response = await fetch(`${config.url}/pending-optimization`, {
-          headers: { "Authorization": `Bearer ${config.token}` }
+          headers: bridgeRequestHeaders(config)
         });
         if (response.ok) {
           const result = await response.json();
@@ -2149,7 +2296,7 @@
       root.position.set(-center.x, -center.y + size.y * 0.5, -center.z);
       baseModelScale = TARGET_SIZE_METERS / largestDimension;
       contentRoot.scale.setScalar(baseModelScale);
-      contentRoot.rotation.set(0, Math.PI, 0);
+      contentRoot.rotation.set(0, INITIAL_MODEL_YAW, 0);
       contentRoot.updateMatrixWorld(true);
 
       root.traverse((object) => {
@@ -2161,8 +2308,18 @@
         const materials = Array.isArray(object.material) ? object.material : [object.material];
         for (const material of materials) {
           if (!material) continue;
-          material.side = THREE.FrontSide;
+          const isLabelText = material.name === "label_text";
+          material.side = isLabelText ? THREE.DoubleSide : THREE.FrontSide;
           material.dithering = true;
+          if (isLabelText) {
+            material.color?.set(0xffffff);
+            material.emissive?.set(0xffffff);
+            if ("emissiveIntensity" in material) material.emissiveIntensity = 1;
+            material.toneMapped = false;
+            material.transparent = false;
+            material.opacity = 1;
+            material.needsUpdate = true;
+          }
           if (object.geometry.getAttribute("color")) {
             material.vertexColors = true;
             if (material.emissive) material.emissive.setRGB(0, 0, 0);
@@ -2461,7 +2618,7 @@
     async function loadDynamicGraph(config) {
       setStatus("Lendo o vault e calculando o grafo 3D…");
       const response = await fetch(`${config.url}/graph`, {
-        headers: { "Authorization": `Bearer ${config.token}` },
+        headers: bridgeRequestHeaders(config),
         cache: "no-store"
       });
       const data = await response.json();
@@ -2535,6 +2692,10 @@
         import("three/addons/loaders/DRACOLoader.js")
       ]);
       const loader = new GLTFLoader();
+      // O zrok exige este cabeçalho para requisições não interativas. Ele é
+      // aplicado também aos buffers externos carregados pelo GLTFLoader e é
+      // ignorado normalmente por servidores HTTPS que não usam zrok.
+      loader.setRequestHeader(STATIC_ASSET_HEADERS);
       const dracoLoader = new DRACOLoader();
       dracoLoader.setDecoderPath(
         "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/libs/draco/"
@@ -2543,7 +2704,9 @@
       let modelUrl = FALLBACK_MODEL_URL;
       let graphUrl = null;
       try {
-        const response = await fetch("/model-manifest.json", { cache: "no-store" });
+        const response = await fetchStaticAsset("/model-manifest.json", {
+          cache: "no-store",
+        });
         if (response.ok) {
           const manifest = await response.json();
           if (typeof manifest.url === "string") modelUrl = manifest.url;
@@ -2552,10 +2715,48 @@
       } catch (manifestError) {
         console.warn("Usando modelo incluído no site.", manifestError);
       }
-      const gltf = await loader.loadAsync(modelUrl);
+      // Faça a rede explicitamente. Alguns navegadores do Quest não propagam
+      // Loader.requestHeader de forma confiável para buffers glTF externos.
+      // Depois do download, URLs blob locais eliminam novas idas ao zrok.
+      const absoluteModelUrl = new URL(modelUrl, window.location.href);
+      const modelResponse = await fetchStaticAsset(absoluteModelUrl.href, {
+        cache: "no-store"
+      });
+      const modelText = (await modelResponse.text()).replace(/^\uFEFF/, "");
+      const modelJson = JSON.parse(modelText);
+      if (!modelJson.buffers?.[0]?.uri) {
+        throw new Error("O Space.gltf não declarou seu buffer externo.");
+      }
+      const bufferUrl = new URL(modelJson.buffers[0].uri, absoluteModelUrl);
+      // Vincula o cache do binário à versão exata do JSON. Sem isso, o Quest
+      // pode combinar um Space.gltf novo com um Space.bin antigo e o Three.js
+      // falha ao criar os typed arrays das bufferViews.
+      bufferUrl.searchParams.set(
+        "space-model",
+        await createModelRevision(modelText)
+      );
+      const bufferResponse = await fetchStaticAsset(bufferUrl.href, {
+        cache: "force-cache"
+      });
+      const binaryBuffer = await bufferResponse.arrayBuffer();
+      const glbBuffer = createGlbBuffer(modelJson, binaryBuffer);
+      const resourcePath = new URL(".", absoluteModelUrl).href;
+      let gltf;
+      try {
+        gltf = await loader.parseAsync(glbBuffer, resourcePath);
+      } catch (error) {
+        throw new Error(`Falha ao interpretar o GLB: ${describeError(error)}`);
+      }
+      if (!graphUrl) graphUrl = "./graph.json";
       if (graphUrl) {
-        const graphResponse = await fetch(graphUrl, { cache: "force-cache" });
-        if (graphResponse.ok) graphData = await graphResponse.json();
+        try {
+          const graphResponse = await fetchStaticAsset(graphUrl, {
+            cache: "force-cache",
+          });
+          graphData = await graphResponse.json();
+        } catch (graphError) {
+          console.warn("Metadados do grafo não encontrados; seleção desativada.", graphError);
+        }
       }
       dracoLoader.dispose();
       model = gltf.scene;
@@ -2569,7 +2770,7 @@
     async function loadModel() {
       let config = null;
       try {
-        config = JSON.parse(localStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
+        config = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
       } catch {}
       if (dynamicGraphToggle.checked) {
         if (!config?.url || !config?.token) {
@@ -2705,11 +2906,42 @@
 
         isPlaced = true;
         placementRoot.visible = true;
+        graphIntroPulseStartedAt = performance.now();
+        contentRoot.scale.setScalar(baseModelScale * userScaleFactor);
         reticle.visible = false;
-        setXrMessage("Ancorado. Faça pinça com as duas mãos para ajustar a escala.");
+        setXrMessage("Ancorado. O grafo está sendo apresentado.");
       } finally {
         placementBusy = false;
       }
+    }
+
+    function updateGraphIntroPulse(time) {
+      if (graphIntroPulseStartedAt === null) return false;
+
+      const progress = THREE.MathUtils.clamp(
+        (time - graphIntroPulseStartedAt) / GRAPH_INTRO_PULSE_DURATION_MS,
+        0,
+        1
+      );
+      // O pico chega cedo para produzir um pulso rápido; a volta é um pouco
+      // mais suave para não causar desconforto no campo de visão.
+      const peakAt = 0.4;
+      let eased;
+      if (progress < peakAt) {
+        const rising = progress / peakAt;
+        eased = 1 - (1 - rising) ** 3;
+      } else {
+        const falling = (progress - peakAt) / (1 - peakAt);
+        eased = 1 - (falling * falling * (3 - 2 * falling));
+      }
+      const pulseScale = THREE.MathUtils.lerp(1, GRAPH_INTRO_PULSE_SCALE, eased);
+      contentRoot.scale.setScalar(baseModelScale * userScaleFactor * pulseScale);
+
+      if (progress < 1) return true;
+      graphIntroPulseStartedAt = null;
+      contentRoot.scale.setScalar(baseModelScale * userScaleFactor);
+      setXrMessage("Grafo pronto. Use as duas mãos para ajustar escala e rotação.");
+      return false;
     }
 
     function jointPosition(frame, jointSpace, target) {
@@ -2741,17 +2973,29 @@
           state = {
             wrist: new THREE.Vector3(),
             thumb: new THREE.Vector3(),
+            filteredThumb: new THREE.Vector3(),
+            neutralThumb: new THREE.Vector3(),
             thumbStart: new THREE.Vector3(),
-            thumbDelta: new THREE.Vector3(),
+            previousThumb: new THREE.Vector3(),
+            lateralAxis: new THREE.Vector3(),
             tips: Array.from({ length: 4 }, () => new THREE.Vector3()),
             bases: Array.from({ length: 4 }, () => new THREE.Vector3()),
+            proximals: Array.from({ length: 4 }, () => new THREE.Vector3()),
+            intermediates: Array.from({ length: 4 }, () => new THREE.Vector3()),
+            filterReady: false,
             tracking: false,
             handClosed: false,
             lastAllClosedAt: 0,
-            cooldownUntil: 0,
+            suppressRayUntil: 0,
+            closedSince: 0,
             awaitingNeutral: false,
             neutralSince: 0,
-            startedAt: 0
+            startedAt: 0,
+            lastSampleAt: 0,
+            sampleElapsed: 16,
+            handScale: 0.09,
+            lateralTravel: 0,
+            peakNormalizedSpeed: 0
           };
           noteMicroGestureStates.set(inputSource, state);
         }
@@ -2761,12 +3005,19 @@
           jointPosition(frame, inputSource.hand.get("wrist"), state.wrist) &&
           jointPosition(frame, inputSource.hand.get("thumb-tip"), state.thumb);
         if (!hasCoreJoints) {
-          state.tracking = false;
-          if (time - state.lastAllClosedAt > 180) state.handClosed = false;
+          if (state.handClosed || state.tracking) {
+            state.suppressRayUntil = Math.max(state.suppressRayUntil, time + 260);
+          }
+          if (time - state.lastAllClosedAt > 360) {
+            state.tracking = false;
+            state.filterReady = false;
+            state.closedSince = 0;
+            state.handClosed = false;
+          }
           continue;
         }
 
-        let closedFingers = 0;
+        let jointsValid = true;
         for (let index = 0; index < fingerNames.length; index += 1) {
           const name = fingerNames[index];
           const tipOk = jointPosition(
@@ -2780,42 +3031,103 @@
               ?? inputSource.hand.get(`${name}-phalanx-proximal`),
             state.bases[index]
           );
-          if (
-            tipOk &&
-            baseOk &&
-            state.tips[index].distanceTo(state.wrist) <
-              state.bases[index].distanceTo(state.wrist) + 0.048
-          ) {
-            closedFingers += 1;
-          }
+          const proximalOk = jointPosition(
+            frame,
+            inputSource.hand.get(`${name}-phalanx-proximal`),
+            state.proximals[index]
+          );
+          const intermediateOk = jointPosition(
+            frame,
+            inputSource.hand.get(`${name}-phalanx-intermediate`)
+              ?? inputSource.hand.get(`${name}-phalanx-distal`),
+            state.intermediates[index]
+          );
+          jointsValid &&= tipOk && baseOk && proximalOk && intermediateOk;
         }
-        if (closedFingers === 4) {
+        if (!jointsValid) {
+          if (state.handClosed || state.tracking) {
+            state.suppressRayUntil = Math.max(state.suppressRayUntil, time + 260);
+          }
+          if (time - state.lastAllClosedAt > 360) {
+            state.tracking = false;
+            state.filterReady = false;
+            state.closedSince = 0;
+            state.handClosed = false;
+          }
+          continue;
+        }
+
+        state.handScale = THREE.MathUtils.clamp(
+          state.wrist.distanceTo(state.bases[1]),
+          0.055,
+          0.14
+        );
+        let closedFingers = 0;
+        for (let index = 0; index < fingerNames.length; index += 1) {
+          const pipAngle = jointAngle(
+            state.proximals[index],
+            state.intermediates[index],
+            state.tips[index]
+          );
+          const foldedTowardPalm =
+            state.tips[index].distanceTo(state.wrist) <
+            state.bases[index].distanceTo(state.wrist) + state.handScale * 0.85;
+          if (pipAngle < 2.55 && foldedTowardPalm) closedFingers += 1;
+        }
+        const closedEnough =
+          closedFingers === 4 || (state.handClosed && closedFingers >= 3);
+        if (closedEnough) {
           state.lastAllClosedAt = time;
           state.handClosed = true;
-        } else if (time - state.lastAllClosedAt > 180) {
+          state.suppressRayUntil = time + 360;
+          if (!state.closedSince) state.closedSince = time;
+        } else if (time - state.lastAllClosedAt > 360) {
           state.handClosed = false;
+          state.closedSince = 0;
         }
         const handClosed = state.handClosed;
 
         if (!handClosed) {
           state.tracking = false;
+          state.filterReady = false;
           state.awaitingNeutral = false;
           state.neutralSince = 0;
           continue;
         }
+
+        microGestureRelative.copy(state.thumb).sub(state.wrist);
+        if (!state.filterReady) {
+          state.filteredThumb.copy(microGestureRelative);
+          state.filterReady = true;
+        } else {
+          const elapsed = Math.max(1, time - (state.lastSampleAt || time - 16));
+          state.sampleElapsed = elapsed;
+          const alpha = 1 - Math.exp(-elapsed / 30);
+          state.filteredThumb.lerp(microGestureRelative, alpha);
+        }
+        state.lastSampleAt = time;
+
+        if (time - state.closedSince < 55) {
+          state.tracking = false;
+          continue;
+        }
+
         if (state.awaitingNeutral) {
-          const distanceToNeutral = state.thumbDelta
-            .copy(state.thumb)
-            .sub(state.thumbStart)
+          const distanceToNeutral = microGestureDisplacement
+            .copy(state.filteredThumb)
+            .sub(state.neutralThumb)
             .length();
-          if (distanceToNeutral <= 0.018) {
+          if (distanceToNeutral <= state.handScale * 0.18) {
             if (!state.neutralSince) state.neutralSince = time;
-            if (time - state.neutralSince >= 60) {
+            if (time - state.neutralSince >= 80) {
               state.awaitingNeutral = false;
               state.neutralSince = 0;
-              state.thumbStart.copy(state.thumb);
+              state.neutralThumb.lerp(state.filteredThumb, 0.35);
+              state.thumbStart.copy(state.filteredThumb);
+              state.previousThumb.copy(state.filteredThumb);
               state.startedAt = time;
-              state.cooldownUntil = time + 180;
+              state.lateralTravel = 0;
+              state.peakNormalizedSpeed = 0;
               state.tracking = true;
             }
           } else {
@@ -2823,21 +3135,53 @@
           }
           continue;
         }
-        if (!state.tracking || time - state.startedAt > 1400) {
-          state.thumbStart.copy(state.thumb);
+
+        if (!state.tracking) {
+          state.neutralThumb.copy(state.filteredThumb);
+          state.thumbStart.copy(state.filteredThumb);
+          state.previousThumb.copy(state.filteredThumb);
+          state.lateralAxis.copy(microGestureCameraRight);
           state.startedAt = time;
+          state.lateralTravel = 0;
+          state.peakNormalizedSpeed = 0;
           state.tracking = true;
           continue;
         }
-        if (time < state.cooldownUntil) continue;
+        if (time - state.startedAt > 1100) {
+          state.tracking = false;
+          continue;
+        }
 
-        const horizontalMovement = state.thumbDelta
-          .copy(state.thumb)
-          .sub(state.thumbStart)
-          .dot(microGestureCameraRight);
+        const sampleElapsed = Math.max(8, state.sampleElapsed);
+        const lateralStep = microGestureStep
+          .copy(state.filteredThumb)
+          .sub(state.previousThumb)
+          .dot(state.lateralAxis);
+        state.lateralTravel += Math.abs(lateralStep);
+        state.peakNormalizedSpeed = Math.max(
+          state.peakNormalizedSpeed,
+          Math.abs(lateralStep) / (sampleElapsed / 1000) / state.handScale
+        );
+        state.previousThumb.copy(state.filteredThumb);
+
+        microGestureDisplacement
+          .copy(state.filteredThumb)
+          .sub(state.thumbStart);
+        const horizontalMovement = microGestureDisplacement.dot(state.lateralAxis);
+        const offAxisMovement = Math.sqrt(Math.max(
+          0,
+          microGestureDisplacement.lengthSq() - horizontalMovement ** 2
+        ));
+        const directionDominance =
+          Math.abs(horizontalMovement) / Math.max(0.001, offAxisMovement);
+        const monotonicity =
+          Math.abs(horizontalMovement) / Math.max(0.001, state.lateralTravel);
         if (
-          Math.abs(horizontalMovement) < 0.024 ||
-          time - state.startedAt < 180
+          Math.abs(horizontalMovement) < state.handScale * 0.14 ||
+          time - state.startedAt < 70 ||
+          directionDominance < 0.8 ||
+          monotonicity < 0.48 ||
+          state.peakNormalizedSpeed < 0.35
         ) continue;
 
         const action = horizontalMovement > 0 ? "next" : "previous";
@@ -2845,7 +3189,6 @@
         activateNoteControl(action);
         state.awaitingNeutral = true;
         state.neutralSince = 0;
-        state.cooldownUntil = time + 450;
         if (arNotePage !== oldPage) {
           setXrMessage(
             horizontalMovement > 0
@@ -2890,6 +3233,7 @@
 
     function updateHandGestures(frame, time) {
       if (!isPlaced || !model || !xrSession) return;
+      if (graphIntroPulseStartedAt !== null) return;
 
       const pinchPoints = [];
       for (const inputSource of xrSession.inputSources) {
@@ -3243,7 +3587,7 @@
 
     async function requestNote(path) {
       if (noteRequestBusy) return;
-      const config = JSON.parse(localStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
+      const config = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
       if (!config?.url || !config?.token) {
         setXrMessage("Configure a ponte do Obsidian antes de entrar em AR.");
         return;
@@ -3270,10 +3614,7 @@
       try {
         const response = await fetch(`${config.url}/note`, {
           method: "POST",
-          headers: {
-            "Authorization": `Bearer ${config.token}`,
-            "Content-Type": "application/json"
-          },
+          headers: bridgeRequestHeaders(config, true),
           body: JSON.stringify({ path })
         });
         const result = await response.json();
@@ -3346,9 +3687,12 @@
       }
       if (frame && referenceSpace) {
         updatePlacement(frame);
-        updateNoteMicroGestures(frame, time);
-        updateNodePointing(frame, time);
-        updateHandGestures(frame, time);
+        const graphIntroPulseActive = updateGraphIntroPulse(time);
+        if (!graphIntroPulseActive) {
+          updateNoteMicroGestures(frame, time);
+          updateNodePointing(frame, time);
+          updateHandGestures(frame, time);
+        }
 
         if (time - previousUiUpdate > 400 && !isPlaced) {
           setXrMessage(
@@ -3367,13 +3711,14 @@
       isPlaced = false;
       placementRoot.visible = false;
       userScaleFactor = 1;
+      graphIntroPulseStartedAt = null;
       if (dynamicLabelMaterial) {
         dynamicLabelMaterial.uniforms.labelScale.value = 1;
       }
       resetGestureState();
       if (model) {
         contentRoot.scale.setScalar(baseModelScale);
-        contentRoot.rotation.set(0, Math.PI, 0);
+        contentRoot.rotation.set(0, INITIAL_MODEL_YAW, 0);
       }
       setXrMessage("Procure outra superfície e faça uma pinça para posicionar.");
     }
@@ -3386,6 +3731,7 @@
       noteWindowAnchor = null;
       noteWindowPinned = false;
       xrSession = null;
+      graphIntroPulseStartedAt = null;
       referenceSpace = null;
       viewerSpace = null;
       latestHitResult = null;
@@ -3434,7 +3780,7 @@
         enterButton.textContent = "Entrar em AR";
       } catch (error) {
         console.error(error);
-        setStatus(`Falha ao preparar a experiência: ${error.message}`);
+        setStatus(`Falha ao preparar a experiência: ${describeError(error)}`);
       }
     }
   </script>
