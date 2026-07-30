@@ -190,6 +190,37 @@ npm run dev --prefix .\sites-space-ar
 O desenvolvimento local não requer `.openai/hosting.json`. Esse arquivo contém
 somente a associação privada com a hospedagem e permanece fora do repositório.
 
+### Testar no Quest com zrok
+
+O hostname público muda quando uma nova share é criada. Primeiro exponha a porta
+mostrada pelo Vinext/Vite:
+
+```powershell
+zrok share public http://127.0.0.1:3001
+```
+
+Copie apenas o hostname gerado, autorize-o no Vite e reinicie o servidor:
+
+```powershell
+$env:__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS = "HOST.shares.zrok.io"
+npm run dev --prefix .\sites-space-ar -- --port 3001 --strictPort
+```
+
+Configure a ponte para aceitar exatamente a origem HTTPS do site e reinicie-a:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Scripts\Start-ObsidianNoteBridge.ps1 `
+  -SiteUrl "https://HOST.shares.zrok.io"
+```
+
+No site aberto pelo Quest, informe a URL HTTPS e o token exibidos pela ponte,
+mantenha **Gerar o grafo diretamente do vault** marcado e pressione **Salvar
+acesso às notas**. A página recarregará automaticamente para montar o grafo.
+
+Cada hostname do zrok é uma origem diferente para o navegador. Se a share mudar,
+a URL e o token precisam ser salvos novamente. Uma share reservada evita essa
+troca frequente.
+
 Para validar uma compilação de produção:
 
 ```powershell

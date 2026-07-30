@@ -47,6 +47,9 @@ test("reenquadra o grafo dinâmico depois que o layout termina", async () => {
   assert.match(html, /MAX_DYNAMIC_SCALE_FACTOR\s*=\s*10/);
   assert.match(html, /compact-v2-/);
   assert.match(html, /labelScale/);
+  assert.match(html, /Modo direto ativo: informe a URL HTTPS e o token da ponte/);
+  assert.match(html, /Falha ao preparar a experiência/);
+  assert.doesNotMatch(html, /Grafo dinâmico indisponível; usando glTF/);
   assert.doesNotMatch(html, /nodeMaterial = new THREE\.MeshBasicMaterial\(\{\s*vertexColors:/);
 });
 

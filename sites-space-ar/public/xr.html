@@ -1966,7 +1966,10 @@
         );
         bridgeFeedback.textContent = `Conectado: ${result.notes} notas disponíveis.`;
         if (dynamicGraphToggle.checked && !dynamicGraphActive) {
-          bridgeFeedback.textContent += " Recarregue a página para usar o grafo dinâmico.";
+          bridgeFeedback.textContent += " Recarregando o grafo dinâmico…";
+          bridgeFeedback.classList.add("success");
+          setTimeout(() => location.reload(), 700);
+          return;
         }
         bridgeFeedback.classList.add("success");
         void warmRecentNotesDuringModelLoad(true);
@@ -2568,13 +2571,21 @@
       try {
         config = JSON.parse(localStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
       } catch {}
-      if (dynamicGraphToggle.checked && config?.url && config?.token) {
+      if (dynamicGraphToggle.checked) {
+        if (!config?.url || !config?.token) {
+          bridgeFeedback.textContent =
+            "Modo direto ativo: informe a URL HTTPS e o token da ponte.";
+          bridgeFeedback.className = "bridge-feedback error";
+          throw new Error(
+            "o grafo direto precisa da URL e do token da ponte neste domínio."
+          );
+        }
         try {
           await loadDynamicGraph(config);
           return;
         } catch (error) {
-          console.warn("Grafo dinâmico indisponível; usando glTF.", error);
-          setStatus(`Grafo dinâmico indisponível: ${error.message}. Carregando glTF…`);
+          console.error("Falha ao carregar o grafo direto.", error);
+          throw new Error(`falha ao carregar o grafo direto: ${error.message}`);
         }
       }
       await loadGltfModel();
@@ -3423,7 +3434,7 @@
         enterButton.textContent = "Entrar em AR";
       } catch (error) {
         console.error(error);
-        setStatus(`Falha ao carregar Space.gltf: ${error.message}`);
+        setStatus(`Falha ao preparar a experiência: ${error.message}`);
       }
     }
   </script>
