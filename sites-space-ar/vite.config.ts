@@ -1,12 +1,14 @@
 import vinext from "vinext";
 import { defineConfig } from "vite";
-import hostingConfig from "./.openai/hosting.json";
-import { sites } from "./build/sites-vite-plugin";
+import { sites } from "./sites-vite-plugin";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
 
-const { d1, r2 } = hostingConfig;
+// Bindings are public logical names, not Cloudflare resource identifiers.
+// The private `.openai/hosting.json` is needed only by the Sites deployment.
+const d1 = process.env.SPACE_D1_BINDING || null;
+const r2 = process.env.SPACE_R2_BINDING || "MODELS";
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";

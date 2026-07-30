@@ -44,7 +44,7 @@ versionados.
 
 - Windows 10 ou 11;
 - Obsidian com suporte ao CLI;
-- Node.js 22.13 ou superior e npm;
+- Node.js 24 e npm recomendados (`nvm use 24` quando usar NVM);
 - Rust estável com Cargo;
 - Cloudflare Tunnel (`cloudflared`);
 - Android Platform Tools, somente para configuração por ADB;
@@ -72,6 +72,16 @@ npm ci --prefix .\model-pipeline
 npm ci --prefix .\sites-space-ar
 cargo build --release --manifest-path .\note-bridge-rs\Cargo.toml
 ```
+
+Confirme a versão ativa antes de instalar as dependências:
+
+```powershell
+node --version
+npm --version
+```
+
+O projeto também aceita Node.js 22.13 ou superior, mas o Node 24 é a versão
+recomendada e usada nos testes atuais.
 
 O repositório não contém um grafo ou um arquivo `.blend` pessoal. Esses arquivos
 só são necessários para o modo glTF. Use `graph.example.json` como referência do
@@ -173,8 +183,12 @@ O script envia a URL e o token da execução atual sem usar a área de transfer�
 O cliente WebXR está em `sites-space-ar`. Para desenvolvimento local:
 
 ```powershell
+nvm use 24  # somente quando o NVM estiver instalado
 npm run dev --prefix .\sites-space-ar
 ```
+
+O desenvolvimento local não requer `.openai/hosting.json`. Esse arquivo contém
+somente a associação privada com a hospedagem e permanece fora do repositório.
 
 Para validar uma compilação de produção:
 

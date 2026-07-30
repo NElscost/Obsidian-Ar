@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const xrUrl = new URL("../public/xr.html", import.meta.url);
+const viteConfigUrl = new URL("../vite.config.ts", import.meta.url);
+const sitesPluginUrl = new URL("../sites-vite-plugin.ts", import.meta.url);
 
 test("declara os recursos WebXR necessários", async () => {
   const html = await readFile(xrUrl, "utf8");
@@ -46,4 +48,16 @@ test("reenquadra o grafo dinâmico depois que o layout termina", async () => {
   assert.match(html, /compact-v2-/);
   assert.match(html, /labelScale/);
   assert.doesNotMatch(html, /nodeMaterial = new THREE\.MeshBasicMaterial\(\{\s*vertexColors:/);
+});
+
+test("configuração pública não depende dos metadados privados do Sites", async () => {
+  const [viteConfig, sitesPlugin] = await Promise.all([
+    readFile(viteConfigUrl, "utf8"),
+    readFile(sitesPluginUrl, "utf8"),
+  ]);
+
+  assert.doesNotMatch(viteConfig, /import hostingConfig/);
+  assert.doesNotMatch(viteConfig, /\.\/build\/sites-vite-plugin/);
+  assert.match(viteConfig, /\.\/sites-vite-plugin/);
+  assert.match(sitesPlugin, /Public clones can build without/);
 });
