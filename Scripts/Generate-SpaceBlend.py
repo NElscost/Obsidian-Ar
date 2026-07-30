@@ -184,7 +184,14 @@ def create_labels(nodes, positions, text_material, background_material):
         curve.render_resolution_u = 1
         text = bpy.data.objects.new("label_%05d" % index, curve)
         text.location = position + Vector((0.0, 0.0, 0.25))
-        text.rotation_euler = (math.radians(90), 0.0, 0.0)
+        # O texto fica no plano vertical do grafo. A rotação adicional em Z
+        # troca a face visível e também o eixo horizontal do glifo, evitando
+        # que o verso double-sided apareça espelhado no Quest.
+        text.rotation_euler = (
+            math.radians(90),
+            0.0,
+            math.radians(180),
+        )
         text.data.materials.append(text_material)
         bpy.context.collection.objects.link(text)
 

@@ -5,6 +5,10 @@ import test from "node:test";
 const xrUrl = new URL("../public/xr.html", import.meta.url);
 const viteConfigUrl = new URL("../vite.config.ts", import.meta.url);
 const sitesPluginUrl = new URL("../sites-vite-plugin.ts", import.meta.url);
+const blenderGeneratorUrl = new URL(
+  "../../Scripts/Generate-SpaceBlend.py",
+  import.meta.url
+);
 
 test("declara os recursos WebXR necessários", async () => {
   const html = await readFile(xrUrl, "utf8");
@@ -88,13 +92,20 @@ test("apresenta o grafo inteiro com um pulso após a ancoragem", async () => {
 });
 
 test("mantém os rótulos do Blender legíveis pelos dois lados", async () => {
-  const html = await readFile(xrUrl, "utf8");
+  const [html, blenderGenerator] = await Promise.all([
+    readFile(xrUrl, "utf8"),
+    readFile(blenderGeneratorUrl, "utf8"),
+  ]);
 
   assert.match(html, /material\.name === "label_text"/);
   assert.match(html, /isLabelText \? THREE\.DoubleSide : THREE\.FrontSide/);
   assert.match(html, /material\.color\?\.set\(0xffffff\)/);
   assert.match(html, /material\.emissive\?\.set\(0xffffff\)/);
   assert.match(html, /material\.toneMapped = false/);
+  assert.match(
+    blenderGenerator,
+    /text\.rotation_euler\s*=\s*\([\s\S]*math\.radians\(90\)[\s\S]*math\.radians\(180\)/
+  );
 });
 
 test("reenquadra o grafo dinâmico depois que o layout termina", async () => {
