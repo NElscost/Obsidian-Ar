@@ -157,6 +157,14 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio sob dema
   assert.match(html, /space-ar-note-cache-v4/);
 });
 
+test("quebra trechos longos em blocos de código sem perder a formatação", async () => {
+  const html = await readFile(xrUrl, "utf8");
+
+  assert.match(html, /\.note-content pre\s*\{[^}]*white-space:\s*pre-wrap;/s);
+  assert.match(html, /\.note-content pre\s*\{[^}]*overflow-wrap:\s*anywhere;/s);
+  assert.match(html, /\.note-content pre code\s*\{[^}]*white-space:\s*inherit;/s);
+});
+
 test("reenquadra o grafo dinâmico depois que o layout termina", async () => {
   const html = await readFile(xrUrl, "utf8");
   const dynamicLoader = html.indexOf("async function loadDynamicGraph");

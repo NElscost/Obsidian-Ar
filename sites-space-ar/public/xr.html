@@ -289,13 +289,16 @@
       font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
     }
     .note-content pre {
-      overflow: auto;
+      overflow-x: hidden;
+      overflow-y: auto;
       padding: 12px;
       border-radius: 10px;
       background: rgba(0, 0, 0, 0.3);
-      white-space: pre;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
-    .note-content pre code { padding: 0; background: none; }
+    .note-content pre code { padding: 0; background: none; white-space: inherit; }
     .note-content code.hljs { color: #d6deeb; }
     .note-content .hljs-keyword,
     .note-content .hljs-selector-tag,
