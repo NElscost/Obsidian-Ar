@@ -21,6 +21,8 @@ test("declara os recursos WebXR necessários", async () => {
   assert.match(html, /id="background-360"/);
   assert.match(html, /function prepareEnvironment360/);
   assert.match(html, /MAX_BACKGROUND_360_WIDTH\s*=\s*4096/);
+  assert.match(html, /imageOrientation:\s*"flipY"/);
+  assert.match(html, /environment360Texture\.flipY = false/);
   assert.match(html, /environment360Texture\.generateMipmaps = false/);
   assert.match(html, /disposeEnvironment360\(\)/);
 });

@@ -885,7 +885,12 @@
       const file = background360Input.files?.[0];
       if (!file) return false;
 
-      const sourceBitmap = await createImageBitmap(file);
+      // WebGL ignores Texture.flipY for ImageBitmap in some browsers. Decode
+      // already flipped so equirectangular panoramas keep north at the top.
+      const sourceBitmap = await createImageBitmap(file, {
+        imageOrientation: "flipY",
+        premultiplyAlpha: "none"
+      });
       const sourceAspect = sourceBitmap.width / Math.max(1, sourceBitmap.height);
       let width = Math.min(sourceBitmap.width, MAX_BACKGROUND_360_WIDTH);
       let height = Math.min(sourceBitmap.height, MAX_BACKGROUND_360_HEIGHT);
@@ -904,6 +909,7 @@
       }
 
       environment360Texture = new THREE.Texture(environment360Bitmap);
+      environment360Texture.flipY = false;
       environment360Texture.colorSpace = THREE.SRGBColorSpace;
       environment360Texture.generateMipmaps = false;
       environment360Texture.minFilter = THREE.LinearFilter;
