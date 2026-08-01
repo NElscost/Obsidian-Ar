@@ -2100,17 +2100,25 @@
         context.moveTo(44, 20); context.lineTo(20, 44);
         context.stroke();
       } else if (action === "previous" || action === "next") {
-        const direction = action === "previous" ? -1 : 1;
-        context.moveTo(32 + direction * 10, 16);
-        context.lineTo(32 - direction * 8, 32);
-        context.lineTo(32 + direction * 10, 48);
+        const tipX = action === "previous" ? 21 : 43;
+        const tailX = action === "previous" ? 42 : 22;
+        context.moveTo(tailX, 16);
+        context.lineTo(tipX, 32);
+        context.lineTo(tailX, 48);
         context.stroke();
       } else if (action === "pin") {
-        context.arc(32, 22, 9, 0, Math.PI * 2);
-        context.stroke();
-        context.moveTo(32, 31); context.lineTo(32, 49);
-        context.moveTo(24, 39); context.lineTo(40, 39);
-        context.stroke();
+        // Pushpin silhouette: cap, shoulders and pointed needle.
+        context.moveTo(22, 16);
+        context.lineTo(42, 16);
+        context.lineTo(38, 27);
+        context.lineTo(44, 34);
+        context.lineTo(35, 34);
+        context.lineTo(32, 50);
+        context.lineTo(29, 34);
+        context.lineTo(20, 34);
+        context.lineTo(26, 27);
+        context.closePath();
+        context.fill();
       } else if (action === "audio" && active) {
         context.fillRect(20, 20, 24, 24);
       } else if (action === "audio") {

@@ -139,6 +139,8 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio sob dema
   assert.match(html, /spatialAudioContext\.listener/);
   assert.match(html, /addArNoteControl\(\s*"audio"/);
   assert.match(html, /function noteControlIconTexture/);
+  assert.match(html, /const tipX = action === "previous" \? 21 : 43/);
+  assert.match(html, /Pushpin silhouette/);
   assert.match(html, /function setNoteControlIcon/);
   assert.match(html, /new THREE\.PlaneGeometry\(0\.024, 0\.024\)/);
   assert.match(html, /activeNoteAudio\.currentTime = 0/);
