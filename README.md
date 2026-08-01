@@ -5,6 +5,7 @@ Visualizador WebXR para explorar um grafo 3D do Obsidian em realidade aumentada 
 ## Recursos
 
 - sessão `immersive-ar` com passthrough;
+- fundo opcional com panorama equiretangular 360° selecionado localmente;
 - posicionamento do grafo por hit test e anchor;
 - escala, rotação e seleção por gestos de mãos;
 - raio de seleção estabilizado pela palma;
@@ -243,6 +244,20 @@ nvm use 24  # somente quando o NVM estiver instalado
 npm run dev --prefix .\sites-space-ar
 ```
 
+### Passthrough ou fundo panorâmico 360°
+
+Antes de entrar em AR, abra **Fundo panorâmico 360° (opcional)**. Sem selecionar
+um arquivo, a sessão usa o passthrough normal do Quest. Ao selecionar uma imagem
+equiretangular, ela é renderizada em uma esfera ao redor do usuário e acompanha
+somente sua posição, preservando a orientação do panorama.
+
+Use preferencialmente WebP ou AVIF em 4096×2048. Arquivos maiores são reduzidos
+para no máximo essa resolução antes de chegar à GPU. A textura não usa mipmaps e
+é liberada ao encerrar a sessão. Como o arquivo é escolhido no próprio Quest,
+ele não consome largura de banda do servidor; uma textura 4096×2048 ainda ocupa
+aproximadamente 32 MB de memória gráfica depois de decodificada, independentemente
+do tamanho comprimido do arquivo.
+
 O desenvolvimento local não requer `.openai/hosting.json`. Esse arquivo contém
 somente a associação privada com a hospedagem e permanece fora do repositório.
 
@@ -362,7 +377,19 @@ servidor local.
 ### Microgestos de paginação
 
 Com uma nota aberta, feche indicador, médio, anelar e mínimo e deslize o polegar
-para a esquerda ou direita. O reconhecedor:
+para a esquerda ou direita. Em versões compatíveis do Quest Browser, o site usa
+primeiro os estados booleanos nativos `swipe-left` e `swipe-right` fornecidos
+pelo perfil WebXR `oculus-hand`. A paginação ocorre somente na transição de
+solto para pressionado, com uma pequena proteção contra repetição, e o raio é
+ocultado durante o gesto.
+
+Essa integração corresponde à utilizada pelo componente `Microgestures` do
+Reactylon, mas acessa diretamente os botões 5 e 6 de `XRInputSource.gamepad`.
+Reactylon e Babylon.js não são adicionados ao visualizador, evitando outro motor
+3D, downloads e atualizações de cena desnecessárias.
+
+Quando `oculus-hand` ou seus botões não estão disponíveis, o site mantém o
+reconhecedor geométrico anterior como fallback. Ele:
 
 - mede a flexão pelos ângulos das articulações;
 - aguarda a pose fechada estabilizar;
@@ -380,11 +407,10 @@ para a esquerda ou direita. O reconhecedor:
 - valida deslocamento, velocidade, direção dominante e monotonicidade;
 - exige retorno estável ao neutro antes de aceitar outro gesto.
 
-Uma perda breve de tracking ou de um único dedo não cancela a tentativa nem
-reativa o raio imediatamente. O raio fica oculto enquanto a pose está ativa e
-por uma curta janela de tolerância. A implementação aproxima o
-comportamento de `XR_META_hand_tracking_microgestures`, pois o navegador WebXR
-ainda não entrega diretamente esses eventos nativos da Meta.
+Uma perda breve de tracking ou de um único dedo não cancela a tentativa do
+fallback nem reativa o raio imediatamente. Tanto no modo nativo quanto no
+fallback, o raio permanece oculto durante o gesto e por uma curta janela de
+tolerância.
 
 ## Segurança e privacidade
 

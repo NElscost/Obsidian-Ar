@@ -162,6 +162,12 @@
     }
     .bridge-config details[open] summary { margin-bottom: 7px; }
     .bridge-config details input + input { margin-top: 7px; }
+    .bridge-config small {
+      display: block;
+      margin-top: 6px;
+      color: #91a0b6;
+      line-height: 1.35;
+    }
     .graph-mode {
       display: flex;
       align-items: center;
@@ -479,6 +485,11 @@
           <input id="dynamic-graph" type="checkbox" checked>
           Gerar o grafo diretamente do vault, sem Blender ou glTF
         </label>
+        <details>
+          <summary>Fundo panorâmico 360° (opcional)</summary>
+          <input id="background-360" type="file" accept="image/avif,image/webp,image/jpeg,image/png">
+          <small>Sem arquivo: passthrough. Recomendado: imagem equiretangular 4096×2048 em WebP ou AVIF.</small>
+        </details>
         <button id="save-bridge" type="button">Salvar acesso às notas</button>
         <p id="bridge-feedback" class="bridge-feedback" role="status"></p>
       </div>
@@ -517,6 +528,8 @@
     const DYNAMIC_GRAPH_STORAGE_KEY = "space-ar-dynamic-graph";
     const GRAPH_LAYOUT_STORAGE_KEY = "space-ar-graph-layout-v1";
     const RECENT_NOTES_STORAGE_KEY = "space-ar-recent-notes";
+    const MAX_BACKGROUND_360_WIDTH = 4096;
+    const MAX_BACKGROUND_360_HEIGHT = 2048;
     const STATIC_ASSET_HEADERS = { "skip_zrok_interstitial": "1" };
 
     const enterButton = document.querySelector("#enter-ar");
@@ -530,6 +543,7 @@
     const accessClientSecretInput = document.querySelector("#access-client-secret");
     const saveBridgeButton = document.querySelector("#save-bridge");
     const dynamicGraphToggle = document.querySelector("#dynamic-graph");
+    const background360Input = document.querySelector("#background-360");
     const bridgeFeedback = document.querySelector("#bridge-feedback");
     const notePanel = document.querySelector("#note-panel");
     const noteTitle = document.querySelector("#note-title");
@@ -848,6 +862,68 @@
     const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 30);
     camera.position.set(0, 1.4, 2);
     scene.add(camera);
+    let environment360Mesh = null;
+    let environment360Texture = null;
+    let environment360Bitmap = null;
+    const environment360Position = new THREE.Vector3();
+
+    function disposeEnvironment360() {
+      if (environment360Mesh) {
+        scene.remove(environment360Mesh);
+        environment360Mesh.geometry.dispose();
+        environment360Mesh.material.dispose();
+        environment360Mesh = null;
+      }
+      environment360Texture?.dispose();
+      environment360Texture = null;
+      environment360Bitmap?.close?.();
+      environment360Bitmap = null;
+    }
+
+    async function prepareEnvironment360() {
+      disposeEnvironment360();
+      const file = background360Input.files?.[0];
+      if (!file) return false;
+
+      const sourceBitmap = await createImageBitmap(file);
+      const sourceAspect = sourceBitmap.width / Math.max(1, sourceBitmap.height);
+      let width = Math.min(sourceBitmap.width, MAX_BACKGROUND_360_WIDTH);
+      let height = Math.min(sourceBitmap.height, MAX_BACKGROUND_360_HEIGHT);
+      if (width / height > sourceAspect) width = Math.round(height * sourceAspect);
+      else height = Math.round(width / sourceAspect);
+
+      if (width !== sourceBitmap.width || height !== sourceBitmap.height) {
+        environment360Bitmap = await createImageBitmap(sourceBitmap, {
+          resizeWidth: width,
+          resizeHeight: height,
+          resizeQuality: "high"
+        });
+        sourceBitmap.close?.();
+      } else {
+        environment360Bitmap = sourceBitmap;
+      }
+
+      environment360Texture = new THREE.Texture(environment360Bitmap);
+      environment360Texture.colorSpace = THREE.SRGBColorSpace;
+      environment360Texture.generateMipmaps = false;
+      environment360Texture.minFilter = THREE.LinearFilter;
+      environment360Texture.magFilter = THREE.LinearFilter;
+      environment360Texture.needsUpdate = true;
+
+      const geometry = new THREE.SphereGeometry(12, 32, 20);
+      geometry.scale(-1, 1, 1);
+      const material = new THREE.MeshBasicMaterial({
+        map: environment360Texture,
+        depthWrite: false,
+        fog: false,
+        toneMapped: false
+      });
+      environment360Mesh = new THREE.Mesh(geometry, material);
+      environment360Mesh.frustumCulled = false;
+      environment360Mesh.renderOrder = -1000;
+      scene.add(environment360Mesh);
+      return true;
+    }
 
     const renderer = new THREE.WebGLRenderer({
       alpha: true,
@@ -2545,6 +2621,11 @@
       return line;
     });
     let noteMicroGestureStates = new WeakMap();
+    let nativeMicroGestureStates = new WeakMap();
+    const NATIVE_MICRO_GESTURE_BUTTONS = Object.freeze({
+      swipeLeft: 5,
+      swipeRight: 6
+    });
     const microGestureCameraRight = new THREE.Vector3();
     const microGesturePalmAxis = new THREE.Vector3();
     const microGestureCameraQuaternion = new THREE.Quaternion();
@@ -2588,12 +2669,16 @@
 
     function resetNoteMicroGestures() {
       noteMicroGestureStates = new WeakMap();
+      nativeMicroGestureStates = new WeakMap();
     }
 
     function isMicroGestureHandClosed(inputSource) {
       const state = noteMicroGestureStates.get(inputSource);
+      const nativeState = nativeMicroGestureStates.get(inputSource);
       return state?.handClosed === true ||
-        performance.now() < (state?.suppressRayUntil ?? 0);
+        performance.now() < (state?.suppressRayUntil ?? 0) ||
+        nativeState?.pressed === true ||
+        performance.now() < (nativeState?.suppressRayUntil ?? 0);
     }
 
     try {
@@ -3357,6 +3442,13 @@
         });
 
         await renderer.xr.setSession(xrSession);
+        let environment360Ready = false;
+        try {
+          environment360Ready = await prepareEnvironment360();
+        } catch (backgroundError) {
+          console.warn("Não foi possível carregar o fundo 360; usando passthrough.", backgroundError);
+          disposeEnvironment360();
+        }
         referenceSpace = await xrSession.requestReferenceSpace("local-floor")
           .catch(() => xrSession.requestReferenceSpace("local"));
         viewerSpace = await xrSession.requestReferenceSpace("viewer");
@@ -3369,7 +3461,11 @@
         xrSession.addEventListener("end", endSession, { once: true });
         document.body.classList.add("session-active");
         xrHud.classList.add("visible");
-        setXrMessage("Mova a cabeça devagar e procure uma superfície.");
+        setXrMessage(
+          environment360Ready
+            ? "Fundo 360° carregado. Procure uma superfície para posicionar o grafo."
+            : "Passthrough ativo. Mova a cabeça devagar e procure uma superfície."
+        );
       } catch (error) {
         console.error(error);
         setStatus(`Não foi possível iniciar AR: ${error.message}`);
@@ -3490,6 +3586,62 @@
       return true;
     }
 
+    function hasNativeMicroGestures(inputSource) {
+      const profiles = Array.from(inputSource.profiles ?? []);
+      const buttons = inputSource.gamepad?.buttons;
+      return profiles.includes("oculus-hand") &&
+        Boolean(buttons?.[NATIVE_MICRO_GESTURE_BUTTONS.swipeLeft]) &&
+        Boolean(buttons?.[NATIVE_MICRO_GESTURE_BUTTONS.swipeRight]);
+    }
+
+    function updateNativeNoteMicroGestures(inputSource, time) {
+      if (!hasNativeMicroGestures(inputSource)) return false;
+
+      let state = nativeMicroGestureStates.get(inputSource);
+      if (!state) {
+        state = {
+          leftPressed: false,
+          rightPressed: false,
+          pressed: false,
+          suppressRayUntil: 0,
+          lastActionAt: 0
+        };
+        nativeMicroGestureStates.set(inputSource, state);
+      }
+
+      const buttons = inputSource.gamepad.buttons;
+      const leftButton = buttons[NATIVE_MICRO_GESTURE_BUTTONS.swipeLeft];
+      const rightButton = buttons[NATIVE_MICRO_GESTURE_BUTTONS.swipeRight];
+      const leftPressed = leftButton.pressed || leftButton.value > 0.5;
+      const rightPressed = rightButton.pressed || rightButton.value > 0.5;
+      const leftStarted = leftPressed && !state.leftPressed;
+      const rightStarted = rightPressed && !state.rightPressed;
+
+      state.pressed = leftPressed || rightPressed;
+      if (state.pressed) state.suppressRayUntil = time + 260;
+
+      if (
+        leftStarted !== rightStarted &&
+        time - state.lastActionAt >= 180
+      ) {
+        const action = rightStarted ? "next" : "previous";
+        const oldPage = arNotePage;
+        activateNoteControl(action);
+        state.lastActionAt = time;
+        if (arNotePage !== oldPage) {
+          setXrMessage(
+            rightStarted
+              ? "Microgesto nativo para a direita: próxima página."
+              : "Microgesto nativo para a esquerda: página anterior."
+          );
+        }
+      }
+
+      state.leftPressed = leftPressed;
+      state.rightPressed = rightPressed;
+      return true;
+    }
+
     function updateNoteMicroGestures(frame, time) {
       if (!arNoteGroup.visible || arNotePages.length < 2 || !xrSession) return;
       const xrCamera = renderer.xr.getCamera(camera);
@@ -3501,6 +3653,10 @@
 
       for (const inputSource of xrSession.inputSources) {
         if (!inputSource.hand) continue;
+        // Quest Browser exposes XR_META_hand_tracking_microgestures through the
+        // oculus-hand gamepad profile. Prefer those native boolean states and
+        // retain the joint-based recognizer below as a cross-device fallback.
+        if (updateNativeNoteMicroGestures(inputSource, time)) continue;
         let state = noteMicroGestureStates.get(inputSource);
         if (!state) {
           state = {
@@ -4237,6 +4393,10 @@
         syncDynamicNodeProxies();
       }
       if (frame && referenceSpace) {
+        if (environment360Mesh) {
+          renderer.xr.getCamera(camera).getWorldPosition(environment360Position);
+          environment360Mesh.position.copy(environment360Position);
+        }
         updatePlacement(frame);
         updateSpatialNoteAudio();
         const graphIntroPulseActive = updateGraphIntroPulse(time);
@@ -4295,6 +4455,7 @@
       xrHud.classList.remove("visible");
       notePanel.classList.remove("visible");
       disposeArNote();
+      disposeEnvironment360();
       resetNoteMicroGestures();
       for (const ray of handPointerRays) ray.visible = false;
       enterButton.disabled = false;

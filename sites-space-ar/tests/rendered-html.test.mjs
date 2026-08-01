@@ -18,6 +18,11 @@ test("declara os recursos WebXR necessários", async () => {
   assert.match(html, /anchors/);
   assert.match(html, /hand-tracking/);
   assert.match(html, /dom-overlay/);
+  assert.match(html, /id="background-360"/);
+  assert.match(html, /function prepareEnvironment360/);
+  assert.match(html, /MAX_BACKGROUND_360_WIDTH\s*=\s*4096/);
+  assert.match(html, /environment360Texture\.generateMipmaps = false/);
+  assert.match(html, /disposeEnvironment360\(\)/);
 });
 
 test("mantém o carregamento do modelo e a ponte de notas", async () => {
@@ -64,6 +69,12 @@ test("protege credenciais e habilita Cloudflare Access", async () => {
 test("microgestos usam referencial da palma e validação temporal", async () => {
   const html = await readFile(xrUrl, "utf8");
 
+  assert.match(html, /profiles\.includes\("oculus-hand"\)/);
+  assert.match(html, /swipeLeft:\s*5/);
+  assert.match(html, /swipeRight:\s*6/);
+  assert.match(html, /function updateNativeNoteMicroGestures/);
+  assert.match(html, /if \(updateNativeNoteMicroGestures\(inputSource, time\)\) continue/);
+  assert.match(html, /nativeState\?\.pressed === true/);
   assert.match(html, /function jointAngle/);
   assert.match(html, /state\.filteredThumb/);
   assert.match(html, /state\.lateralAxis/);
