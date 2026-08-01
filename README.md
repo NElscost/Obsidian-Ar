@@ -24,7 +24,7 @@ Visualizador WebXR para explorar um grafo 3D do Obsidian em realidade aumentada 
                          ┌─> /graph ─> Force layout ─> Three.js
 Vault Markdown ─> Axum ──┤                         (modo direto)
                          │
-                         └─> /note e /asset ─> painel 3D
+                         └─> /note e /asset ─> painel 3D + áudio HRTF
 
 Fluxo opcional:
 
@@ -301,6 +301,64 @@ Ao ancorar o grafo, a experiência executa uma apresentação curta do conjunto
 completo: parte da escala normal, cresce rapidamente até `4×` e retorna à escala
 normal. Os controles gestuais são liberados assim que o pulso termina.
 
+### Imagens, tabelas e áudio nas notas
+
+Imagens Markdown externas são buscadas com CORS e convertidas para uma URL
+`blob:` antes da captura 3D. Isso permite URLs com redirecionamento, como
+`Special:FilePath` do Wikimedia Commons, e impede que a serialização da página
+dependa do domínio remoto. Imagens acima de 12 MB são recusadas para proteger a
+memória do Quest. Se o Quest não conseguir decodificar o `blob`, o visualizador
+tenta novamente pela URL HTTPS com CORS e só mostra o texto alternativo quando a
+imagem realmente não possui dimensões válidas.
+
+Para imagens do Wikimedia Commons, a ponte Rust oferece um fallback autenticado
+em `/remote-image`. Assim, se a rede ou o CORS do Quest impedir o download, a
+ponte busca o arquivo. Por segurança, esse endpoint aceita apenas HTTPS nos
+hosts `commons.wikimedia.org` e `upload.wikimedia.org`, segue no máximo cinco
+redirecionamentos e limita a resposta a 12 MB.
+
+A paginação evita separar imagens e tabelas que cabem em uma página. Tabelas
+maiores podem continuar em outra página, mas a quebra ocorre entre linhas, não
+no meio de uma linha. Alterações desse algoritmo usam uma nova versão do cache
+de notas para não reaproveitar páginas antigas já cortadas.
+
+### Áudio espacial e controles 3D
+
+Áudio pode ser incluído com a sintaxe do Obsidian, por exemplo
+`![[gravacao.mp3]]`, ou com `<audio src="https://...">`. A janela AR exibe um
+controle central para reproduzir e parar. Os controles de fixar, voltar,
+avançar, fechar e áudio usam ícones vetoriais produzidos em canvas de 64 × 64 e
+reutilizados como pequenas texturas Three.js; não há download de fontes ou
+pacotes de ícones. O visualizador mantém somente um
+áudio ativo e usa `preload="none"`; arquivos do vault são baixados apenas na
+primeira reprodução. Formatos aceitos: AAC, FLAC, M4A, MP3, OGA/OGG, Opus e WAV.
+
+O fluxo espacial está implementado em `sites-space-ar/public/xr.html` pelas
+funções `ensureSpatialAudioContext`, `connectSpatialNoteAudio` e
+`updateSpatialNoteAudio`:
+
+1. O gesto no botão ativa um `AudioContext` antes de qualquer download, atendendo
+   à política de ativação de mídia do Quest.
+2. O elemento de áudio entra em um `MediaElementAudioSourceNode`, passa por um
+   `PannerNode` configurado com HRTF e chega ao destino de áudio.
+3. A cada frame WebXR, o listener recebe a posição, direção frontal e vetor
+   vertical da câmera estéreo; a fonte recebe a posição mundial da janela.
+4. Se a janela for fixada com anchor, o som permanece naquela posição. Se ela
+   acompanhar a câmera, a fonte acompanha a janela.
+5. O modelo de distância `inverse` usa distância de referência de 0,55 m,
+   alcance máximo de 8 m e `rolloffFactor` de 1,15.
+6. Se o navegador não disponibilizar o contexto espacial, o elemento mantém a
+   reprodução comum. Ao parar, a reprodução volta ao início.
+
+Na ponte, `note-bridge-rs/src/main.rs::read_asset` abre o arquivo com Tokio e o
+entrega ao Axum por `ReaderStream<File>`, preservando `Content-Length`, MIME e
+cache privado. Assim, a ponte não precisa criar uma segunda cópia integral do
+áudio em RAM antes de responder. O Rust também resolve o caminho dentro do vault,
+rejeita extensões não permitidas e reutiliza os caminhos já encontrados. A
+decodificação, a HRTF e a saída final continuam no navegador do Quest, onde há
+acesso à pose WebXR da cabeça; Rust otimiza transporte, segurança e memória do
+servidor local.
+
 ### Microgestos de paginação
 
 Com uma nota aberta, feche indicador, médio, anelar e mínimo e deslize o polegar
@@ -375,7 +433,12 @@ HTTPS e o token configurado no Quest.
 
 Confirme que a opção de grafo direto está marcada antes de recarregar a página.
 Na tela inicial, aguarde a mensagem `Grafo dinâmico pronto` antes de entrar em
-AR. Se necessário, feche a aba do Quest para eliminar uma versão antiga em cache.
+AR. Se aparecer `Failed to fetch`, teste a ponte novamente: Quick Tunnels em
+`trycloudflare.com` são temporários e podem deixar de resolver. Reinicie
+`Iniciar-NoteBridge.bat`, salve a nova URL e o novo token e então recarregue o
+site. O visualizador tenta novamente falhas transitórias antes de mostrar esse
+diagnóstico. Para uso recorrente, prefira um Named Tunnel. Se necessário, feche
+a aba do Quest para eliminar uma versão antiga em cache.
 
 ### A ponte não compila
 

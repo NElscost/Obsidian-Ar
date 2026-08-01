@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#070b12">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://esm.sh; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' blob: https:; img-src 'self' data: blob: https:; font-src 'self' data: https://cdn.jsdelivr.net; media-src 'self' blob:; worker-src 'self' blob:; manifest-src 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://esm.sh; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' blob: https:; img-src 'self' data: blob: https:; font-src 'self' data: https://cdn.jsdelivr.net; media-src 'self' blob: https:; worker-src 'self' blob:; manifest-src 'self'">
   <title>Space AR · Meta Quest</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <style>
@@ -327,7 +327,12 @@
     }
     .note-content .menv-cells-left > mtr > mtd { text-align: left; }
     .note-content .menv-right-solid { border-right: 1px solid currentColor; }
-    .note-content table { width: 100%; border-collapse: collapse; }
+    .note-content table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      break-inside: avoid;
+    }
     .note-content th, .note-content td {
       padding: 6px 8px;
       border: 1px solid rgba(255, 255, 255, 0.16);
@@ -342,8 +347,23 @@
       display: block;
       max-width: 100%;
       height: auto;
+      max-height: 540px;
+      object-fit: contain;
       margin: 10px auto;
       border-radius: 8px;
+      break-inside: avoid;
+    }
+    .note-content .note-audio-card {
+      display: flex;
+      align-items: center;
+      min-height: 48px;
+      margin: 10px 0;
+      padding: 10px 14px;
+      border: 1px solid rgba(117, 167, 255, 0.35);
+      border-radius: 10px;
+      background: rgba(117, 167, 255, 0.1);
+      color: #dce8ff;
+      break-inside: avoid;
     }
     .note-content .katex-display {
       overflow-x: auto;
@@ -364,6 +384,7 @@
       font-size: 20px;
       line-height: 1.5;
     }
+    .note-content.xr-capture img { max-height: 540px; }
     .note-panel.xr-capture-host {
       display: block;
       position: fixed;
@@ -526,6 +547,36 @@
       return headers;
     }
 
+    const BRIDGE_RETRY_DELAYS_MS = [0, 450, 1200, 2500];
+
+    async function fetchBridge(config, path, options = {}) {
+      let lastError = null;
+      for (const delay of BRIDGE_RETRY_DELAYS_MS) {
+        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 12000);
+        try {
+          return await fetch(`${config.url}${path}`, {
+            ...options,
+            headers: {
+              ...bridgeRequestHeaders(config),
+              ...(options.headers ?? {})
+            },
+            signal: controller.signal
+          });
+        } catch (error) {
+          lastError = error;
+        } finally {
+          clearTimeout(timeout);
+        }
+      }
+      const quickTunnel = /\.trycloudflare\.com\/?$/i.test(config.url);
+      const detail = quickTunnel
+        ? "O Quick Tunnel não está resolvendo. Reinicie Iniciar-NoteBridge.bat e salve a nova URL e o novo token."
+        : "Verifique se a ponte e o túnel estão ativos e se a URL salva ainda é válida.";
+      throw new Error(`${detail} (${describeError(lastError)})`);
+    }
+
     async function fetchStaticAsset(url, options = {}) {
       const response = await fetch(url, {
         ...options,
@@ -663,6 +714,23 @@
       return rustMathPromise;
     }
 
+    function escapeNoteHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      })[character]);
+    }
+
+    function audioCardHtml(source, label = "") {
+      const title = label || source;
+      return `<div class="note-audio-card" data-note-audio-source="${
+        encodeURIComponent(source)
+      }">▶ Áudio: ${escapeNoteHtml(title)}</div>`;
+    }
+
     async function renderNoteMarkdown(source) {
       const math = [];
       const stashMath = (latex, displayMode) => {
@@ -687,6 +755,10 @@
               : `![${alt}](${target})`;
           }
         )
+        .replace(
+          /!\[\[([^\]|#]+\.(?:aac|flac|m4a|mp3|oga|ogg|opus|wav))(?:\|([^\]]+))?\]\]/gi,
+          (_, target, label) => audioCardHtml(target, label)
+        )
         .replace(/!?\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g, (_, target, label) =>
           label ?? target
         )
@@ -699,12 +771,13 @@
       noteContent.innerHTML = DOMPurify.sanitize(dirty, {
         ALLOWED_TAGS: [
           "a", "blockquote", "br", "code", "del", "em", "h1", "h2", "h3",
-          "h4", "h5", "h6", "hr", "img", "li", "mark", "ol", "p", "pre", "span",
+          "audio", "a", "blockquote", "br", "code", "del", "div", "em", "h1", "h2", "h3",
+          "h4", "h5", "h6", "hr", "img", "li", "mark", "ol", "p", "pre", "source", "span",
           "strong", "table", "tbody", "td", "th", "thead", "tr", "ul"
         ],
         ALLOWED_ATTR: [
-          "alt", "class", "height", "href", "src", "title", "width",
-          "data-note-math"
+          "alt", "class", "controls", "height", "href", "preload", "src", "title", "type", "width",
+          "data-note-audio-source", "data-note-math"
         ],
         ALLOW_DATA_ATTR: true
       });
@@ -756,6 +829,15 @@
         link.target = "_blank";
         link.rel = "noopener noreferrer";
       }
+      for (const audio of noteContent.querySelectorAll("audio[src]")) {
+        const source = audio.getAttribute("src")?.trim();
+        if (!source) continue;
+        const card = document.createElement("div");
+        card.className = "note-audio-card";
+        card.dataset.noteAudioSource = encodeURIComponent(source);
+        card.textContent = `▶ Áudio: ${audio.getAttribute("title") || source}`;
+        audio.replaceWith(card);
+      }
       noteContent.scrollTop = 0;
     }
 
@@ -801,11 +883,33 @@
     let arNotePages = [];
     let arNotePage = 0;
     let arNoteTitle = "";
+    let arNotePath = "";
+    let noteAudioTracks = [];
+    let activeNoteAudio = null;
+    let activeNoteAudioObjectUrl = null;
+    let activeNoteAudioControl = null;
+    let spatialAudioContext = null;
+    let spatialAudioSource = null;
+    let spatialAudioPanner = null;
     let noteWindowPinned = false;
     let noteWindowAnchor = null;
 
     function disposeArNote() {
       cancelNoteCapture();
+      if (activeNoteAudio) {
+        activeNoteAudio.pause();
+        activeNoteAudio.removeAttribute("src");
+        activeNoteAudio.load();
+      }
+      if (activeNoteAudioObjectUrl) URL.revokeObjectURL(activeNoteAudioObjectUrl);
+      activeNoteAudio = null;
+      activeNoteAudioObjectUrl = null;
+      activeNoteAudioControl = null;
+      spatialAudioSource?.disconnect();
+      spatialAudioPanner?.disconnect();
+      spatialAudioSource = null;
+      spatialAudioPanner = null;
+      noteAudioTracks = [];
       arNoteGroup.visible = false;
       arNoteGroup.traverse((object) => {
         if (!object.isMesh) return;
@@ -820,6 +924,7 @@
       arNoteCanvas = null;
       arNotePages = [];
       arNotePage = 0;
+      arNotePath = "";
       pointedNoteControl = null;
       candidateNoteControl = null;
     }
@@ -889,12 +994,15 @@
     let snapDomPromise = null;
     let noteImageObjectUrls = [];
     let noteCaptureGeneration = 0;
+    const NOTE_PAGE_WIDTH = 900;
+    const NOTE_PAGE_HEIGHT = 570;
+    const NOTE_IMAGE_MAX_BYTES = 12 * 1024 * 1024;
     const noteSessionCache = new Map();
     const NOTE_CACHE_MAX_ENTRIES = 8;
     const NOTE_CACHE_MAX_BYTES = 48 * 1024 * 1024;
     const NOTE_PERSISTENT_CACHE_MAX_ENTRIES = 12;
     const NOTE_PERSISTENT_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
-    const NOTE_CACHE_DB = "space-ar-note-cache";
+    const NOTE_CACHE_DB = "space-ar-note-cache-v4";
     const NOTE_CACHE_STORE = "rendered-notes";
     let noteCacheDbPromise = null;
     let highlightCorePromise = null;
@@ -1176,8 +1284,91 @@
       return snapDomPromise;
     }
 
-    function isRemoteImageSource(source) {
-      return /^(?:https?:|data:|blob:)/i.test(source);
+    function isNetworkSource(source) {
+      return /^https?:/i.test(source);
+    }
+
+    function isBrowserLocalSource(source) {
+      return /^(?:data:|blob:)/i.test(source);
+    }
+
+    async function fetchVaultAsset(config, notePath, assetPath) {
+      const response = await fetch(`${config.url}/asset`, {
+        method: "POST",
+        headers: bridgeRequestHeaders(config, true),
+        body: JSON.stringify({ notePath, assetPath })
+      });
+      if (!response.ok) throw new Error(`Mídia HTTP ${response.status}`);
+      return response.blob();
+    }
+
+    async function fetchRemoteImage(source) {
+      const response = await fetch(source, {
+        cache: "force-cache",
+        credentials: "omit",
+        mode: "cors",
+        redirect: "follow"
+      });
+      if (!response.ok) throw new Error(`Imagem HTTP ${response.status}`);
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!contentType.toLowerCase().startsWith("image/")) {
+        throw new Error(`Resposta não é uma imagem (${contentType || "sem MIME"}).`);
+      }
+      const declaredSize = Number(response.headers.get("content-length") || 0);
+      if (declaredSize > NOTE_IMAGE_MAX_BYTES) {
+        throw new Error("Imagem remota excede 12 MB.");
+      }
+      const blob = await response.blob();
+      if (blob.size > NOTE_IMAGE_MAX_BYTES) {
+        throw new Error("Imagem remota excede 12 MB.");
+      }
+      return blob;
+    }
+
+    async function fetchRemoteImageThroughBridge(config, source) {
+      if (!config?.url || !config?.token) throw new Error("Ponte não configurada.");
+      const response = await fetch(`${config.url}/remote-image`, {
+        method: "POST",
+        headers: bridgeRequestHeaders(config, true),
+        body: JSON.stringify({ url: source })
+      });
+      if (!response.ok) {
+        let detail = `HTTP ${response.status}`;
+        try { detail = (await response.json()).error || detail; } catch {}
+        throw new Error(detail);
+      }
+      return response.blob();
+    }
+
+    function waitForImageLoad(image, timeoutMs = 8000) {
+      if (image.complete) {
+        return image.naturalWidth > 0
+          ? Promise.resolve()
+          : Promise.reject(new Error("Imagem concluída sem dimensões."));
+      }
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("Tempo esgotado ao carregar imagem.")), timeoutMs);
+        image.addEventListener("load", () => {
+          clearTimeout(timer);
+          resolve();
+        }, { once: true });
+        image.addEventListener("error", () => {
+          clearTimeout(timer);
+          reject(new Error("O navegador recusou a imagem."));
+        }, { once: true });
+      });
+    }
+
+    async function decodePreparedImage(image) {
+      image.loading = "eager";
+      image.decoding = "sync";
+      try {
+        if (image.decode) await image.decode();
+        else await waitForImageLoad(image);
+      } catch (error) {
+        if (image.complete && image.naturalWidth > 0) return;
+        throw error;
+      }
     }
 
     async function prepareNoteImages(config, notePath) {
@@ -1188,23 +1379,63 @@
         const source = image.getAttribute("src")?.trim();
         if (!source) return;
         try {
-          if (!isRemoteImageSource(source)) {
-            const response = await fetch(`${config.url}/asset`, {
-              method: "POST",
-              headers: bridgeRequestHeaders(config, true),
-              body: JSON.stringify({ notePath, assetPath: source })
-            });
-            if (!response.ok) throw new Error(`Imagem HTTP ${response.status}`);
-            const objectUrl = URL.createObjectURL(await response.blob());
-            noteImageObjectUrls.push(objectUrl);
-            image.src = objectUrl;
+          if (!isBrowserLocalSource(source)) {
+            if (isNetworkSource(source)) {
+              try {
+                const blob = await fetchRemoteImage(source);
+                const objectUrl = URL.createObjectURL(blob);
+                noteImageObjectUrls.push(objectUrl);
+                image.src = objectUrl;
+                await decodePreparedImage(image);
+                return;
+              } catch (blobError) {
+                console.warn(`Download direto da imagem falhou: ${source}`, blobError);
+                try {
+                  const blob = await fetchRemoteImageThroughBridge(config, source);
+                  const objectUrl = URL.createObjectURL(blob);
+                  noteImageObjectUrls.push(objectUrl);
+                  image.src = objectUrl;
+                  await decodePreparedImage(image);
+                  return;
+                } catch (bridgeError) {
+                  console.warn(`Proxy da imagem falhou; tentando URL direta: ${source}`, bridgeError);
+                  image.crossOrigin = "anonymous";
+                  image.referrerPolicy = "no-referrer";
+                  image.src = source;
+                }
+              }
+            } else {
+              const blob = await fetchVaultAsset(config, notePath, source);
+              const objectUrl = URL.createObjectURL(blob);
+              noteImageObjectUrls.push(objectUrl);
+              image.src = objectUrl;
+            }
           }
-          if (image.decode) await image.decode();
+          await decodePreparedImage(image);
         } catch (error) {
           console.warn(`Imagem não carregada: ${source}`, error);
           image.replaceWith(document.createTextNode(`[Imagem: ${image.alt || source}]`));
         }
       }));
+    }
+
+    function extractNoteAudioTracks(source) {
+      const tracks = [];
+      const seen = new Set();
+      const add = (value, label = "") => {
+        const path = String(value ?? "").trim();
+        if (!path || seen.has(path)) return;
+        seen.add(path);
+        tracks.push({ source: path, label: String(label || path) });
+      };
+      const markdown = String(source ?? "");
+      for (const match of markdown.matchAll(
+        /!\[\[([^\]|#]+\.(?:aac|flac|m4a|mp3|oga|ogg|opus|wav))(?:\|([^\]]+))?\]\]/gi
+      )) add(match[1], match[2]);
+      for (const match of markdown.matchAll(
+        /<audio\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi
+      )) add(match[1]);
+      return tracks;
     }
 
     function waitForRenderingIdle() {
@@ -1217,8 +1448,59 @@
       });
     }
 
-    function buildNotePageCapture(pageIndex) {
-      const pageTop = pageIndex * 570;
+    function calculateNotePageRanges() {
+      const noteBounds = noteContent.getBoundingClientRect();
+      const contentHeight = Math.max(1, noteContent.scrollHeight);
+      const atoms = [];
+      for (const element of noteContent.querySelectorAll("img, table")) {
+        const bounds = element.getBoundingClientRect();
+        const height = bounds.height;
+        if (element.matches("table") && height > NOTE_PAGE_HEIGHT) {
+          for (const row of element.querySelectorAll("tr")) {
+            const rowBounds = row.getBoundingClientRect();
+            atoms.push({
+              top: rowBounds.top - noteBounds.top,
+              bottom: rowBounds.bottom - noteBounds.top,
+              height: rowBounds.height
+            });
+          }
+          continue;
+        }
+        atoms.push({
+          top: bounds.top - noteBounds.top,
+          bottom: bounds.bottom - noteBounds.top,
+          height
+        });
+      }
+      atoms.sort((left, right) => left.top - right.top);
+
+      const ranges = [];
+      let pageTop = 0;
+      while (pageTop < contentHeight - 0.5) {
+        let pageBottom = Math.min(pageTop + NOTE_PAGE_HEIGHT, contentHeight);
+        const crossing = atoms.find((atom) =>
+          atom.height <= NOTE_PAGE_HEIGHT &&
+          atom.top > pageTop + 2 &&
+          atom.top < pageBottom - 2 &&
+          atom.bottom > pageBottom + 0.5
+        );
+        if (crossing) pageBottom = crossing.top;
+        if (pageBottom <= pageTop + 2) {
+          pageBottom = Math.min(pageTop + NOTE_PAGE_HEIGHT, contentHeight);
+        }
+        ranges.push({ top: pageTop, bottom: pageBottom });
+        pageTop = pageBottom;
+      }
+      return ranges.length ? ranges : [{ top: 0, bottom: NOTE_PAGE_HEIGHT }];
+    }
+
+    function buildNotePageCapture(page, pageIndex) {
+      const pageTop = Number.isFinite(page?.top)
+        ? page.top
+        : pageIndex * NOTE_PAGE_HEIGHT;
+      const pageBottom = Number.isFinite(page?.bottom)
+        ? page.bottom
+        : pageTop + NOTE_PAGE_HEIGHT;
       const noteBounds = noteContent.getBoundingClientRect();
       const capture = document.createElement("article");
       capture.className = "note-content xr-page-capture";
@@ -1226,7 +1508,7 @@
         const bounds = child.getBoundingClientRect();
         const top = bounds.top - noteBounds.top;
         const bottom = bounds.bottom - noteBounds.top;
-        if (bottom <= pageTop || top >= pageTop + 570) continue;
+        if (bottom <= pageTop || top >= pageBottom) continue;
         const clone = child.cloneNode(true);
         clone.style.position = "absolute";
         clone.style.left = `${bounds.left - noteBounds.left}px`;
@@ -1241,7 +1523,7 @@
 
     async function captureOneNotePage(snapdom, page, pageIndex) {
       page.status = "rendering";
-      const capture = buildNotePageCapture(pageIndex);
+      const capture = buildNotePageCapture(page, pageIndex);
       try {
         page.canvas = await snapdom.toCanvas(capture, {
           backgroundColor: "#0a101b",
@@ -1254,8 +1536,8 @@
           outerTransforms: false,
           reconcile: false,
           scale: 1,
-          width: 900,
-          height: 570
+          width: NOTE_PAGE_WIDTH,
+          height: NOTE_PAGE_HEIGHT
         });
         page.status = "ready";
       } finally {
@@ -1294,10 +1576,12 @@
       noteContent.classList.add("xr-capture");
       try {
         await document.fonts?.ready;
-        const pageCount = Math.max(1, Math.ceil(noteContent.scrollHeight / 570));
-        const pages = Array.from({ length: pageCount }, () => ({
+        const ranges = calculateNotePageRanges();
+        const pages = ranges.map((range) => ({
           canvas: null,
-          status: "pending"
+          status: "pending",
+          top: range.top,
+          bottom: range.bottom
         }));
         await captureOneNotePage(snapdom, pages[0], 0);
         return { pages, snapdom, generation };
@@ -1796,6 +2080,60 @@
       arNoteTexture.needsUpdate = true;
     }
 
+    const noteControlIconTextures = new Map();
+    function noteControlIconTexture(action, active = false) {
+      const key = `${action}:${active ? 1 : 0}`;
+      if (noteControlIconTextures.has(key)) return noteControlIconTextures.get(key);
+      const canvas = document.createElement("canvas");
+      canvas.width = 64;
+      canvas.height = 64;
+      const context = canvas.getContext("2d");
+      context.clearRect(0, 0, 64, 64);
+      context.strokeStyle = "#07111f";
+      context.fillStyle = "#07111f";
+      context.lineWidth = 7;
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      context.beginPath();
+      if (action === "close") {
+        context.moveTo(20, 20); context.lineTo(44, 44);
+        context.moveTo(44, 20); context.lineTo(20, 44);
+        context.stroke();
+      } else if (action === "previous" || action === "next") {
+        const direction = action === "previous" ? -1 : 1;
+        context.moveTo(32 + direction * 10, 16);
+        context.lineTo(32 - direction * 8, 32);
+        context.lineTo(32 + direction * 10, 48);
+        context.stroke();
+      } else if (action === "pin") {
+        context.arc(32, 22, 9, 0, Math.PI * 2);
+        context.stroke();
+        context.moveTo(32, 31); context.lineTo(32, 49);
+        context.moveTo(24, 39); context.lineTo(40, 39);
+        context.stroke();
+      } else if (action === "audio" && active) {
+        context.fillRect(20, 20, 24, 24);
+      } else if (action === "audio") {
+        context.moveTo(23, 17);
+        context.lineTo(48, 32);
+        context.lineTo(23, 47);
+        context.closePath();
+        context.fill();
+      }
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.minFilter = THREE.LinearFilter;
+      texture.generateMipmaps = false;
+      noteControlIconTextures.set(key, texture);
+      return texture;
+    }
+
+    function setNoteControlIcon(control, action, active = false) {
+      if (!control?.userData?.noteIcon) return;
+      control.userData.noteIcon.material.map = noteControlIconTexture(action, active);
+      control.userData.noteIcon.material.needsUpdate = true;
+    }
+
     function addArNoteControl(action, x, y, color) {
       const control = new THREE.Mesh(
         new THREE.CircleGeometry(0.019, 14),
@@ -1809,8 +2147,151 @@
       control.position.set(x, y, 0.004);
       control.renderOrder = 1001;
       control.userData.noteAction = action;
+      const icon = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.024, 0.024),
+        new THREE.MeshBasicMaterial({
+          map: noteControlIconTexture(action, false),
+          transparent: true,
+          depthTest: false,
+          toneMapped: false
+        })
+      );
+      icon.position.z = 0.003;
+      icon.renderOrder = 1002;
+      icon.raycast = () => {};
+      control.userData.noteIcon = icon;
+      control.add(icon);
       arNoteControls.push(control);
       arNoteGroup.add(control);
+      return control;
+    }
+
+    function updateAudioControlColor() {
+      if (!activeNoteAudioControl) return;
+      activeNoteAudioControl.material.color.setHex(
+        activeNoteAudio && !activeNoteAudio.paused ? 0xffd166 : 0x63e6be
+      );
+      setNoteControlIcon(
+        activeNoteAudioControl,
+        "audio",
+        Boolean(activeNoteAudio && !activeNoteAudio.paused)
+      );
+    }
+
+    function setAudioParam(param, value, time) {
+      if (param?.setValueAtTime) param.setValueAtTime(value, time);
+    }
+
+    async function ensureSpatialAudioContext() {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return null;
+      spatialAudioContext ??= new AudioContextClass({ latencyHint: "interactive" });
+      if (spatialAudioContext.state !== "running") {
+        try {
+          await spatialAudioContext.resume();
+        } catch (error) {
+          console.warn("AudioContext não pôde ser ativado; usando áudio comum.", error);
+        }
+      }
+      return spatialAudioContext.state === "running" ? spatialAudioContext : null;
+    }
+
+    function connectSpatialNoteAudio(audio, context) {
+      if (!context) return false;
+      try {
+        spatialAudioSource = spatialAudioContext.createMediaElementSource(audio);
+        spatialAudioPanner = spatialAudioContext.createPanner();
+        spatialAudioPanner.panningModel = "HRTF";
+        spatialAudioPanner.distanceModel = "inverse";
+        spatialAudioPanner.refDistance = 0.55;
+        spatialAudioPanner.maxDistance = 8;
+        spatialAudioPanner.rolloffFactor = 1.15;
+        spatialAudioPanner.coneInnerAngle = 360;
+        spatialAudioPanner.coneOuterAngle = 360;
+        spatialAudioSource.connect(spatialAudioPanner).connect(spatialAudioContext.destination);
+        return true;
+      } catch (error) {
+        console.warn("Áudio espacial indisponível; mantendo reprodução comum.", error);
+        spatialAudioSource = null;
+        spatialAudioPanner = null;
+        return false;
+      }
+    }
+
+    const audioListenerPosition = new THREE.Vector3();
+    const audioListenerForward = new THREE.Vector3();
+    const audioListenerUp = new THREE.Vector3();
+    const audioSourcePosition = new THREE.Vector3();
+    function updateSpatialNoteAudio() {
+      if (!spatialAudioContext || !spatialAudioPanner || !activeNoteAudio) return;
+      const xrCamera = renderer.xr.isPresenting ? renderer.xr.getCamera(camera) : camera;
+      xrCamera.getWorldPosition(audioListenerPosition);
+      xrCamera.getWorldDirection(audioListenerForward);
+      audioListenerUp.set(0, 1, 0).applyQuaternion(
+        xrCamera.getWorldQuaternion(workingQuaternion)
+      );
+      arNoteGroup.getWorldPosition(audioSourcePosition);
+      const now = spatialAudioContext.currentTime;
+      const listener = spatialAudioContext.listener;
+      setAudioParam(listener.positionX, audioListenerPosition.x, now);
+      setAudioParam(listener.positionY, audioListenerPosition.y, now);
+      setAudioParam(listener.positionZ, audioListenerPosition.z, now);
+      setAudioParam(listener.forwardX, audioListenerForward.x, now);
+      setAudioParam(listener.forwardY, audioListenerForward.y, now);
+      setAudioParam(listener.forwardZ, audioListenerForward.z, now);
+      setAudioParam(listener.upX, audioListenerUp.x, now);
+      setAudioParam(listener.upY, audioListenerUp.y, now);
+      setAudioParam(listener.upZ, audioListenerUp.z, now);
+      setAudioParam(spatialAudioPanner.positionX, audioSourcePosition.x, now);
+      setAudioParam(spatialAudioPanner.positionY, audioSourcePosition.y, now);
+      setAudioParam(spatialAudioPanner.positionZ, audioSourcePosition.z, now);
+    }
+
+    async function toggleNoteAudio() {
+      const track = noteAudioTracks[0];
+      if (!track) return;
+      try {
+        // Ative durante o gesto; depois de um fetch o Quest pode retirar a ativação do usuário.
+        const spatialContext = await ensureSpatialAudioContext();
+        if (!activeNoteAudio) {
+          const config = JSON.parse(
+            sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null"
+          );
+          let source = track.source;
+          if (!isNetworkSource(source) && !isBrowserLocalSource(source)) {
+            if (!config?.url || !config?.token) {
+              throw new Error("Configure a ponte para reproduzir áudio do vault.");
+            }
+            const blob = await fetchVaultAsset(config, arNotePath, source);
+            activeNoteAudioObjectUrl = URL.createObjectURL(blob);
+            source = activeNoteAudioObjectUrl;
+          }
+          activeNoteAudio = new Audio();
+          activeNoteAudio.preload = "none";
+          activeNoteAudio.src = source;
+          activeNoteAudio.volume = 1;
+          const spatial = connectSpatialNoteAudio(activeNoteAudio, spatialContext);
+          activeNoteAudio.addEventListener("ended", () => {
+            updateAudioControlColor();
+            setXrMessage(`Áudio concluído: ${track.label}.`);
+          });
+          activeNoteAudio.addEventListener("pause", updateAudioControlColor);
+          activeNoteAudio.addEventListener("play", updateAudioControlColor);
+          if (spatial) setXrMessage("Áudio espacial HRTF preparado.");
+        }
+        if (activeNoteAudio.paused) {
+          await activeNoteAudio.play();
+          setXrMessage(`Reproduzindo áudio: ${track.label}.`);
+        } else {
+          activeNoteAudio.pause();
+          activeNoteAudio.currentTime = 0;
+          setXrMessage(`Áudio parado: ${track.label}.`);
+        }
+        updateAudioControlColor();
+      } catch (error) {
+        console.warn("Não foi possível reproduzir o áudio.", error);
+        setXrMessage(`Falha no áudio: ${describeError(error)}`);
+      }
     }
 
     async function toggleNoteWindowPin(event) {
@@ -1863,6 +2344,10 @@
         void toggleNoteWindowPin(event);
         return;
       }
+      if (action === "audio") {
+        void toggleNoteAudio();
+        return;
+      }
       if (action === "previous" && arNotePage > 0) arNotePage -= 1;
       if (action === "next" && arNotePage < arNotePages.length - 1) arNotePage += 1;
       drawArNotePage();
@@ -1876,7 +2361,10 @@
       cachedPages = null
     ) {
       if (!xrSession) return;
+      const audioTracks = extractNoteAudioTracks(source);
       disposeArNote();
+      noteAudioTracks = audioTracks;
+      arNotePath = path;
       arNoteCanvas = document.createElement("canvas");
       arNoteCanvas.width = 1024;
       arNoteCanvas.height = 768;
@@ -1922,6 +2410,14 @@
       if (arNotePages.length > 1) {
         addArNoteControl("previous", -width / 2 + 0.032, -height / 2 + 0.03, 0x75a7ff);
         addArNoteControl("next", width / 2 - 0.032, -height / 2 + 0.03, 0x75a7ff);
+      }
+      if (noteAudioTracks.length) {
+        activeNoteAudioControl = addArNoteControl(
+          "audio",
+          0,
+          -height / 2 + 0.03,
+          0x63e6be
+        );
       }
       drawArNotePage();
       if (noteWindowPinned) {
@@ -2617,8 +3113,7 @@
 
     async function loadDynamicGraph(config) {
       setStatus("Lendo o vault e calculando o grafo 3D…");
-      const response = await fetch(`${config.url}/graph`, {
-        headers: bridgeRequestHeaders(config),
+      const response = await fetchBridge(config, "/graph", {
         cache: "no-store"
       });
       const data = await response.json();
@@ -3548,7 +4043,11 @@
             ? "fechar"
             : action === "pin"
               ? (noteWindowPinned ? "soltar a janela" : "fixar a janela")
-              : action === "next" ? "avançar" : "voltar";
+              : action === "audio"
+                ? (activeNoteAudio && !activeNoteAudio.paused
+                    ? "pausar o áudio"
+                    : "reproduzir o áudio")
+                : action === "next" ? "avançar" : "voltar";
           setXrMessage(`Faça uma pinça para ${label}.`);
         }
         return;
@@ -3687,6 +4186,7 @@
       }
       if (frame && referenceSpace) {
         updatePlacement(frame);
+        updateSpatialNoteAudio();
         const graphIntroPulseActive = updateGraphIntroPulse(time);
         if (!graphIntroPulseActive) {
           updateNoteMicroGestures(frame, time);

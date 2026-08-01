@@ -17,7 +17,8 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::sync::RwLock;
+use tokio::{fs::File, sync::RwLock};
+use tokio_util::io::ReaderStream;
 use tower_http::{
     compression::CompressionLayer,
     cors::{AllowOrigin, CorsLayer},
@@ -34,6 +35,7 @@ struct AppState {
     graph_cache: Arc<RwLock<GraphCache>>,
     note_cache: Arc<RwLock<HashMap<String, CachedNote>>>,
     asset_cache: Arc<RwLock<HashMap<String, PathBuf>>>,
+    remote_client: reqwest::Client,
 }
 
 #[derive(Default)]
@@ -124,6 +126,12 @@ struct NoteRequest {
 struct AssetRequest {
     note_path: String,
     asset_path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteImageRequest {
+    url: String,
 }
 
 #[derive(Serialize)]
@@ -435,6 +443,34 @@ mod tests {
             Some("Matemática/Álgebra/Matriz.md".to_string())
         );
     }
+
+    #[test]
+    fn allows_images_and_audio_but_rejects_other_assets() {
+        assert!(asset_extension_allowed(Path::new("imagem.webp")));
+        assert!(asset_extension_allowed(Path::new("gravacao.mp3")));
+        assert!(asset_extension_allowed(Path::new("voz.opus")));
+        assert!(!asset_extension_allowed(Path::new("script.exe")));
+        assert!(!asset_extension_allowed(Path::new("nota.md")));
+    }
+
+    #[test]
+    fn remote_image_proxy_is_restricted_to_wikimedia_https() {
+        assert!(wikimedia_image_url_allowed(
+            &reqwest::Url::parse(
+                "https://commons.wikimedia.org/wiki/Special:FilePath/Papyrus66.jpg"
+            )
+            .unwrap()
+        ));
+        assert!(wikimedia_image_url_allowed(
+            &reqwest::Url::parse("https://upload.wikimedia.org/example.jpg").unwrap()
+        ));
+        assert!(!wikimedia_image_url_allowed(
+            &reqwest::Url::parse("http://commons.wikimedia.org/example.jpg").unwrap()
+        ));
+        assert!(!wikimedia_image_url_allowed(
+            &reqwest::Url::parse("https://commons.wikimedia.org.evil.test/example.jpg").unwrap()
+        ));
+    }
 }
 
 async fn live_graph(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -600,13 +636,29 @@ async fn read_note(
     .into_response()
 }
 
-fn image_extension_allowed(path: &Path) -> bool {
+fn asset_extension_allowed(path: &Path) -> bool {
     matches!(
         path.extension()
             .and_then(|value| value.to_str())
             .map(|value| value.to_ascii_lowercase())
             .as_deref(),
-        Some("avif" | "gif" | "jpg" | "jpeg" | "png" | "svg" | "webp")
+        Some(
+            "aac"
+                | "avif"
+                | "flac"
+                | "gif"
+                | "jpg"
+                | "jpeg"
+                | "m4a"
+                | "mp3"
+                | "oga"
+                | "ogg"
+                | "opus"
+                | "png"
+                | "svg"
+                | "wav"
+                | "webp"
+        )
     )
 }
 
@@ -630,7 +682,7 @@ async fn resolve_asset(state: &AppState, note_path: &str, requested: &str) -> Re
         .unwrap_or_else(|| state.vault.as_ref().clone());
     for candidate in [note_dir.join(&normalized), state.vault.join(&normalized)] {
         if let Ok(path) = tokio::fs::canonicalize(candidate).await {
-            if path.starts_with(state.vault.as_ref()) && image_extension_allowed(&path) {
+            if path.starts_with(state.vault.as_ref()) && asset_extension_allowed(&path) {
                 state.asset_cache.write().await.insert(key, path.clone());
                 return Ok(path);
             }
@@ -649,12 +701,12 @@ async fn resolve_asset(state: &AppState, note_path: &str, requested: &str) -> Re
             .find(|entry| {
                 entry.file_type().is_file()
                     && entry.file_name().to_string_lossy().to_ascii_lowercase() == wanted
-                    && image_extension_allowed(entry.path())
+                    && asset_extension_allowed(entry.path())
             })
             .map(|entry| entry.into_path())
     })
     .await?
-    .context("Imagem não encontrada no vault.")?;
+    .context("Mídia não encontrada no vault.")?;
     state.asset_cache.write().await.insert(key, found.clone());
     Ok(found)
 }
@@ -673,22 +725,99 @@ async fn read_asset(
         _ => return error(StatusCode::NOT_FOUND, "Nota não permitida."),
     }
     match resolve_asset(&state, &note_path, &payload.asset_path).await {
-        Ok(path) => match tokio::fs::read(&path).await {
-            Ok(bytes) => Response::builder()
-                .status(StatusCode::OK)
-                .header(
-                    header::CONTENT_TYPE,
-                    mime_guess::from_path(&path)
-                        .first_or_octet_stream()
-                        .as_ref(),
-                )
-                .header(header::CACHE_CONTROL, "private, max-age=300")
-                .body(Body::from(bytes))
-                .unwrap(),
+        Ok(path) => match File::open(&path).await {
+            Ok(file) => {
+                let content_length = file.metadata().await.ok().map(|metadata| metadata.len());
+                let mut response = Response::builder()
+                    .status(StatusCode::OK)
+                    .header(
+                        header::CONTENT_TYPE,
+                        mime_guess::from_path(&path)
+                            .first_or_octet_stream()
+                            .as_ref(),
+                    )
+                    .header(header::CACHE_CONTROL, "private, max-age=300");
+                if let Some(length) = content_length {
+                    response = response.header(header::CONTENT_LENGTH, length);
+                }
+                response
+                    .body(Body::from_stream(ReaderStream::new(file)))
+                    .unwrap()
+            }
             Err(err) => error(StatusCode::NOT_FOUND, err.to_string()),
         },
         Err(err) => error(StatusCode::NOT_FOUND, err.to_string()),
     }
+}
+
+fn wikimedia_image_url_allowed(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        && matches!(
+            url.host_str()
+                .map(|host| host.to_ascii_lowercase())
+                .as_deref(),
+            Some("commons.wikimedia.org" | "upload.wikimedia.org")
+        )
+}
+
+async fn read_remote_image(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<RemoteImageRequest>,
+) -> Response {
+    const MAX_IMAGE_BYTES: u64 = 12 * 1024 * 1024;
+    if !authorized(&headers, &state.token) {
+        return error(StatusCode::UNAUTHORIZED, "Token inválido.");
+    }
+    let url = match reqwest::Url::parse(&payload.url) {
+        Ok(url) if wikimedia_image_url_allowed(&url) => url,
+        _ => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "Somente imagens HTTPS do Wikimedia são permitidas.",
+            )
+        }
+    };
+    let response = match state.remote_client.get(url).send().await {
+        Ok(response) => response,
+        Err(err) => return error(StatusCode::BAD_GATEWAY, err.to_string()),
+    };
+    if !response.status().is_success() || !wikimedia_image_url_allowed(response.url()) {
+        return error(
+            StatusCode::BAD_GATEWAY,
+            "O Wikimedia recusou a imagem ou redirecionou para outro domínio.",
+        );
+    }
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    if !content_type.to_ascii_lowercase().starts_with("image/") {
+        return error(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "A resposta remota não é uma imagem.",
+        );
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_IMAGE_BYTES)
+    {
+        return error(StatusCode::PAYLOAD_TOO_LARGE, "Imagem remota excede 12 MB.");
+    }
+    let bytes = match response.bytes().await {
+        Ok(bytes) if bytes.len() as u64 <= MAX_IMAGE_BYTES => bytes,
+        Ok(_) => return error(StatusCode::PAYLOAD_TOO_LARGE, "Imagem remota excede 12 MB."),
+        Err(err) => return error(StatusCode::BAD_GATEWAY, err.to_string()),
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CACHE_CONTROL, "private, max-age=86400")
+        .header(header::CONTENT_LENGTH, bytes.len())
+        .body(Body::from(bytes))
+        .unwrap()
 }
 
 #[tokio::main]
@@ -712,6 +841,10 @@ async fn main() -> Result<()> {
         graph_cache: Default::default(),
         note_cache: Default::default(),
         asset_cache: Default::default(),
+        remote_client: reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::limited(5))
+            .user_agent("Obsidian-Ar/1.0")
+            .build()?,
     };
     refresh_graph(&state).await?;
     let cors = CorsLayer::new()
@@ -732,6 +865,7 @@ async fn main() -> Result<()> {
         .route("/pending-optimization", get(pending_optimization))
         .route("/note", post(read_note))
         .route("/asset", post(read_asset))
+        .route("/remote-image", post(read_remote_image))
         .layer(DefaultBodyLimit::max(16_384))
         .layer(CompressionLayer::new())
         .layer(cors)

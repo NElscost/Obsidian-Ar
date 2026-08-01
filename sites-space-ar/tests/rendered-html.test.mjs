@@ -28,6 +28,9 @@ test("mantém o carregamento do modelo e a ponte de notas", async () => {
   assert.match(html, /skip_zrok_interstitial/);
   assert.match(html, /loader\.setRequestHeader\(STATIC_ASSET_HEADERS\)/);
   assert.match(html, /function fetchStaticAsset/);
+  assert.match(html, /async function fetchBridge/);
+  assert.match(html, /BRIDGE_RETRY_DELAYS_MS\s*=\s*\[0, 450, 1200, 2500\]/);
+  assert.match(html, /Quick Tunnel não está resolvendo/);
   assert.match(html, /function createGlbBuffer/);
   assert.match(html, /function createModelRevision/);
   assert.match(html, /binaryBuffer\.byteLength !== declaredLength/);
@@ -39,6 +42,7 @@ test("mantém o carregamento do modelo e a ponte de notas", async () => {
   assert.match(html, /graphUrl = "\.\/graph\.json"/);
   assert.match(html, /three-forcegraph@1\.43\.1/);
   assert.match(html, /\/graph/);
+  assert.match(html, /fetchBridge\(config, "\/graph"/);
   assert.match(html, /GRAPH_LAYOUT_STORAGE_KEY/);
   assert.match(html, /NOTE_BRIDGE_STORAGE_KEY/);
   assert.match(html, /Markdown|markdown/);
@@ -106,6 +110,39 @@ test("mantém os rótulos do Blender legíveis pelos dois lados", async () => {
     blenderGenerator,
     /text\.rotation_euler\s*=\s*\([\s\S]*math\.radians\(90\)[\s\S]*math\.radians\(180\)/
   );
+});
+
+test("prepara mídia remota, pagina conteúdo atômico e oferece áudio sob demanda", async () => {
+  const html = await readFile(xrUrl, "utf8");
+
+  assert.match(html, /async function fetchRemoteImage/);
+  assert.match(html, /function decodePreparedImage/);
+  assert.match(html, /async function fetchRemoteImageThroughBridge/);
+  assert.match(html, /\/remote-image/);
+  assert.match(html, /Proxy da imagem falhou; tentando URL direta/);
+  assert.match(html, /image\.naturalWidth > 0/);
+  assert.match(html, /redirect: "follow"/);
+  assert.match(html, /URL\.createObjectURL\(blob\)/);
+  assert.match(html, /function calculateNotePageRanges/);
+  assert.match(html, /querySelectorAll\("img, table"\)/);
+  assert.match(html, /element\.querySelectorAll\("tr"\)/);
+  assert.match(html, /NOTE_PAGE_HEIGHT\s*=\s*570/);
+  assert.match(html, /function extractNoteAudioTracks/);
+  assert.match(html, /async function toggleNoteAudio/);
+  assert.match(html, /activeNoteAudio\.preload = "none"/);
+  assert.match(html, /createMediaElementSource/);
+  assert.match(html, /async function ensureSpatialAudioContext/);
+  assert.match(html, /spatialAudioContext\.state === "running"/);
+  assert.match(html, /panningModel = "HRTF"/);
+  assert.match(html, /function updateSpatialNoteAudio/);
+  assert.match(html, /arNoteGroup\.getWorldPosition\(audioSourcePosition\)/);
+  assert.match(html, /spatialAudioContext\.listener/);
+  assert.match(html, /addArNoteControl\(\s*"audio"/);
+  assert.match(html, /function noteControlIconTexture/);
+  assert.match(html, /function setNoteControlIcon/);
+  assert.match(html, /new THREE\.PlaneGeometry\(0\.024, 0\.024\)/);
+  assert.match(html, /activeNoteAudio\.currentTime = 0/);
+  assert.match(html, /space-ar-note-cache-v4/);
 });
 
 test("reenquadra o grafo dinâmico depois que o layout termina", async () => {

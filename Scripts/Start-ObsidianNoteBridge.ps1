@@ -97,8 +97,15 @@ if (-not $needsBuild) {
 }
 if ($needsBuild) {
   Write-Output "Compilando a ponte Axum otimizada..."
-  & $cargo build --release --manifest-path (Join-Path $rustProjectPath "Cargo.toml")
-  if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $serverPath)) {
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    & $cargo build --release --manifest-path (Join-Path $rustProjectPath "Cargo.toml")
+    $cargoExitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+  if ($cargoExitCode -ne 0 -or -not (Test-Path -LiteralPath $serverPath)) {
     throw "Não foi possível compilar a ponte Axum."
   }
 }
@@ -282,6 +289,24 @@ if ($tunnelMode -eq "named") {
     throw "O túnel HTTPS não iniciou em 30 segundos. Consulte note-bridge-logs\tunnel.log."
   }
   $publishedUrl = $match.Value
+
+  # O cloudflared pode anunciar o hostname antes de o DNS do Quick Tunnel
+  # propagar. Só entregue a URL ao Quest depois que a rota pública responder.
+  $publicDeadline = (Get-Date).AddSeconds(30)
+  $publicReady = $false
+  do {
+    try {
+      $health = Invoke-WebRequest -UseBasicParsing `
+        -Uri "$publishedUrl/health" -TimeoutSec 5
+      $publicReady = $health.StatusCode -eq 200
+    } catch {
+      Start-Sleep -Milliseconds 600
+    }
+  } until ($publicReady -or (Get-Date) -ge $publicDeadline)
+  if (-not $publicReady) {
+    Stop-Process -Id $server.Id, $tunnel.Id -Force -ErrorAction SilentlyContinue
+    throw "O Quick Tunnel foi criado, mas sua URL pública não respondeu. Inicie a ponte novamente."
+  }
 }
 
 @{
