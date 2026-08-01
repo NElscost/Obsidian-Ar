@@ -368,6 +368,13 @@ para a esquerda ou direita. O reconhecedor:
 - aguarda a pose fechada estabilizar;
 - usa o polegar relativo ao pulso, eliminando translação do braço;
 - congela o eixo visual esquerda/direita no início do gesto;
+- deriva um eixo transversal do plano de cada palma entre indicador e mínimo,
+  corrige automaticamente o espelhamento entre mão esquerda e direita e o alinha
+  à direita visual da câmera;
+- usa o plano da palma para validar a qualidade do swipe, mas decide
+  `previous`/`next` exclusivamente pelo deslocamento na horizontal da câmera;
+- rearma pelo retorno lateral do polegar ao centro, sem exigir que profundidade e
+  rotação da mão voltem exatamente à pose 3D anterior;
 - normaliza limiares pelo tamanho da mão;
 - filtra jitter com uma média exponencial temporal;
 - valida deslocamento, velocidade, direção dominante e monotonicidade;

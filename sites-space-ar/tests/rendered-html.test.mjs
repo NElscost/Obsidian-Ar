@@ -70,6 +70,16 @@ test("microgestos usam referencial da palma e validação temporal", async () =>
   assert.match(html, /state\.handScale/);
   assert.match(html, /suppressRayUntil/);
   assert.match(html, /state\.lateralAxis\.copy\(microGestureCameraRight\)/);
+  assert.match(html, /function setMicroGestureLateralAxis/);
+  assert.match(html, /copy\(state\.bases\[0\]\)[\s\S]*sub\(state\.bases\[3\]\)/);
+  assert.match(html, /microGesturePalmAxis\.dot\(microGestureCameraRight\) < 0/);
+  assert.match(html, /inputSource\.handedness \|\| "none"/);
+  assert.match(html, /state\.screenAxis\.copy\(microGestureCameraRight\)/);
+  assert.match(html, /const screenMovement = microGestureDisplacement\.dot\(state\.screenAxis\)/);
+  assert.match(html, /state\.screenTravel \+= Math\.abs\(screenStep\)/);
+  assert.match(html, /Math\.abs\(screenMovement\) \/ Math\.max\(0\.001, state\.screenTravel\)/);
+  assert.match(html, /const action = screenMovement > 0 \? "next" : "previous"/);
+  assert.match(html, /lateralDistanceToNeutral <= state\.handScale \* 0\.12/);
   assert.match(html, /directionDominance/);
   assert.match(html, /monotonicity/);
   assert.match(html, /peakNormalizedSpeed/);

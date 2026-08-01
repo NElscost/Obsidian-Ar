@@ -2543,6 +2543,7 @@
     });
     let noteMicroGestureStates = new WeakMap();
     const microGestureCameraRight = new THREE.Vector3();
+    const microGesturePalmAxis = new THREE.Vector3();
     const microGestureCameraQuaternion = new THREE.Quaternion();
     const microGestureSegmentA = new THREE.Vector3();
     const microGestureSegmentB = new THREE.Vector3();
@@ -2554,6 +2555,32 @@
       microGestureSegmentA.copy(a).sub(center).normalize();
       microGestureSegmentB.copy(b).sub(center).normalize();
       return microGestureSegmentA.angleTo(microGestureSegmentB);
+    }
+
+    function setMicroGestureLateralAxis(inputSource, state) {
+      // Direction must always mean left/right in the user's view.
+      state.screenAxis.copy(microGestureCameraRight);
+      // Index→pinky is mirrored between hands. Aligning the palm-local axis with
+      // camera-right makes the resulting sign mean screen-left/screen-right for both.
+      microGesturePalmAxis
+        .copy(state.bases[0])
+        .sub(state.bases[3]);
+      const palmWidth = microGesturePalmAxis.length();
+      if (palmWidth < state.handScale * 0.2) {
+        state.lateralAxis.copy(microGestureCameraRight);
+        return;
+      }
+      microGesturePalmAxis.multiplyScalar(1 / palmWidth);
+      if (microGesturePalmAxis.dot(microGestureCameraRight) < 0) {
+        microGesturePalmAxis.negate();
+      }
+      // A small camera contribution keeps gestures intuitive with a rotated palm,
+      // while most of the axis follows each hand's real anatomical swipe plane.
+      state.lateralAxis
+        .copy(microGesturePalmAxis)
+        .lerp(microGestureCameraRight, 0.22)
+        .normalize();
+      state.handedness = inputSource.handedness || "none";
     }
 
     function resetNoteMicroGestures() {
@@ -3481,6 +3508,7 @@
             thumbStart: new THREE.Vector3(),
             previousThumb: new THREE.Vector3(),
             lateralAxis: new THREE.Vector3(),
+            screenAxis: new THREE.Vector3(),
             tips: Array.from({ length: 4 }, () => new THREE.Vector3()),
             bases: Array.from({ length: 4 }, () => new THREE.Vector3()),
             proximals: Array.from({ length: 4 }, () => new THREE.Vector3()),
@@ -3498,7 +3526,9 @@
             sampleElapsed: 16,
             handScale: 0.09,
             lateralTravel: 0,
-            peakNormalizedSpeed: 0
+            screenTravel: 0,
+            peakNormalizedSpeed: 0,
+            handedness: inputSource.handedness || "none"
           };
           noteMicroGestureStates.set(inputSource, state);
         }
@@ -3616,11 +3646,11 @@
         }
 
         if (state.awaitingNeutral) {
-          const distanceToNeutral = microGestureDisplacement
+          const lateralDistanceToNeutral = Math.abs(microGestureDisplacement
             .copy(state.filteredThumb)
             .sub(state.neutralThumb)
-            .length();
-          if (distanceToNeutral <= state.handScale * 0.18) {
+            .dot(state.screenAxis));
+          if (lateralDistanceToNeutral <= state.handScale * 0.12) {
             if (!state.neutralSince) state.neutralSince = time;
             if (time - state.neutralSince >= 80) {
               state.awaitingNeutral = false;
@@ -3630,6 +3660,7 @@
               state.previousThumb.copy(state.filteredThumb);
               state.startedAt = time;
               state.lateralTravel = 0;
+              state.screenTravel = 0;
               state.peakNormalizedSpeed = 0;
               state.tracking = true;
             }
@@ -3643,9 +3674,10 @@
           state.neutralThumb.copy(state.filteredThumb);
           state.thumbStart.copy(state.filteredThumb);
           state.previousThumb.copy(state.filteredThumb);
-          state.lateralAxis.copy(microGestureCameraRight);
+          setMicroGestureLateralAxis(inputSource, state);
           state.startedAt = time;
           state.lateralTravel = 0;
+          state.screenTravel = 0;
           state.peakNormalizedSpeed = 0;
           state.tracking = true;
           continue;
@@ -3656,45 +3688,54 @@
         }
 
         const sampleElapsed = Math.max(8, state.sampleElapsed);
-        const lateralStep = microGestureStep
-          .copy(state.filteredThumb)
-          .sub(state.previousThumb)
-          .dot(state.lateralAxis);
+        microGestureStep.copy(state.filteredThumb).sub(state.previousThumb);
+        const lateralStep = microGestureStep.dot(state.lateralAxis);
+        const screenStep = microGestureStep.dot(state.screenAxis);
         state.lateralTravel += Math.abs(lateralStep);
+        state.screenTravel += Math.abs(screenStep);
         state.peakNormalizedSpeed = Math.max(
           state.peakNormalizedSpeed,
-          Math.abs(lateralStep) / (sampleElapsed / 1000) / state.handScale
+          Math.max(Math.abs(lateralStep), Math.abs(screenStep)) /
+            (sampleElapsed / 1000) / state.handScale
         );
         state.previousThumb.copy(state.filteredThumb);
 
         microGestureDisplacement
           .copy(state.filteredThumb)
           .sub(state.thumbStart);
-        const horizontalMovement = microGestureDisplacement.dot(state.lateralAxis);
+        const palmMovement = microGestureDisplacement.dot(state.lateralAxis);
+        const screenMovement = microGestureDisplacement.dot(state.screenAxis);
+        const movementStrength = Math.max(
+          Math.abs(palmMovement),
+          Math.abs(screenMovement)
+        );
         const offAxisMovement = Math.sqrt(Math.max(
           0,
-          microGestureDisplacement.lengthSq() - horizontalMovement ** 2
+          microGestureDisplacement.lengthSq() - palmMovement ** 2
         ));
         const directionDominance =
-          Math.abs(horizontalMovement) / Math.max(0.001, offAxisMovement);
-        const monotonicity =
-          Math.abs(horizontalMovement) / Math.max(0.001, state.lateralTravel);
+          movementStrength / Math.max(0.001, offAxisMovement);
+        const monotonicity = Math.max(
+          Math.abs(palmMovement) / Math.max(0.001, state.lateralTravel),
+          Math.abs(screenMovement) / Math.max(0.001, state.screenTravel)
+        );
         if (
-          Math.abs(horizontalMovement) < state.handScale * 0.14 ||
+          movementStrength < state.handScale * 0.14 ||
+          Math.abs(screenMovement) < state.handScale * 0.055 ||
           time - state.startedAt < 70 ||
           directionDominance < 0.8 ||
           monotonicity < 0.48 ||
           state.peakNormalizedSpeed < 0.35
         ) continue;
 
-        const action = horizontalMovement > 0 ? "next" : "previous";
+        const action = screenMovement > 0 ? "next" : "previous";
         const oldPage = arNotePage;
         activateNoteControl(action);
         state.awaitingNeutral = true;
         state.neutralSince = 0;
         if (arNotePage !== oldPage) {
           setXrMessage(
-            horizontalMovement > 0
+            screenMovement > 0
               ? "Polegar para a direita: próxima página."
               : "Polegar para a esquerda: página anterior."
           );
