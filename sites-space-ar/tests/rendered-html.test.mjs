@@ -118,6 +118,19 @@ test("apresenta o grafo inteiro com um pulso após a ancoragem", async () => {
   );
 });
 
+test("anima pulsos sinápticos dos links inteiramente na GPU", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /function createSynapseLinks/);
+  assert.match(html, /new THREE\.LineSegments\(geometry, material\)/);
+  assert.match(html, /new THREE\.ShaderMaterial/);
+  assert.match(html, /attribute float pulseCoordinate/);
+  assert.match(html, /attribute float pulsePhase/);
+  assert.match(html, /attribute float pulseDirection/);
+  assert.match(html, /pulseTime: synapsePulseTime/);
+  assert.match(html, /synapsePulseTime\.value = time \* 0\.001/);
+  assert.match(html, /createSynapseLinks\(graphData, false, 0\.02\)/);
+});
+
 test("mantém os rótulos do Blender legíveis pelos dois lados", async () => {
   const [html, blenderGenerator] = await Promise.all([
     readFile(xrUrl, "utf8"),

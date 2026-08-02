@@ -2797,6 +2797,7 @@
     let baseModelScale = 1;
     let userScaleFactor = 1;
     let graphIntroPulseStartedAt = null;
+    const synapsePulseTime = { value: 0 };
     let xrSession = null;
     let referenceSpace = null;
     let viewerSpace = null;
@@ -3253,8 +3254,22 @@
       nodeMesh.computeBoundingSphere();
       root.add(nodeMesh);
 
+      const links = createSynapseLinks(data, true, 0.34);
+      if (links) root.add(links);
+
+      root.add(createDynamicGraphLabels(data.nodes));
+      return root;
+    }
+
+    function createSynapseLinks(data, dynamicCoordinates, baseAlpha) {
       const nodesById = new Map(data.nodes.map((node) => [node.id, node]));
-      const linePositions = [];
+      const positions = [];
+      const coordinates = [];
+      const phases = [];
+      const directions = [];
+      const sourcePosition = new THREE.Vector3();
+      const targetPosition = new THREE.Vector3();
+      let linkIndex = 0;
       for (const link of data.links) {
         const source = typeof link.source === "object"
           ? link.source
@@ -3263,37 +3278,82 @@
           ? link.target
           : nodesById.get(link.target);
         if (!source || !target) continue;
-        linePositions.push(
-          source.x ?? 0, source.y ?? 0, source.z ?? 0,
-          target.x ?? 0, target.y ?? 0, target.z ?? 0
+        if (dynamicCoordinates) {
+          sourcePosition.set(source.x ?? 0, source.y ?? 0, source.z ?? 0);
+          targetPosition.set(target.x ?? 0, target.y ?? 0, target.z ?? 0);
+        } else {
+          sourcePosition.set(source.x ?? 0, source.z ?? 0, -(source.y ?? 0));
+          targetPosition.set(target.x ?? 0, target.z ?? 0, -(target.y ?? 0));
+        }
+        positions.push(
+          sourcePosition.x, sourcePosition.y, sourcePosition.z,
+          targetPosition.x, targetPosition.y, targetPosition.z
         );
+        coordinates.push(0, 1);
+        const phase = (linkIndex * 0.61803398875) % 1;
+        phases.push(phase, phase);
+        const direction = linkIndex % 2;
+        directions.push(direction, direction);
+        linkIndex += 1;
       }
-      if (linePositions.length) {
-        const linkGeometry = new THREE.BufferGeometry();
-        linkGeometry.setAttribute(
-          "position",
-          new THREE.Float32BufferAttribute(linePositions, 3)
-        );
-        linkGeometry.computeBoundingBox();
-        linkGeometry.computeBoundingSphere();
-        const links = new THREE.LineSegments(
-          linkGeometry,
-          new THREE.LineBasicMaterial({
-            color: 0xb8c7e3,
-            transparent: true,
-            opacity: 0.68,
-            depthTest: false,
-            depthWrite: false,
-            toneMapped: false
-          })
-        );
-        links.name = "vault-links";
-        links.renderOrder = 1;
-        root.add(links);
-      }
+      if (!positions.length) return null;
 
-      root.add(createDynamicGraphLabels(data.nodes));
-      return root;
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute(
+        "pulseCoordinate",
+        new THREE.Float32BufferAttribute(coordinates, 1)
+      );
+      geometry.setAttribute("pulsePhase", new THREE.Float32BufferAttribute(phases, 1));
+      geometry.setAttribute(
+        "pulseDirection",
+        new THREE.Float32BufferAttribute(directions, 1)
+      );
+      geometry.computeBoundingBox();
+      geometry.computeBoundingSphere();
+
+      const material = new THREE.ShaderMaterial({
+        uniforms: {
+          pulseTime: synapsePulseTime,
+          baseColor: { value: new THREE.Color(0x91a3bf) },
+          pulseColor: { value: new THREE.Color(0x8de8ff) },
+          baseAlpha: { value: baseAlpha }
+        },
+        vertexShader: `
+          attribute float pulseCoordinate;
+          attribute float pulsePhase;
+          attribute float pulseDirection;
+          varying float vPulseCoordinate;
+          varying float vPulsePhase;
+          void main() {
+            vPulseCoordinate = mix(pulseCoordinate, 1.0 - pulseCoordinate, pulseDirection);
+            vPulsePhase = pulsePhase;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform float pulseTime;
+          uniform vec3 baseColor;
+          uniform vec3 pulseColor;
+          uniform float baseAlpha;
+          varying float vPulseCoordinate;
+          varying float vPulsePhase;
+          void main() {
+            float pulseHead = fract(pulseTime * 0.24 + vPulsePhase);
+            float pulse = 1.0 - smoothstep(0.0, 0.16, abs(vPulseCoordinate - pulseHead));
+            vec3 color = mix(baseColor, pulseColor, pulse);
+            gl_FragColor = vec4(color, min(1.0, baseAlpha + pulse * 0.78));
+          }
+        `,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false
+      });
+      const lines = new THREE.LineSegments(geometry, material);
+      lines.name = "vault-links-synapse-pulse";
+      lines.renderOrder = 1;
+      return lines;
     }
 
     function createDynamicGraphLabels(nodes) {
@@ -3617,6 +3677,10 @@
       dracoLoader.dispose();
       model = gltf.scene;
       dynamicGraphActive = false;
+      if (Array.isArray(graphData?.nodes) && Array.isArray(graphData?.links)) {
+        const synapseLinks = createSynapseLinks(graphData, false, 0.02);
+        if (synapseLinks) model.add(synapseLinks);
+      }
       normalizeModel(model);
       contentRoot.add(model);
       if (Array.isArray(graphData?.nodes)) createNodeInteraction(graphData.nodes);
@@ -4641,6 +4705,7 @@
     }
 
     function render(time, frame) {
+      if (isPlaced) synapsePulseTime.value = time * 0.001;
       if (forceGraph && dynamicGraphTicking) {
         forceGraph.tickFrame();
         syncDynamicNodeProxies();

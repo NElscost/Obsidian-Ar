@@ -324,6 +324,14 @@ Ao ancorar o grafo, a experiência executa uma apresentação curta do conjunto
 completo: parte da escala normal, cresce rapidamente até `4×` e retorna à escala
 normal. Os controles gestuais são liberados assim que o pulso termina.
 
+As conexões exibem pulsos luminosos semelhantes à propagação de sinais entre
+neurônios. O efeito funciona tanto no grafo direto quanto no modelo glTF. Todas
+as conexões compartilham uma única geometria `LineSegments` e um único shader;
+cada link armazena somente fase, direção e posição ao longo do segmento. Durante
+cada frame, a CPU altera apenas um uniforme de tempo, enquanto a GPU calcula os
+pulsos. Não são criadas partículas, animações individuais ou percursos por todos
+os links no loop WebXR.
+
 ### Imagens, tabelas e áudio nas notas
 
 Imagens Markdown externas são buscadas com CORS e convertidas para uma URL
