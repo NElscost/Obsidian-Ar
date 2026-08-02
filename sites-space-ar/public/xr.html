@@ -961,6 +961,7 @@
     let arNoteSurface = null;
     let arNoteControls = [];
     let pointedNoteControl = null;
+    let pointedNoteControlRatio = null;
     let candidateNoteControl = null;
     let candidateNoteControlSince = 0;
     let lastNoteControlHitAt = 0;
@@ -976,10 +977,21 @@
     let spatialAudioContext = null;
     let spatialAudioSource = null;
     let spatialAudioPanner = null;
+    let audioWaveformGroup = null;
+    let audioWaveformTexture = null;
+    let audioWaveformPlayhead = null;
+    let audioWaveformWidth = 0;
+    let audioWaveformDuration = 0;
+    let audioWaveformGeneration = 0;
+    let pendingNoteAudioSeek = null;
+    let audioBookmarkMeshes = [];
+    const audioWaveformCache = new Map();
+    const AUDIO_BOOKMARK_STORAGE_KEY = "space-ar-audio-bookmarks-v1";
     let noteWindowPinned = false;
     let noteWindowAnchor = null;
 
     function disposeArNote() {
+      audioWaveformGeneration += 1;
       cancelNoteCapture();
       if (activeNoteAudio) {
         activeNoteAudio.pause();
@@ -994,6 +1006,14 @@
       spatialAudioPanner?.disconnect();
       spatialAudioSource = null;
       spatialAudioPanner = null;
+      audioWaveformTexture?.dispose();
+      audioWaveformGroup = null;
+      audioWaveformTexture = null;
+      audioWaveformPlayhead = null;
+      audioWaveformWidth = 0;
+      audioWaveformDuration = 0;
+      pendingNoteAudioSeek = null;
+      audioBookmarkMeshes = [];
       noteAudioTracks = [];
       arNoteGroup.visible = false;
       arNoteGroup.traverse((object) => {
@@ -1011,6 +1031,7 @@
       arNotePage = 0;
       arNotePath = "";
       pointedNoteControl = null;
+      pointedNoteControlRatio = null;
       candidateNoteControl = null;
     }
 
@@ -1385,6 +1406,16 @@
       });
       if (!response.ok) throw new Error(`Mídia HTTP ${response.status}`);
       return response.blob();
+    }
+
+    async function fetchVaultWaveform(config, notePath, assetPath) {
+      const response = await fetch(`${config.url}/waveform`, {
+        method: "POST",
+        headers: bridgeRequestHeaders(config, true),
+        body: JSON.stringify({ notePath, assetPath })
+      });
+      if (!response.ok) throw new Error(`Forma de onda HTTP ${response.status}`);
+      return response.json();
     }
 
     async function fetchRemoteImage(source) {
@@ -2271,6 +2302,191 @@
       );
     }
 
+    function createArAudioWaveform(waveform, panelWidth, panelHeight) {
+      const samples = Array.isArray(waveform?.samples) ? waveform.samples : [];
+      if (!samples.length) return;
+      const canvas = document.createElement("canvas");
+      canvas.width = 512;
+      canvas.height = 64;
+      const context = canvas.getContext("2d");
+      context.fillStyle = "rgba(9, 15, 27, 0.92)";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.strokeStyle = "#63e6be";
+      context.lineWidth = 1;
+      context.beginPath();
+      for (let index = 0; index < samples.length; index += 1) {
+        const x = (index + 0.5) * canvas.width / samples.length;
+        const amplitude = Math.max(1, Number(samples[index]) || 0) / 255 * (canvas.height - 8);
+        context.moveTo(x, (canvas.height - amplitude) / 2);
+        context.lineTo(x, (canvas.height + amplitude) / 2);
+      }
+      context.stroke();
+
+      audioWaveformWidth = panelWidth * 0.68;
+      audioWaveformDuration = Math.max(0, Number(waveform.duration) || 0);
+      audioWaveformTexture = new THREE.CanvasTexture(canvas);
+      audioWaveformTexture.colorSpace = THREE.SRGBColorSpace;
+      audioWaveformTexture.minFilter = THREE.LinearFilter;
+      audioWaveformTexture.generateMipmaps = false;
+      audioWaveformGroup = new THREE.Group();
+      audioWaveformGroup.position.set(0, -panelHeight / 2 - 0.034, 0.004);
+      const surface = new THREE.Mesh(
+        new THREE.PlaneGeometry(audioWaveformWidth, 0.038),
+        new THREE.MeshBasicMaterial({
+          map: audioWaveformTexture,
+          transparent: true,
+          depthTest: false,
+          toneMapped: false
+        })
+      );
+      surface.renderOrder = 1001;
+      surface.userData.noteAction = "waveform";
+      surface.userData.highlightScale = false;
+      audioWaveformPlayhead = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.003, 0.044),
+        new THREE.MeshBasicMaterial({
+          color: 0xffd166,
+          depthTest: false,
+          toneMapped: false
+        })
+      );
+      audioWaveformPlayhead.position.set(-audioWaveformWidth / 2, 0, 0.002);
+      audioWaveformPlayhead.renderOrder = 1002;
+      audioWaveformPlayhead.raycast = () => {};
+      audioWaveformGroup.add(surface, audioWaveformPlayhead);
+      arNoteGroup.add(audioWaveformGroup);
+      arNoteControls.push(surface);
+      rebuildAudioBookmarkMeshes();
+    }
+
+    function audioBookmarkKey() {
+      const source = noteAudioTracks[0]?.source ?? "";
+      return `${arNotePath}\n${source}`;
+    }
+
+    function readAudioBookmarks() {
+      try {
+        const stored = JSON.parse(localStorage.getItem(AUDIO_BOOKMARK_STORAGE_KEY) ?? "{}");
+        const values = stored[audioBookmarkKey()];
+        return Array.isArray(values)
+          ? values.filter(Number.isFinite).map(Number).filter((value) => value >= 0).slice(0, 24)
+          : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function writeAudioBookmarks(values) {
+      try {
+        const stored = JSON.parse(localStorage.getItem(AUDIO_BOOKMARK_STORAGE_KEY) ?? "{}");
+        stored[audioBookmarkKey()] = values.slice(0, 24);
+        localStorage.setItem(AUDIO_BOOKMARK_STORAGE_KEY, JSON.stringify(stored));
+      } catch (error) {
+        console.warn("Não foi possível persistir os marcadores de áudio.", error);
+      }
+    }
+
+    function formatAudioTime(seconds) {
+      const value = Math.max(0, Math.round(Number(seconds) || 0));
+      return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, "0")}`;
+    }
+
+    function rebuildAudioBookmarkMeshes() {
+      if (!audioWaveformGroup || !audioWaveformWidth || !audioWaveformDuration) return;
+      for (const mesh of audioBookmarkMeshes) {
+        const index = arNoteControls.indexOf(mesh);
+        if (index >= 0) arNoteControls.splice(index, 1);
+        mesh.removeFromParent();
+        mesh.geometry.dispose();
+        mesh.material.dispose();
+      }
+      audioBookmarkMeshes = [];
+      for (const seconds of readAudioBookmarks()) {
+        const ratio = THREE.MathUtils.clamp(seconds / audioWaveformDuration, 0, 1);
+        const marker = new THREE.Mesh(
+          new THREE.CircleGeometry(0.0065, 4).rotateZ(Math.PI / 4),
+          new THREE.MeshBasicMaterial({
+            color: 0xff8fab,
+            depthTest: false,
+            toneMapped: false
+          })
+        );
+        marker.position.set(-audioWaveformWidth / 2 + audioWaveformWidth * ratio, 0.027, 0.004);
+        marker.renderOrder = 1003;
+        marker.userData.noteAction = "bookmark";
+        marker.userData.bookmarkSeconds = seconds;
+        audioWaveformGroup.add(marker);
+        audioBookmarkMeshes.push(marker);
+        arNoteControls.push(marker);
+      }
+    }
+
+    function seekNoteAudio(seconds) {
+      const target = THREE.MathUtils.clamp(
+        Number(seconds) || 0,
+        0,
+        Math.max(0, activeNoteAudio?.duration || audioWaveformDuration)
+      );
+      pendingNoteAudioSeek = target;
+      if (activeNoteAudio && Number.isFinite(activeNoteAudio.duration)) {
+        activeNoteAudio.currentTime = Math.min(target, activeNoteAudio.duration);
+        pendingNoteAudioSeek = null;
+      }
+      updateAudioWaveformProgress();
+      return target;
+    }
+
+    function addAudioBookmark(ratio) {
+      if (!audioWaveformDuration || !Number.isFinite(ratio)) return;
+      const seconds = THREE.MathUtils.clamp(ratio, 0, 1) * audioWaveformDuration;
+      const bookmarks = readAudioBookmarks();
+      const duplicate = bookmarks.find((value) => Math.abs(value - seconds) < 1.25);
+      const selected = duplicate ?? seconds;
+      if (duplicate === undefined) {
+        bookmarks.push(seconds);
+        bookmarks.sort((left, right) => left - right);
+        writeAudioBookmarks(bookmarks);
+        rebuildAudioBookmarkMeshes();
+      }
+      seekNoteAudio(selected);
+      setXrMessage(
+        `${duplicate === undefined ? "Marcador salvo" : "Marcador selecionado"}: ${formatAudioTime(selected)}.`
+      );
+    }
+
+    async function prepareAudioWaveform(track, notePath, panelWidth, panelHeight) {
+      if (!track || isNetworkSource(track.source) || isBrowserLocalSource(track.source)) return;
+      const config = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
+      if (!config?.url || !config?.token) return;
+      const generation = audioWaveformGeneration;
+      const cacheKey = `${notePath}\n${track.source}`;
+      try {
+        let waveform = audioWaveformCache.get(cacheKey);
+        if (!waveform) {
+          waveform = await fetchVaultWaveform(config, notePath, track.source);
+          audioWaveformCache.set(cacheKey, waveform);
+          while (audioWaveformCache.size > 32) {
+            audioWaveformCache.delete(audioWaveformCache.keys().next().value);
+          }
+        }
+        if (generation !== audioWaveformGeneration || arNotePath !== notePath) return;
+        createArAudioWaveform(waveform, panelWidth, panelHeight);
+      } catch (error) {
+        console.warn(`Forma de onda indisponível para ${track.source}.`, error);
+      }
+    }
+
+    function updateAudioWaveformProgress() {
+      if (!audioWaveformPlayhead || !audioWaveformWidth) return;
+      const duration = Number.isFinite(activeNoteAudio?.duration) && activeNoteAudio.duration > 0
+        ? activeNoteAudio.duration
+        : audioWaveformDuration;
+      const progress = duration > 0
+        ? Math.min(1, Math.max(0, (activeNoteAudio?.currentTime || 0) / duration))
+        : 0;
+      audioWaveformPlayhead.position.x = -audioWaveformWidth / 2 + audioWaveformWidth * progress;
+    }
+
     function setAudioParam(param, value, time) {
       if (param?.setValueAtTime) param.setValueAtTime(value, time);
     }
@@ -2370,6 +2586,12 @@
           });
           activeNoteAudio.addEventListener("pause", updateAudioControlColor);
           activeNoteAudio.addEventListener("play", updateAudioControlColor);
+          activeNoteAudio.addEventListener("loadedmetadata", () => {
+            if (pendingNoteAudioSeek === null) return;
+            activeNoteAudio.currentTime = Math.min(pendingNoteAudioSeek, activeNoteAudio.duration);
+            pendingNoteAudioSeek = null;
+            updateAudioWaveformProgress();
+          });
           if (spatial) setXrMessage("Áudio espacial HRTF preparado.");
         }
         if (activeNoteAudio.paused) {
@@ -2428,7 +2650,7 @@
       }
     }
 
-    function activateNoteControl(action, event) {
+    function activateNoteControl(action, event, options = {}) {
       if (action === "close") {
         closeNote();
         return;
@@ -2439,6 +2661,15 @@
       }
       if (action === "audio") {
         void toggleNoteAudio();
+        return;
+      }
+      if (action === "waveform") {
+        addAudioBookmark(options.ratio);
+        return;
+      }
+      if (action === "bookmark") {
+        const seconds = seekNoteAudio(options.seconds);
+        setXrMessage(`Marcador selecionado: ${formatAudioTime(seconds)}.`);
         return;
       }
       if (action === "previous" && arNotePage > 0) arNotePage -= 1;
@@ -2511,6 +2742,7 @@
           -height / 2 + 0.03,
           0x63e6be
         );
+        void prepareAudioWaveform(noteAudioTracks[0], path, width, height);
       }
       drawArNotePage();
       if (noteWindowPinned) {
@@ -3499,14 +3731,18 @@
       );
       nodeRaycaster.set(origin, direction);
       nodeRaycaster.far = 4;
-      return nodeRaycaster.intersectObjects(arNoteControls, false)[0]?.object ?? null;
+      return nodeRaycaster.intersectObjects(arNoteControls, false)[0] ?? null;
     }
 
     function onSelect(event) {
       if (arNoteGroup.visible) {
-        const control = controlFromSelectEvent(event) ?? pointedNoteControl;
+        const hit = controlFromSelectEvent(event);
+        const control = hit?.object ?? pointedNoteControl;
         if (control) {
-          activateNoteControl(control.userData.noteAction, event);
+          activateNoteControl(control.userData.noteAction, event, {
+            ratio: hit?.uv?.x ?? pointedNoteControlRatio,
+            seconds: control.userData.bookmarkSeconds
+          });
           resetGestureState("await-release");
         }
         return;
@@ -4103,6 +4339,7 @@
       if (!isPlaced || !nodeInteractionRoot || !xrSession) return;
       let nearest = null;
       let nearestControl = null;
+      let nearestControlRatio = null;
       let handRayIndex = 0;
       for (const inputSource of xrSession.inputSources) {
         if (!inputSource.hand) continue;
@@ -4198,7 +4435,10 @@
         }
         if (arNoteGroup.visible) {
           const controlHit = nodeRaycaster.intersectObjects(arNoteControls, false)[0];
-          if (controlHit) nearestControl = controlHit.object;
+          if (controlHit) {
+            nearestControl = controlHit.object;
+            nearestControlRatio = controlHit.uv?.x ?? null;
+          }
           continue;
         }
         let hit = null;
@@ -4229,10 +4469,12 @@
         if (nearestControl) {
           lastNoteControlHitAt = time;
           if (pointedNoteControl === nearestControl) {
+            pointedNoteControlRatio = nearestControlRatio;
             candidateNoteControl = null;
           } else if (candidateNoteControl === nearestControl) {
             if (time - candidateNoteControlSince >= 70) {
               pointedNoteControl = nearestControl;
+              pointedNoteControlRatio = nearestControlRatio;
               candidateNoteControl = null;
             }
           } else {
@@ -4241,6 +4483,7 @@
           }
         } else if (time - lastNoteControlHitAt > 420) {
           pointedNoteControl = null;
+          pointedNoteControlRatio = null;
           candidateNoteControl = null;
         }
         selectedNode = null;
@@ -4248,7 +4491,7 @@
         if (highlightMesh) highlightMesh.visible = false;
         for (const control of arNoteControls) {
           const active = control === pointedNoteControl;
-          control.scale.setScalar(active ? 1.35 : 1);
+          control.scale.setScalar(active && control.userData.highlightScale !== false ? 1.35 : 1);
           control.material.opacity = active ? 1 : 0.82;
         }
         if (pointedNoteControl) {
@@ -4261,6 +4504,10 @@
                 ? (activeNoteAudio && !activeNoteAudio.paused
                     ? "pausar o áudio"
                     : "reproduzir o áudio")
+                : action === "waveform"
+                  ? "salvar um marcador neste instante"
+                  : action === "bookmark"
+                    ? `ir para ${formatAudioTime(pointedNoteControl.userData.bookmarkSeconds)}`
                 : action === "next" ? "avançar" : "voltar";
           setXrMessage(`Faça uma pinça para ${label}.`);
         }
@@ -4405,6 +4652,7 @@
         }
         updatePlacement(frame);
         updateSpatialNoteAudio();
+        updateAudioWaveformProgress();
         const graphIntroPulseActive = updateGraphIntroPulse(time);
         if (!graphIntroPulseActive) {
           updateNoteMicroGestures(frame, time);

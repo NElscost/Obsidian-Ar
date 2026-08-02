@@ -158,6 +158,15 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio sob dema
   assert.match(html, /spatialAudioContext\.state === "running"/);
   assert.match(html, /panningModel = "HRTF"/);
   assert.match(html, /function updateSpatialNoteAudio/);
+  assert.match(html, /async function fetchVaultWaveform/);
+  assert.match(html, /async function prepareAudioWaveform/);
+  assert.match(html, /function updateAudioWaveformProgress/);
+  assert.match(html, /audioWaveformCache = new Map/);
+  assert.match(html, /AUDIO_BOOKMARK_STORAGE_KEY/);
+  assert.match(html, /function addAudioBookmark/);
+  assert.match(html, /function rebuildAudioBookmarkMeshes/);
+  assert.match(html, /action === "waveform"/);
+  assert.match(html, /bookmarkSeconds/);
   assert.match(html, /arNoteGroup\.getWorldPosition\(audioSourcePosition\)/);
   assert.match(html, /spatialAudioContext\.listener/);
   assert.match(html, /addArNoteControl\(\s*"audio"/);

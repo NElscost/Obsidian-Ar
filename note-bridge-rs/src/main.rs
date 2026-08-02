@@ -17,6 +17,11 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use symphonia::core::{
+    audio::SampleBuffer, codecs::DecoderOptions, errors::Error as SymphoniaError,
+    formats::FormatOptions, io::MediaSourceStream, meta::MetadataOptions, probe::Hint,
+};
+use symphonia::default::{get_codecs, get_probe};
 use tokio::{fs::File, sync::RwLock};
 use tokio_util::io::ReaderStream;
 use tower_http::{
@@ -35,6 +40,7 @@ struct AppState {
     graph_cache: Arc<RwLock<GraphCache>>,
     note_cache: Arc<RwLock<HashMap<String, CachedNote>>>,
     asset_cache: Arc<RwLock<HashMap<String, PathBuf>>>,
+    waveform_cache: Arc<RwLock<HashMap<String, CachedWaveform>>>,
     remote_client: reqwest::Client,
 }
 
@@ -50,6 +56,13 @@ struct CachedNote {
     modified: SystemTime,
     size: u64,
     content: Arc<str>,
+}
+
+#[derive(Clone)]
+struct CachedWaveform {
+    modified: SystemTime,
+    size: u64,
+    response: WaveformResponse,
 }
 
 fn is_allowed_web_origin(origin: &HeaderValue) -> bool {
@@ -114,6 +127,18 @@ mod origin_tests {
             "file://local"
         )));
     }
+
+    #[test]
+    fn waveform_is_normalized_to_requested_size() {
+        let waveform = normalize_waveform(&[0.0, 0.25, 0.5, 1.0], 8);
+        assert_eq!(waveform.len(), 8);
+        assert_eq!(waveform.iter().copied().max(), Some(255));
+    }
+
+    #[test]
+    fn empty_waveform_is_silent() {
+        assert_eq!(normalize_waveform(&[], 4), vec![0, 0, 0, 0]);
+    }
 }
 
 #[derive(Deserialize)]
@@ -126,6 +151,13 @@ struct NoteRequest {
 struct AssetRequest {
     note_path: String,
     asset_path: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WaveformResponse {
+    duration: f64,
+    samples: Vec<u8>,
 }
 
 #[derive(Deserialize)]
@@ -431,16 +463,16 @@ mod tests {
     #[test]
     fn resolves_unique_note_by_stem() {
         let exact = HashMap::from([(
-            "matemática/álgebra/matriz".to_string(),
-            "Matemática/Álgebra/Matriz.md".to_string(),
+            "exemplos/tópicos/conceito".to_string(),
+            "Exemplos/Tópicos/Conceito.md".to_string(),
         )]);
         let by_stem = HashMap::from([(
-            "matriz".to_string(),
-            Some("Matemática/Álgebra/Matriz.md".to_string()),
+            "conceito".to_string(),
+            Some("Exemplos/Tópicos/Conceito.md".to_string()),
         )]);
         assert_eq!(
-            resolve_wikilink("Outra.md", "Matriz", &exact, &by_stem),
-            Some("Matemática/Álgebra/Matriz.md".to_string())
+            resolve_wikilink("Outra.md", "Conceito", &exact, &by_stem),
+            Some("Exemplos/Tópicos/Conceito.md".to_string())
         );
     }
 
@@ -711,6 +743,160 @@ async fn resolve_asset(state: &AppState, note_path: &str, requested: &str) -> Re
     Ok(found)
 }
 
+const WAVEFORM_SAMPLE_COUNT: usize = 512;
+const WAVEFORM_CHUNK_FRAMES: usize = 1024;
+
+fn normalize_waveform(chunks: &[f32], target: usize) -> Vec<u8> {
+    if target == 0 {
+        return Vec::new();
+    }
+    if chunks.is_empty() {
+        return vec![0; target];
+    }
+    let mut reduced = Vec::with_capacity(target);
+    for index in 0..target {
+        let start = index * chunks.len() / target;
+        let mut end = (index + 1) * chunks.len() / target;
+        if end <= start {
+            end = (start + 1).min(chunks.len());
+        }
+        let slice = &chunks[start.min(chunks.len() - 1)..end];
+        reduced.push(slice.iter().sum::<f32>() / slice.len() as f32);
+    }
+    let peak = reduced.iter().copied().fold(0.0_f32, f32::max);
+    if peak <= f32::EPSILON {
+        return vec![0; target];
+    }
+    reduced
+        .into_iter()
+        .map(|value| ((value / peak).clamp(0.0, 1.0) * 255.0).round() as u8)
+        .collect()
+}
+
+fn analyze_audio_waveform(path: &Path) -> Result<WaveformResponse> {
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("Não foi possível abrir o áudio: {}", path.display()))?;
+    let stream = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = Hint::new();
+    if let Some(extension) = path.extension().and_then(|value| value.to_str()) {
+        hint.with_extension(extension);
+    }
+    let probed = get_probe().format(
+        &hint,
+        stream,
+        &FormatOptions::default(),
+        &MetadataOptions::default(),
+    )?;
+    let mut format = probed.format;
+    let track = format
+        .default_track()
+        .context("O áudio não contém uma faixa decodificável.")?;
+    let track_id = track.id;
+    let sample_rate = track.codec_params.sample_rate.unwrap_or(48_000).max(1);
+    let mut decoder = get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
+    let mut chunks = Vec::new();
+    let mut chunk_sum = 0.0_f32;
+    let mut chunk_frames = 0_usize;
+    let mut total_frames = 0_u64;
+
+    loop {
+        let packet = match format.next_packet() {
+            Ok(packet) => packet,
+            Err(SymphoniaError::IoError(error))
+                if error.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                break
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if packet.track_id() != track_id {
+            continue;
+        }
+        let decoded = match decoder.decode(&packet) {
+            Ok(decoded) => decoded,
+            Err(SymphoniaError::DecodeError(_)) => continue,
+            Err(SymphoniaError::IoError(error))
+                if error.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                break
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let spec = *decoded.spec();
+        let channels = spec.channels.count().max(1);
+        let mut samples = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
+        samples.copy_interleaved_ref(decoded);
+        for frame in samples.samples().chunks(channels) {
+            chunk_sum += frame.iter().map(|sample| sample.abs()).sum::<f32>() / channels as f32;
+            chunk_frames += 1;
+            total_frames += 1;
+            if chunk_frames == WAVEFORM_CHUNK_FRAMES {
+                chunks.push(chunk_sum / chunk_frames as f32);
+                chunk_sum = 0.0;
+                chunk_frames = 0;
+            }
+        }
+    }
+    if chunk_frames > 0 {
+        chunks.push(chunk_sum / chunk_frames as f32);
+    }
+    Ok(WaveformResponse {
+        duration: total_frames as f64 / sample_rate as f64,
+        samples: normalize_waveform(&chunks, WAVEFORM_SAMPLE_COUNT),
+    })
+}
+
+async fn read_waveform(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<AssetRequest>,
+) -> Response {
+    if !authorized(&headers, &state.token) {
+        return error(StatusCode::UNAUTHORIZED, "Token inválido.");
+    }
+    let note_path = normalize_note_path(&payload.note_path);
+    match note_is_allowed(&state, &note_path).await {
+        Ok(true) => {}
+        _ => return error(StatusCode::NOT_FOUND, "Nota não permitida."),
+    }
+    let path = match resolve_asset(&state, &note_path, &payload.asset_path).await {
+        Ok(path) => path,
+        Err(err) => return error(StatusCode::NOT_FOUND, err.to_string()),
+    };
+    let metadata = match tokio::fs::metadata(&path).await {
+        Ok(metadata) => metadata,
+        Err(err) => return error(StatusCode::NOT_FOUND, err.to_string()),
+    };
+    let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+    let key = path.to_string_lossy().to_string();
+    if let Some(cached) = state
+        .waveform_cache
+        .read()
+        .await
+        .get(&key)
+        .filter(|cached| cached.modified == modified && cached.size == metadata.len())
+        .cloned()
+    {
+        return Json(cached.response).into_response();
+    }
+    let analysis_path = path.clone();
+    let response =
+        match tokio::task::spawn_blocking(move || analyze_audio_waveform(&analysis_path)).await {
+            Ok(Ok(response)) => response,
+            Ok(Err(err)) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
+            Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        };
+    state.waveform_cache.write().await.insert(
+        key,
+        CachedWaveform {
+            modified,
+            size: metadata.len(),
+            response: response.clone(),
+        },
+    );
+    Json(response).into_response()
+}
+
 async fn read_asset(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -841,6 +1027,7 @@ async fn main() -> Result<()> {
         graph_cache: Default::default(),
         note_cache: Default::default(),
         asset_cache: Default::default(),
+        waveform_cache: Default::default(),
         remote_client: reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::limited(5))
             .user_agent("Obsidian-Ar/1.0")
@@ -865,6 +1052,7 @@ async fn main() -> Result<()> {
         .route("/pending-optimization", get(pending_optimization))
         .route("/note", post(read_note))
         .route("/asset", post(read_asset))
+        .route("/waveform", post(read_waveform))
         .route("/remote-image", post(read_remote_image))
         .layer(DefaultBodyLimit::max(16_384))
         .layer(CompressionLayer::new())

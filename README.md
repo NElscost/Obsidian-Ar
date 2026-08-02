@@ -263,27 +263,35 @@ somente a associação privada com a hospedagem e permanece fora do repositório
 
 ### Testar no Quest com zrok
 
-O hostname reservado `space-ar.shares.zrok.io` já está autorizado no Vite.
-Crie o nome uma vez e publique a porta mostrada pelo Vinext/Vite:
+Escolha um nome exclusivo para o seu visualizador. No exemplo abaixo, substitua
+`meu-obsidian-ar` por outro nome disponível. A criação do nome é necessária
+somente uma vez na sua conta zrok:
 
 ```powershell
-zrok2 create name -n public space-ar
-zrok2 share public http://localhost:3001 -n public:space-ar
+zrok2 create name -n public meu-obsidian-ar
 ```
 
-Inicie o site:
+O endereço resultante será
+`https://meu-obsidian-ar.shares.zrok.io`. Antes de iniciar o Vite, autorize esse
+hostname por variável de ambiente e execute o site na porta 3001:
 
 ```powershell
+$env:SPACE_ALLOWED_DEV_HOSTS = "meu-obsidian-ar.shares.zrok.io"
 npm run dev --prefix .\sites-space-ar -- --port 3001 --strictPort
 ```
 
-Para autorizar outro hostname sem editar o projeto, informe uma lista separada
-por vírgulas antes de iniciar:
+Mantenha esse terminal aberto. Em um segundo PowerShell, na raiz do projeto,
+publique a porta usando o mesmo nome:
 
 ```powershell
-$env:SPACE_ALLOWED_DEV_HOSTS = "outro.example,segundo.example"
-npm run dev --prefix .\sites-space-ar -- --port 3001 --strictPort
+zrok2 share public http://localhost:3001 -n public:meu-obsidian-ar
 ```
+
+Abra a URL HTTPS exibida no navegador do Quest. Se precisar autorizar mais de
+um domínio, informe-os em `SPACE_ALLOWED_DEV_HOSTS` separados por vírgulas. A
+variável vale somente para o terminal atual; configure-a novamente ao abrir um
+novo PowerShell. Um hostname reservado por outra conta não poderá ser usado:
+escolha outro nome e repita os passos.
 
 No site aberto pelo Quest, informe a URL HTTPS e o token exibidos pela ponte,
 mantenha **Gerar o grafo diretamente do vault** marcado e pressione **Salvar
@@ -365,6 +373,23 @@ funções `ensureSpatialAudioContext`, `connectSpatialNoteAudio` e
 6. Se o navegador não disponibilizar o contexto espacial, o elemento mantém a
    reprodução comum. Ao parar, a reprodução volta ao início.
 
+Para arquivos locais do vault, a ponte também oferece `/waveform`. Na primeira
+abertura, o Rust decodifica o áudio em uma tarefa separada, resume todos os
+canais em 512 amplitudes normalizadas e guarda o resultado em memória,
+invalidando-o quando o tamanho ou a data de modificação do arquivo muda. O Quest
+recebe apenas esse vetor pequeno: desenha a forma de onda uma vez em uma textura
+estática e, durante a reprodução, move somente uma linha de progresso. Não há
+FFT contínua, recaptura do painel ou redesenho do grafo na thread principal. O
+cache da sessão mantém até 32 formas de onda consultadas.
+
+A forma de onda também funciona como uma linha do tempo interativa. Aponte para
+um instante e faça uma pinça para salvar um marcador e preparar o áudio para
+começar naquele ponto. Os marcadores aparecem como pequenos losangos; selecionar
+um deles novamente retorna ao instante salvo. Até 24 marcadores por áudio ficam
+armazenados somente no navegador do dispositivo, associados ao caminho da nota
+e do arquivo de áudio. Essa interação altera apenas a posição do cursor e dos
+pequenos meshes de marcador, sem recapturar a nota ou redesenhar o grafo.
+
 Na ponte, `note-bridge-rs/src/main.rs::read_asset` abre o arquivo com Tokio e o
 entrega ao Axum por `ReaderStream<File>`, preservando `Content-Length`, MIME e
 cache privado. Assim, a ponte não precisa criar uma segunda cópia integral do
@@ -414,20 +439,23 @@ tolerância.
 
 ## Segurança e privacidade
 
-Antes de publicar uma alteração, confirme que estes itens continuam ignorados:
+A ponte local permite que o Quest leia notas e mídias do vault. Ela exige um
+token aleatório e só aceita notas pertencentes ao grafo atual, mas qualquer
+pessoa que receber simultaneamente a URL da ponte e esse token poderá acessar
+os mesmos endpoints enquanto a ponte estiver ativa. Não publique o token, não o
+inclua em capturas de tela e encerre a ponte quando terminar a sessão.
 
-- `.note-bridge-token`;
-- `.note-bridge-processes.json`;
-- `.cloudflare-tunnel-token`;
-- `.cloudflare-access.json`;
-- `.model-upload-token`;
-- `note-bridge.config.json`;
-- `space-ar.config.json`;
-- `PendenteParaOtimização.json`;
-- `graph.json`, modelos gerados e caches;
-- `.openai/hosting.json` local.
+O túnel fornece HTTPS durante o transporte entre o Quest e a ponte. O conteúdo
+é processado pelo serviço que mantém o túnel e pela ponte local; portanto, isso
+não deve ser tratado como criptografia ponta a ponta independente do provedor.
+Para dados sensíveis, use uma conta e um túnel sob seu controle e evite redes ou
+dispositivos compartilhados.
 
-Não exponha a ponte diretamente sem token. O modelo 3D também pode conter os nomes das notas gravados na geometria.
+Arquivos de configuração, tokens, URLs temporárias, caminhos locais do vault,
+`graph.json`, modelos glTF e caches podem revelar dados pessoais ou nomes de
+notas. Eles já são ignorados pelo repositório, mas não devem ser enviados
+manualmente a terceiros. O modo de grafo direto mantém o conteúdo no vault e
+transmite ao Quest somente os dados solicitados durante a sessão.
 
 ## Limitações
 
