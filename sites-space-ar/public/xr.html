@@ -248,6 +248,20 @@
       margin: 0;
       accent-color: #75a7ff;
     }
+    .graph-budget {
+      display: grid;
+      grid-template-columns: 1fr 82px;
+      gap: 10px;
+      align-items: center;
+      color: #cbd5e1;
+      font-size: 12px;
+    }
+    .bridge-config .graph-budget input {
+      width: 82px;
+      min-height: 38px;
+      padding: 0 8px;
+      text-align: center;
+    }
     .bridge-feedback {
       min-height: 18px;
       margin: -3px 2px 0;
@@ -551,6 +565,10 @@
           <input id="dynamic-graph" type="checkbox" checked>
           Gerar o grafo diretamente do vault, sem Blender ou glTF
         </label>
+        <label class="graph-budget">
+          <span>Máximo de nós visíveis (800–1200)</span>
+          <input id="graph-node-limit" type="number" min="800" max="1200" step="50" value="800" inputmode="numeric">
+        </label>
         <details class="panorama-options" open>
           <summary>Fundo panorâmico 360° (opcional)</summary>
           <input id="background-360" type="file" accept="image/avif,image/webp,image/jpeg,image/png">
@@ -600,13 +618,15 @@
     const NOTE_BRIDGE_STORAGE_KEY = "space-ar-note-bridge";
     const DYNAMIC_GRAPH_STORAGE_KEY = "space-ar-dynamic-graph";
     const GRAPH_LAYOUT_STORAGE_KEY = "space-ar-graph-layout-v1";
+    const GRAPH_NODE_LIMIT_STORAGE_KEY = "space-ar-graph-node-limit";
     const LARGE_GRAPH_NODE_THRESHOLD = 5000;
     const HUGE_GRAPH_NODE_THRESHOLD = 9000;
     const MAX_DYNAMIC_LABELS = 384;
     const MAX_DYNAMIC_LINKS = 50000;
     const GRAPH_SPACING_EXPERIMENT_FACTOR = 1;
-    const MAX_RENDERED_NODES = 1000;
-    const COLLAPSED_CORE_NODES = 800;
+    const DEFAULT_RENDERED_NODES = 800;
+    const MIN_RENDERED_NODES = 800;
+    const MAX_RENDERED_NODES = 1200;
     const NODE_RAY_MAX_DISTANCE = 4;
     const NODE_PICK_INTERVAL_SMALL_MS = 34;
     const NODE_PICK_INTERVAL_LARGE_MS = 66;
@@ -630,12 +650,14 @@
     const accessClientSecretInput = document.querySelector("#access-client-secret");
     const saveBridgeButton = document.querySelector("#save-bridge");
     const dynamicGraphToggle = document.querySelector("#dynamic-graph");
+    const graphNodeLimitInput = document.querySelector("#graph-node-limit");
     const background360Input = document.querySelector("#background-360");
     const bridgeFeedback = document.querySelector("#bridge-feedback");
     const notePanel = document.querySelector("#note-panel");
     const noteTitle = document.querySelector("#note-title");
     const noteContent = document.querySelector("#note-content");
     const closeNoteButton = document.querySelector("#close-note");
+    let renderedNodeLimit = DEFAULT_RENDERED_NODES;
     let rustMathPromise = null;
     let katexFallbackPromise = null;
 
@@ -3028,6 +3050,12 @@
         performance.now() < (nativeState?.suppressRayUntil ?? 0);
     }
 
+    function normalizeRenderedNodeLimit(value) {
+      const numeric = Number.parseInt(value, 10);
+      if (!Number.isFinite(numeric)) return DEFAULT_RENDERED_NODES;
+      return THREE.MathUtils.clamp(numeric, MIN_RENDERED_NODES, MAX_RENDERED_NODES);
+    }
+
     try {
       const pairedBridge = pairingConfigFromBootstrap();
       const sessionBridge = sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY);
@@ -3054,6 +3082,10 @@
       }
       dynamicGraphToggle.checked =
         localStorage.getItem(DYNAMIC_GRAPH_STORAGE_KEY) !== "false";
+      renderedNodeLimit = normalizeRenderedNodeLimit(
+        localStorage.getItem(GRAPH_NODE_LIMIT_STORAGE_KEY) ?? DEFAULT_RENDERED_NODES
+      );
+      graphNodeLimitInput.value = String(renderedNodeLimit);
       if (pairedBridge) {
         bridgeFeedback.textContent = "Pareado pelo plugin. Entre em AR quando o grafo estiver pronto.";
         bridgeFeedback.classList.add("success");
@@ -3694,7 +3726,7 @@
     }
 
     function buildHierarchicalGraph(data) {
-      if (data.nodes.length <= MAX_RENDERED_NODES) {
+      if (data.nodes.length <= renderedNodeLimit) {
         graphHierarchy = null;
         return data;
       }
@@ -3716,7 +3748,8 @@
         ((degree.get(right.id) ?? 0) + (right.val ?? 1))
         - ((degree.get(left.id) ?? 0) + (left.val ?? 1))
       );
-      const coreNodes = ranked.slice(0, COLLAPSED_CORE_NODES);
+      const coreNodeLimit = Math.max(1, Math.floor(renderedNodeLimit * 0.8));
+      const coreNodes = ranked.slice(0, coreNodeLimit);
       const coreIds = new Set(coreNodes.map((node) => node.id));
       const ownerById = new Map();
       const queue = [];
@@ -3779,7 +3812,7 @@
     function expandedClusterData(hub) {
       const children = [...(hub.clusterChildren ?? [])]
         .sort((left, right) => (right.val ?? 1) - (left.val ?? 1))
-        .slice(0, MAX_RENDERED_NODES - 2);
+        .slice(0, renderedNodeLimit - 2);
       const hubNode = { ...hub, label: hub.clusterBaseLabel ?? hub.label };
       const radius = Math.max(16, Math.sqrt(children.length) * 5.2);
       const goldenAngle = Math.PI * (3 - Math.sqrt(5));
@@ -3872,7 +3905,7 @@
         update(typeof link.source === "string" ? link.source : link.source.id);
         update(typeof link.target === "string" ? link.target : link.target.id);
       }
-      return `compact-v9-${data.nodes.length}-${data.links.length}-${(hash >>> 0).toString(16)}`;
+      return `compact-v10-${renderedNodeLimit}-${data.nodes.length}-${data.links.length}-${(hash >>> 0).toString(16)}`;
     }
 
     function applyLargeGraphLayout(data) {
@@ -5388,6 +5421,16 @@
       bridgeFeedback.textContent =
         "Modo alterado. Recarregue a página para trocar a origem do grafo.";
       bridgeFeedback.className = "bridge-feedback success";
+    });
+    graphNodeLimitInput.addEventListener("change", () => {
+      const nextLimit = normalizeRenderedNodeLimit(graphNodeLimitInput.value);
+      graphNodeLimitInput.value = String(nextLimit);
+      localStorage.setItem(GRAPH_NODE_LIMIT_STORAGE_KEY, String(nextLimit));
+      if (nextLimit === renderedNodeLimit) return;
+      renderedNodeLimit = nextLimit;
+      bridgeFeedback.textContent = `Limite alterado para ${nextLimit}. Recarregando o grafo…`;
+      bridgeFeedback.className = "bridge-feedback success";
+      setTimeout(() => location.reload(), 450);
     });
     closeNoteButton.addEventListener("click", closeNote);
     replaceButton.addEventListener("click", resetPlacement);

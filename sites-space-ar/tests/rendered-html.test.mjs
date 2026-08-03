@@ -224,7 +224,7 @@ test("reenquadra o grafo dinâmico depois que o layout termina", async () => {
   assert.match(html, /createDynamicGraphLabels\(labelNodes\)/);
   assert.match(html, /labelAtlas/);
   assert.match(html, /MAX_DYNAMIC_SCALE_FACTOR\s*=\s*10/);
-  assert.match(html, /compact-v9-/);
+  assert.match(html, /compact-v10-/);
   assert.match(html, /labelScale/);
   assert.match(html, /Modo direto ativo: informe a URL HTTPS e o token da ponte/);
   assert.match(html, /Falha ao preparar a experiência/);
@@ -288,8 +288,10 @@ test("espalha o grafo conforme a quantidade de nós", async () => {
 test("agrupa vaults grandes e expande hubs por pinça", async () => {
   const html = await readFile(xrUrl, "utf8");
 
-  assert.match(html, /MAX_RENDERED_NODES = 1000/);
-  assert.match(html, /COLLAPSED_CORE_NODES = 800/);
+  assert.match(html, /DEFAULT_RENDERED_NODES = 800/);
+  assert.match(html, /MIN_RENDERED_NODES = 800/);
+  assert.match(html, /MAX_RENDERED_NODES = 1200/);
+  assert.match(html, /Math\.floor\(renderedNodeLimit \* 0\.8\)/);
   assert.match(html, /function buildHierarchicalGraph/);
   assert.match(html, /function expandedClusterData/);
   assert.match(html, /function expandClusterNode/);
@@ -301,6 +303,17 @@ test("agrupa vaults grandes e expande hubs por pinça", async () => {
   assert.match(html, /← Voltar ao grafo/);
   assert.match(html, /isClusterBack/);
   assert.match(html, /Use o polegar para a esquerda para voltar/);
+});
+
+test("permite configurar o limite de nós entre 800 e 1200", async () => {
+  const html = await readFile(xrUrl, "utf8");
+
+  assert.match(html, /id="graph-node-limit"/);
+  assert.match(html, /min="800" max="1200"/);
+  assert.match(html, /GRAPH_NODE_LIMIT_STORAGE_KEY/);
+  assert.match(html, /function normalizeRenderedNodeLimit/);
+  assert.match(html, /graphNodeLimitInput\.addEventListener\("change"/);
+  assert.match(html, /compact-v10-\$\{renderedNodeLimit\}/);
 });
 
 test("configuração pública não depende dos metadados privados do Sites", async () => {
