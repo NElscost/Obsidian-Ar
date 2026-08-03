@@ -4,8 +4,7 @@ Explore o grafo do seu vault em realidade aumentada no Meta Quest. O plugin do
 Obsidian prepara o grafo, inicia a ponte local segura, cria o túnel HTTPS e
 mostra um QR Code para abrir a experiência no Quest.
 
-> O plugin está em processo de submissão ao diretório comunitário do Obsidian.
-> Até a aprovação, use a instalação manual descrita abaixo.
+O plugin **Meta Quest Sync** foi aprovado no diretório comunitário do Obsidian.
 
 ## O que funciona
 
@@ -16,6 +15,8 @@ mostra um QR Code para abrir a experiência no Quest.
 - leitura de Markdown, tabelas, LaTeX, código e imagens em uma janela 3D;
 - áudio espacial HRTF, forma de onda e bookmarks;
 - cache de notas e pré-processamento para reduzir travamentos;
+- progresso do carregamento com tempo decorrido e estimativa restante;
+- modo otimizado para vaults com mais de 10 mil nós;
 - Windows, Linux e macOS;
 - modo glTF/Blender opcional para usuários avançados.
 
@@ -48,7 +49,8 @@ Não é necessário compilar manualmente. Na primeira sessão, o plugin executa
 
 ### 2. Instale o plugin
 
-Enquanto ele não aparece em **Configurações → Plugins da comunidade**, execute:
+Procure por **Meta Quest Sync** em **Configurações → Plugins da comunidade**.
+Como alternativa, a instalação manual continua disponível:
 
 ```sh
 node ./Scripts/install-obsidian-plugin.mjs --vault "/caminho/absoluto/do/vault"
@@ -79,7 +81,13 @@ pareia URL e token sem usar a área de transferência.
 ## Uso no Quest
 
 Na página inicial, mantenha **Gerar o grafo diretamente do vault** ativado.
-Aguarde `Grafo dinâmico pronto` e pressione **Entrar em AR**.
+A barra informa a etapa, a porcentagem, o tempo decorrido e a estimativa
+restante. Aguarde `Grafo dinâmico pronto` e pressione **Entrar em AR**.
+
+Em vaults muito grandes, o visualizador usa um layout linear otimizado, agrupa a
+seleção em uma única malha e limita a quantidade simultânea de rótulos e linhas.
+Todos os nós continuam disponíveis para apontar e abrir; a redução afeta apenas
+a densidade visual para preservar a fluidez no Quest.
 
 - faça uma pinça para posicionar o grafo;
 - use duas pinças para ajustar escala e rotação;
@@ -197,6 +205,11 @@ em `Scripts/Update-SpaceModel.ps1` para quem deseja gerar `Space.gltf` e
 - requer Obsidian desktop porque inicia processos locais;
 - WebXR, anchors e microgestos variam conforme a versão do Quest Browser;
 - notas muito grandes podem causar um pico no primeiro processamento;
+- vídeos locais em embeds Markdown (`mp4`, `webm`, `mov`, `m4v` e `ogv`) são
+  exibidos como textura GPU na janela 3D; prefira MP4/H.264 ou WebM otimizados e
+  arquivos menores que 256 MB para limitar memória e largura de banda no Quest;
+- o áudio do vídeo usa o mesmo posicionamento HRTF da janela 3D; somente uma
+  mídia da nota é reproduzida por vez;
 - vaults muito grandes aumentam o tempo inicial do layout;
 - a extração de links não replica todos os filtros de plugins gráficos;
 - o pipeline Blender completo continua mais automatizado no Windows.

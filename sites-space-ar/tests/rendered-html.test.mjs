@@ -156,7 +156,7 @@ test("mantém os rótulos do Blender legíveis pelos dois lados", async () => {
   );
 });
 
-test("prepara mídia remota, pagina conteúdo atômico e oferece áudio sob demanda", async () => {
+test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo sob demanda", async () => {
   const html = await readFile(xrUrl, "utf8");
 
   assert.match(html, /async function fetchRemoteImage/);
@@ -168,10 +168,14 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio sob dema
   assert.match(html, /redirect: "follow"/);
   assert.match(html, /URL\.createObjectURL\(blob\)/);
   assert.match(html, /function calculateNotePageRanges/);
-  assert.match(html, /querySelectorAll\("img, table"\)/);
+  assert.match(html, /querySelectorAll\("img, table, \.note-video-card"\)/);
   assert.match(html, /element\.querySelectorAll\("tr"\)/);
   assert.match(html, /NOTE_PAGE_HEIGHT\s*=\s*570/);
   assert.match(html, /function extractNoteAudioTracks/);
+  assert.match(html, /function extractNoteVideoTracks/);
+  assert.match(html, /function createArVideoSurface/);
+  assert.match(html, /new THREE\.VideoTexture\(video\)/);
+  assert.match(html, /noteVideoTracks\[0\] \?\? noteAudioTracks\[0\]/);
   assert.match(html, /async function toggleNoteAudio/);
   assert.match(html, /activeNoteAudio\.preload = "none"/);
   assert.match(html, /createMediaElementSource/);

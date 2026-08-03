@@ -442,7 +442,8 @@
       border-radius: 8px;
       break-inside: avoid;
     }
-    .note-content .note-audio-card {
+    .note-content .note-audio-card,
+    .note-content .note-video-card {
       display: flex;
       align-items: center;
       min-height: 48px;
@@ -453,6 +454,11 @@
       background: rgba(117, 167, 255, 0.1);
       color: #dce8ff;
       break-inside: avoid;
+    }
+    .note-content .note-video-card {
+      min-height: 92px;
+      background: rgba(99, 230, 190, 0.1);
+      border-color: rgba(99, 230, 190, 0.38);
     }
     .note-content .katex-display {
       overflow-x: auto;
@@ -865,6 +871,13 @@
       }">▶ Áudio: ${escapeNoteHtml(title)}</div>`;
     }
 
+    function videoCardHtml(source, label = "") {
+      const title = label || source;
+      return `<div class="note-video-card" data-note-video-source="${
+        encodeURIComponent(source)
+      }">▶ Vídeo: ${escapeNoteHtml(title)}</div>`;
+    }
+
     async function renderNoteMarkdown(source) {
       const math = [];
       const stashMath = (latex, displayMode) => {
@@ -893,6 +906,14 @@
           /!\[\[([^\]|#]+\.(?:aac|flac|m4a|mp3|oga|ogg|opus|wav))(?:\|([^\]]+))?\]\]/gi,
           (_, target, label) => audioCardHtml(target, label)
         )
+        .replace(
+          /!\[\[([^\]|#]+\.(?:m4v|mov|mp4|ogv|webm))(?:\|([^\]]+))?\]\]/gi,
+          (_, target, label) => videoCardHtml(target, label)
+        )
+        .replace(
+          /!\[([^\]]*)\]\(([^)]+\.(?:m4v|mov|mp4|ogv|webm))\)/gi,
+          (_, label, target) => videoCardHtml(target, label)
+        )
         .replace(/!?\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g, (_, target, label) =>
           label ?? target
         )
@@ -906,12 +927,12 @@
         ALLOWED_TAGS: [
           "a", "blockquote", "br", "code", "del", "em", "h1", "h2", "h3",
           "audio", "a", "blockquote", "br", "code", "del", "div", "em", "h1", "h2", "h3",
-          "h4", "h5", "h6", "hr", "img", "li", "mark", "ol", "p", "pre", "source", "span",
+          "h4", "h5", "h6", "hr", "img", "li", "mark", "ol", "p", "pre", "source", "span", "video",
           "strong", "table", "tbody", "td", "th", "thead", "tr", "ul"
         ],
         ALLOWED_ATTR: [
           "alt", "class", "controls", "height", "href", "preload", "src", "title", "type", "width",
-          "data-note-audio-source", "data-note-math"
+          "data-note-audio-source", "data-note-video-source", "data-note-math"
         ],
         ALLOW_DATA_ATTR: true
       });
@@ -971,6 +992,15 @@
         card.dataset.noteAudioSource = encodeURIComponent(source);
         card.textContent = `▶ Áudio: ${audio.getAttribute("title") || source}`;
         audio.replaceWith(card);
+      }
+      for (const video of noteContent.querySelectorAll("video[src]")) {
+        const source = video.getAttribute("src")?.trim();
+        if (!source) continue;
+        const card = document.createElement("div");
+        card.className = "note-video-card";
+        card.dataset.noteVideoSource = encodeURIComponent(source);
+        card.textContent = `▶ Vídeo: ${video.getAttribute("title") || source}`;
+        video.replaceWith(card);
       }
       noteContent.scrollTop = 0;
     }
@@ -1088,9 +1118,12 @@
     let arNoteTitle = "";
     let arNotePath = "";
     let noteAudioTracks = [];
+    let noteVideoTracks = [];
     let activeNoteAudio = null;
     let activeNoteAudioObjectUrl = null;
     let activeNoteAudioControl = null;
+    let activeNoteVideoSurface = null;
+    let activeNoteVideoTexture = null;
     let spatialAudioContext = null;
     let spatialAudioSource = null;
     let spatialAudioPanner = null;
@@ -1119,6 +1152,9 @@
       activeNoteAudio = null;
       activeNoteAudioObjectUrl = null;
       activeNoteAudioControl = null;
+      activeNoteVideoTexture?.dispose();
+      activeNoteVideoTexture = null;
+      activeNoteVideoSurface = null;
       spatialAudioSource?.disconnect();
       spatialAudioPanner?.disconnect();
       spatialAudioSource = null;
@@ -1132,6 +1168,7 @@
       pendingNoteAudioSeek = null;
       audioBookmarkMeshes = [];
       noteAudioTracks = [];
+      noteVideoTracks = [];
       arNoteGroup.visible = false;
       arNoteGroup.traverse((object) => {
         if (!object.isMesh) return;
@@ -1671,6 +1708,28 @@
       return tracks;
     }
 
+    function extractNoteVideoTracks(source) {
+      const tracks = [];
+      const seen = new Set();
+      const add = (value, label = "") => {
+        const path = String(value ?? "").trim();
+        if (!path || seen.has(path)) return;
+        seen.add(path);
+        tracks.push({ source: path, label: String(label || path), kind: "video" });
+      };
+      const markdown = String(source ?? "");
+      for (const match of markdown.matchAll(
+        /!\[\[([^\]|#]+\.(?:m4v|mov|mp4|ogv|webm))(?:\|([^\]]+))?\]\]/gi
+      )) add(match[1], match[2]);
+      for (const match of markdown.matchAll(
+        /!\[([^\]]*)\]\(([^)]+\.(?:m4v|mov|mp4|ogv|webm))\)/gi
+      )) add(match[2], match[1]);
+      for (const match of markdown.matchAll(
+        /<video\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi
+      )) add(match[1]);
+      return tracks;
+    }
+
     function waitForRenderingIdle() {
       return new Promise((resolve) => {
         if ("requestIdleCallback" in window) {
@@ -1685,7 +1744,7 @@
       const noteBounds = noteContent.getBoundingClientRect();
       const contentHeight = Math.max(1, noteContent.scrollHeight);
       const atoms = [];
-      for (const element of noteContent.querySelectorAll("img, table")) {
+      for (const element of noteContent.querySelectorAll("img, table, .note-video-card")) {
         const bounds = element.getBoundingClientRect();
         const height = bounds.height;
         if (element.matches("table") && height > NOTE_PAGE_HEIGHT) {
@@ -2673,9 +2732,43 @@
       setAudioParam(spatialAudioPanner.positionZ, audioSourcePosition.z, now);
     }
 
+    function createArVideoSurface(video) {
+      activeNoteVideoTexture = new THREE.VideoTexture(video);
+      activeNoteVideoTexture.colorSpace = THREE.SRGBColorSpace;
+      activeNoteVideoTexture.minFilter = THREE.LinearFilter;
+      activeNoteVideoTexture.magFilter = THREE.LinearFilter;
+      activeNoteVideoTexture.generateMipmaps = false;
+      activeNoteVideoSurface = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.54, 0.304),
+        new THREE.MeshBasicMaterial({
+          map: activeNoteVideoTexture,
+          toneMapped: false,
+          depthTest: false
+        })
+      );
+      activeNoteVideoSurface.position.set(0, 0.01, 0.002);
+      activeNoteVideoSurface.renderOrder = 1000;
+      activeNoteVideoSurface.raycast = () => {};
+      arNoteGroup.add(activeNoteVideoSurface);
+      const resize = () => {
+        if (!activeNoteVideoSurface || !video.videoWidth || !video.videoHeight) return;
+        const aspect = video.videoWidth / video.videoHeight;
+        let width = 0.54;
+        let height = width / aspect;
+        if (height > 0.36) {
+          height = 0.36;
+          width = height * aspect;
+        }
+        activeNoteVideoSurface.geometry.dispose();
+        activeNoteVideoSurface.geometry = new THREE.PlaneGeometry(width, height);
+      };
+      video.addEventListener("loadedmetadata", resize, { once: true });
+    }
+
     async function toggleNoteAudio() {
-      const track = noteAudioTracks[0];
+      const track = noteVideoTracks[0] ?? noteAudioTracks[0];
       if (!track) return;
+      const isVideo = track.kind === "video";
       try {
         // Ative durante o gesto; depois de um fetch o Quest pode retirar a ativação do usuário.
         const spatialContext = await ensureSpatialAudioContext();
@@ -2686,20 +2779,29 @@
           let source = track.source;
           if (!isNetworkSource(source) && !isBrowserLocalSource(source)) {
             if (!config?.url || !config?.token) {
-              throw new Error("Configure a ponte para reproduzir áudio do vault.");
+              throw new Error(`Configure a ponte para reproduzir ${isVideo ? "vídeo" : "áudio"} do vault.`);
             }
             const blob = await fetchVaultAsset(config, arNotePath, source);
+            if (isVideo && blob.size > 256 * 1024 * 1024) {
+              throw new Error("Vídeo maior que 256 MB; use uma versão WebM/MP4 otimizada.");
+            }
             activeNoteAudioObjectUrl = URL.createObjectURL(blob);
             source = activeNoteAudioObjectUrl;
           }
-          activeNoteAudio = new Audio();
+          activeNoteAudio = isVideo ? document.createElement("video") : new Audio();
+          if (isVideo) {
+            activeNoteAudio.playsInline = true;
+            activeNoteAudio.setAttribute("playsinline", "");
+          }
+          if (isNetworkSource(source)) activeNoteAudio.crossOrigin = "anonymous";
           activeNoteAudio.preload = "none";
           activeNoteAudio.src = source;
           activeNoteAudio.volume = 1;
+          if (isVideo) createArVideoSurface(activeNoteAudio);
           const spatial = connectSpatialNoteAudio(activeNoteAudio, spatialContext);
           activeNoteAudio.addEventListener("ended", () => {
             updateAudioControlColor();
-            setXrMessage(`Áudio concluído: ${track.label}.`);
+            setXrMessage(`${isVideo ? "Vídeo" : "Áudio"} concluído: ${track.label}.`);
           });
           activeNoteAudio.addEventListener("pause", updateAudioControlColor);
           activeNoteAudio.addEventListener("play", updateAudioControlColor);
@@ -2709,20 +2811,20 @@
             pendingNoteAudioSeek = null;
             updateAudioWaveformProgress();
           });
-          if (spatial) setXrMessage("Áudio espacial HRTF preparado.");
+          if (spatial) setXrMessage(`${isVideo ? "Vídeo com áudio" : "Áudio"} espacial HRTF preparado.`);
         }
         if (activeNoteAudio.paused) {
           await activeNoteAudio.play();
-          setXrMessage(`Reproduzindo áudio: ${track.label}.`);
+          setXrMessage(`Reproduzindo ${isVideo ? "vídeo" : "áudio"}: ${track.label}.`);
         } else {
           activeNoteAudio.pause();
-          activeNoteAudio.currentTime = 0;
-          setXrMessage(`Áudio parado: ${track.label}.`);
+          if (!isVideo) activeNoteAudio.currentTime = 0;
+          setXrMessage(`${isVideo ? "Vídeo" : "Áudio"} pausado: ${track.label}.`);
         }
         updateAudioControlColor();
       } catch (error) {
-        console.warn("Não foi possível reproduzir o áudio.", error);
-        setXrMessage(`Falha no áudio: ${describeError(error)}`);
+        console.warn("Não foi possível reproduzir a mídia.", error);
+        setXrMessage(`Falha na mídia: ${describeError(error)}`);
       }
     }
 
@@ -2803,8 +2905,10 @@
     ) {
       if (!xrSession) return;
       const audioTracks = extractNoteAudioTracks(source);
+      const videoTracks = extractNoteVideoTracks(source);
       disposeArNote();
       noteAudioTracks = audioTracks;
+      noteVideoTracks = videoTracks;
       arNotePath = path;
       arNoteCanvas = document.createElement("canvas");
       arNoteCanvas.width = 1024;
@@ -2852,14 +2956,16 @@
         addArNoteControl("previous", -width / 2 + 0.032, -height / 2 + 0.03, 0x75a7ff);
         addArNoteControl("next", width / 2 - 0.032, -height / 2 + 0.03, 0x75a7ff);
       }
-      if (noteAudioTracks.length) {
+      if (noteAudioTracks.length || noteVideoTracks.length) {
         activeNoteAudioControl = addArNoteControl(
           "audio",
           0,
           -height / 2 + 0.03,
           0x63e6be
         );
-        void prepareAudioWaveform(noteAudioTracks[0], path, width, height);
+        if (noteAudioTracks.length) {
+          void prepareAudioWaveform(noteAudioTracks[0], path, width, height);
+        }
       }
       drawArNotePage();
       if (noteWindowPinned) {

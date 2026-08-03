@@ -1,3 +1,4 @@
+use std::io::SeekFrom;
 use std::{
     collections::{HashMap, HashSet},
     env, fs,
@@ -22,7 +23,11 @@ use symphonia::core::{
     formats::FormatOptions, io::MediaSourceStream, meta::MetadataOptions, probe::Hint,
 };
 use symphonia::default::{get_codecs, get_probe};
-use tokio::{fs::File, sync::RwLock};
+use tokio::{
+    fs::File,
+    io::{AsyncReadExt, AsyncSeekExt},
+    sync::RwLock,
+};
 use tokio_util::io::ReaderStream;
 use tower_http::{
     compression::CompressionLayer,
@@ -477,12 +482,26 @@ mod tests {
     }
 
     #[test]
-    fn allows_images_and_audio_but_rejects_other_assets() {
+    fn allows_images_audio_and_video_but_rejects_other_assets() {
         assert!(asset_extension_allowed(Path::new("imagem.webp")));
         assert!(asset_extension_allowed(Path::new("gravacao.mp3")));
         assert!(asset_extension_allowed(Path::new("voz.opus")));
+        assert!(asset_extension_allowed(Path::new("demonstracao.mp4")));
+        assert!(asset_extension_allowed(Path::new("captura.webm")));
         assert!(!asset_extension_allowed(Path::new("script.exe")));
         assert!(!asset_extension_allowed(Path::new("nota.md")));
+    }
+
+    #[test]
+    fn parses_http_byte_ranges() {
+        let range = HeaderValue::from_static("bytes=100-199");
+        assert_eq!(parse_byte_range(Some(&range), 1000), Ok(Some((100, 199))));
+        let open = HeaderValue::from_static("bytes=900-");
+        assert_eq!(parse_byte_range(Some(&open), 1000), Ok(Some((900, 999))));
+        let suffix = HeaderValue::from_static("bytes=-125");
+        assert_eq!(parse_byte_range(Some(&suffix), 1000), Ok(Some((875, 999))));
+        let invalid = HeaderValue::from_static("bytes=1000-");
+        assert_eq!(parse_byte_range(Some(&invalid), 1000), Err(()));
     }
 
     #[test]
@@ -682,16 +701,52 @@ fn asset_extension_allowed(path: &Path) -> bool {
                 | "jpg"
                 | "jpeg"
                 | "m4a"
+                | "m4v"
+                | "mov"
                 | "mp3"
+                | "mp4"
                 | "oga"
                 | "ogg"
+                | "ogv"
                 | "opus"
                 | "png"
                 | "svg"
                 | "wav"
+                | "webm"
                 | "webp"
         )
     )
+}
+
+fn parse_byte_range(value: Option<&HeaderValue>, total: u64) -> Result<Option<(u64, u64)>, ()> {
+    let Some(value) = value else { return Ok(None) };
+    let value = value.to_str().map_err(|_| ())?;
+    let spec = value.strip_prefix("bytes=").ok_or(())?;
+    if spec.contains(',') || total == 0 {
+        return Err(());
+    }
+    let (start, end) = spec.split_once('-').ok_or(())?;
+    if start.is_empty() {
+        let suffix = end.parse::<u64>().map_err(|_| ())?;
+        if suffix == 0 {
+            return Err(());
+        }
+        let start = total.saturating_sub(suffix);
+        return Ok(Some((start, total - 1)));
+    }
+    let start = start.parse::<u64>().map_err(|_| ())?;
+    if start >= total {
+        return Err(());
+    }
+    let end = if end.is_empty() {
+        total - 1
+    } else {
+        end.parse::<u64>().map_err(|_| ())?.min(total - 1)
+    };
+    if end < start {
+        return Err(());
+    }
+    Ok(Some((start, end)))
 }
 
 async fn resolve_asset(state: &AppState, note_path: &str, requested: &str) -> Result<PathBuf> {
@@ -912,23 +967,54 @@ async fn read_asset(
     }
     match resolve_asset(&state, &note_path, &payload.asset_path).await {
         Ok(path) => match File::open(&path).await {
-            Ok(file) => {
+            Ok(mut file) => {
                 let content_length = file.metadata().await.ok().map(|metadata| metadata.len());
+                let range = match content_length {
+                    Some(total) => match parse_byte_range(headers.get(header::RANGE), total) {
+                        Ok(range) => range,
+                        Err(()) => {
+                            return Response::builder()
+                                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                                .header(header::CONTENT_RANGE, format!("bytes */{total}"))
+                                .body(Body::empty())
+                                .unwrap();
+                        }
+                    },
+                    None => None,
+                };
+                let (status, body_length) = if let Some((start, end)) = range {
+                    if let Err(err) = file.seek(SeekFrom::Start(start)).await {
+                        return error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+                    }
+                    (StatusCode::PARTIAL_CONTENT, Some(end - start + 1))
+                } else {
+                    (StatusCode::OK, content_length)
+                };
                 let mut response = Response::builder()
-                    .status(StatusCode::OK)
+                    .status(status)
                     .header(
                         header::CONTENT_TYPE,
                         mime_guess::from_path(&path)
                             .first_or_octet_stream()
                             .as_ref(),
                     )
-                    .header(header::CACHE_CONTROL, "private, max-age=300");
-                if let Some(length) = content_length {
+                    .header(header::CACHE_CONTROL, "private, max-age=300")
+                    .header(header::ACCEPT_RANGES, "bytes");
+                if let (Some((start, end)), Some(total)) = (range, content_length) {
+                    response = response.header(
+                        header::CONTENT_RANGE,
+                        format!("bytes {start}-{end}/{total}"),
+                    );
+                }
+                if let Some(length) = body_length {
                     response = response.header(header::CONTENT_LENGTH, length);
                 }
-                response
-                    .body(Body::from_stream(ReaderStream::new(file)))
-                    .unwrap()
+                let stream = if let Some(length) = body_length {
+                    ReaderStream::new(file.take(length))
+                } else {
+                    ReaderStream::new(file.take(u64::MAX))
+                };
+                response.body(Body::from_stream(stream)).unwrap()
             }
             Err(err) => error(StatusCode::NOT_FOUND, err.to_string()),
         },
