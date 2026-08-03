@@ -1,6 +1,6 @@
 {
-  "name": "obsidian-ar-plugin",
-  "version": "0.1.0",
+  "name": "meta-quest-sync",
+  "version": "0.1.1",
   "license": "MIT",
   "private": true,
   "type": "module",

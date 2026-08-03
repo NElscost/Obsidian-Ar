@@ -58,7 +58,7 @@ class PairingModal extends Modal {
   }
 
   onOpen(): void {
-    this.titleEl.setText("Obsidian AR pronto");
+    this.titleEl.setText("Meta Quest Sync pronto");
     this.contentEl.addClass("obsidian-ar-pairing");
     this.contentEl.createEl("p", {
       text: "Abra a câmera ou o navegador do Quest e leia o QR Code. A URL e o token ficam no fragmento e são removidos da barra após o pareamento."
@@ -69,7 +69,7 @@ class PairingModal extends Modal {
       margin: 1,
       errorCorrectionLevel: "M"
     }).catch((error: unknown) => {
-      console.error("Obsidian AR não conseguiu desenhar o QR Code.", error);
+      console.error("Meta Quest Sync não conseguiu desenhar o QR Code.", error);
       canvas.replaceWith(this.contentEl.createEl("p", {
         cls: "obsidian-ar-status",
         text: "Não foi possível desenhar o QR Code. Use o botão Copiar link abaixo."
@@ -117,7 +117,7 @@ export default class ObsidianArPlugin extends Plugin {
 
   async onload(): Promise<void> {
     await this.loadSettings();
-    this.addRibbonIcon("glasses", "Iniciar Obsidian AR", () => void this.startAr());
+    this.addRibbonIcon("glasses", "Iniciar Meta Quest Sync", () => void this.startAr());
     this.addCommand({
       id: "start-ar-session",
       name: "Iniciar sessão AR",
@@ -156,7 +156,7 @@ export default class ObsidianArPlugin extends Plugin {
   private vaultPath(): string {
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof FileSystemAdapter)) {
-      throw new Error("Obsidian AR requer um vault local no aplicativo desktop.");
+      throw new Error("Meta Quest Sync requer um vault local no aplicativo desktop.");
     }
     return adapter.getBasePath();
   }
@@ -164,7 +164,7 @@ export default class ObsidianArPlugin extends Plugin {
   async exportGraph(showNotice: boolean): Promise<void> {
     const root = this.settings.projectRoot.trim();
     if (!root) {
-      if (showNotice) new Notice("Configure a pasta do projeto Obsidian AR.");
+      if (showNotice) new Notice("Configure a pasta do projeto Meta Quest Sync.");
       return;
     }
     const graph = exportVaultGraph(
@@ -193,14 +193,14 @@ export default class ObsidianArPlugin extends Plugin {
     }
     const root = this.settings.projectRoot.trim();
     if (!root) {
-      new Notice("Abra Configurações → Obsidian AR e informe a pasta do projeto.");
+      new Notice("Abra Configurações → Meta Quest Sync e informe a pasta do projeto.");
       this.setSessionStatus("Informe a pasta do projeto antes de iniciar.", report);
       return false;
     }
     this.startPromise = (async () => {
       try {
         this.setSessionStatus("Exportando o grafo do vault…", report);
-        new Notice("Obsidian AR: preparando grafo, ponte e túnel…", 8000);
+        new Notice("Meta Quest Sync: preparando grafo, ponte e túnel…", 8000);
         await this.exportGraph(false);
         this.setSessionStatus("Salvando a configuração segura da ponte…", report);
         await this.sessionManager.configure(this.settings, this.vaultPath());
@@ -210,13 +210,13 @@ export default class ObsidianArPlugin extends Plugin {
         );
         this.showPairing();
         this.setSessionStatus("Sessão pronta para parear com o Quest.", report);
-        new Notice("Obsidian AR pronto para parear com o Quest.");
+        new Notice("Meta Quest Sync pronto para parear com o Quest.");
         return true;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error("Obsidian AR não iniciou.", error);
+        console.error("Meta Quest Sync não iniciou.", error);
         this.setSessionStatus(`Falha: ${message}`, report);
-        new Notice(`Obsidian AR: ${message}`, 12000);
+        new Notice(`Meta Quest Sync: ${message}`, 12000);
         return false;
       } finally {
         this.startPromise = null;
@@ -232,7 +232,7 @@ export default class ObsidianArPlugin extends Plugin {
       await this.sessionManager.stop(this.settings);
       this.activeSession = null;
       this.sessionStatus = "Sessão encerrada.";
-      new Notice("Sessão Obsidian AR encerrada.");
+      new Notice("Sessão Meta Quest Sync encerrada.");
     } catch (error) {
       new Notice(`Não foi possível encerrar: ${String(error)}`, 10000);
     }
@@ -274,7 +274,7 @@ class ObsidianArSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Obsidian AR" });
+    containerEl.createEl("h2", { text: "Meta Quest Sync" });
     new Setting(containerEl)
       .setName("Pasta do projeto")
       .setDesc("Pasta absoluta do clone Obsidian-Ar que contém Scripts e note-bridge-rs.")

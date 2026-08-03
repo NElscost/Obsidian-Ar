@@ -28,11 +28,11 @@ if (-not (Test-Path -LiteralPath (Join-Path $pluginSource "node_modules"))) {
 & $npm.Source run build --prefix $pluginSource
 if ($LASTEXITCODE -ne 0) { throw "Não foi possível compilar o plugin." }
 
-$pluginTarget = Join-Path ([IO.Path]::GetFullPath($VaultPath)) ".obsidian\plugins\obsidian-ar"
+$pluginTarget = Join-Path ([IO.Path]::GetFullPath($VaultPath)) ".obsidian\plugins\meta-quest-sync"
 New-Item -ItemType Directory -Path $pluginTarget -Force | Out-Null
 foreach ($name in @("main.js", "manifest.json", "styles.css")) {
   Copy-Item -LiteralPath (Join-Path $pluginSource $name) -Destination (Join-Path $pluginTarget $name) -Force
 }
 
 Write-Host "Plugin instalado em $pluginTarget"
-Write-Host "Habilite Obsidian AR em Configurações > Plugins da comunidade."
+Write-Host "Habilite Meta Quest Sync em Configurações > Plugins da comunidade."

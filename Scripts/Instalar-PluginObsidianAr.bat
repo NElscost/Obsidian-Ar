@@ -8,5 +8,5 @@ if errorlevel 1 (
   exit /b 1
 )
 echo.
-echo Plugin Obsidian AR instalado.
+echo Plugin Meta Quest Sync instalado.
 pause

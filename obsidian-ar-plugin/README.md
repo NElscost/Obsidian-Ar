@@ -1,6 +1,6 @@
-# Obsidian AR Plugin
+# Meta Quest Sync
 
-Plugin desktop que reduz o fluxo do Obsidian AR a uma ação dentro do Obsidian.
+Plugin desktop que reduz o fluxo do Meta Quest Sync a uma ação dentro do Obsidian.
 
 ## O que ele automatiza
 
@@ -26,8 +26,8 @@ npm run build --prefix ./obsidian-ar-plugin
 node ./Scripts/install-obsidian-plugin.mjs --vault "/caminho/absoluto/do/vault"
 ```
 
-Depois, habilite **Obsidian AR** em **Configurações → Plugins da comunidade**.
-Informe a pasta absoluta do clone em **Configurações → Obsidian AR** e pressione
+Depois, habilite **Meta Quest Sync** em **Configurações → Plugins da comunidade**.
+Informe a pasta absoluta do clone em **Configurações → Meta Quest Sync** e pressione
 **Iniciar AR**.
 
 ## Dependências atuais
@@ -52,19 +52,19 @@ plugin e eliminar a dependência de Cargo para usuários finais. Blender não é
 necessário no modo de grafo direto.
 
 Tags no formato `plugin-v*` executam o workflow de release e publicam
-`obsidian-ar-plugin.zip`, `main.js`, `manifest.json` e `styles.css`, permitindo
+`meta-quest-sync.zip`, `main.js`, `manifest.json` e `styles.css`, permitindo
 instalação manual ou futura integração com BRAT. A ponte Rust ainda não faz
 parte desse pacote inicial.
 
 ## Comandos
 
-- **Obsidian AR: Iniciar sessão AR**;
-- **Obsidian AR: Mostrar QR Code da sessão AR**;
-- **Obsidian AR: Atualizar snapshot do grafo**;
-- **Obsidian AR: Encerrar sessão AR**.
+- **Meta Quest Sync: Iniciar sessão AR**;
+- **Meta Quest Sync: Mostrar QR Code da sessão AR**;
+- **Meta Quest Sync: Atualizar snapshot do grafo**;
+- **Meta Quest Sync: Encerrar sessão AR**.
 
 ## Dados locais
 
 O snapshot `graph.json` permanece ignorado pelo Git. As configurações normais do
-plugin ficam em `.obsidian/plugins/obsidian-ar/data.json`; o token da sessão não
+plugin ficam em `.obsidian/plugins/meta-quest-sync/data.json`; o token da sessão não
 é salvo nesse arquivo.

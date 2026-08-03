@@ -23,7 +23,7 @@ if (!existsSync(path.join(pluginSource, "node_modules"))) {
 }
 const build = spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build", "--prefix", pluginSource], { stdio: "inherit" });
 if (build.status !== 0) process.exit(build.status ?? 1);
-const target = path.join(path.resolve(vaultPath), ".obsidian", "plugins", "obsidian-ar");
+const target = path.join(path.resolve(vaultPath), ".obsidian", "plugins", "meta-quest-sync");
 mkdirSync(target, { recursive: true });
 for (const name of ["main.js", "manifest.json", "styles.css"]) cpSync(path.join(pluginSource, name), path.join(target, name));
 console.log(`Plugin instalado em ${target}`);

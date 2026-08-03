@@ -4815,7 +4815,7 @@ var PairingModal = class extends import_obsidian2.Modal {
     this.session = session;
   }
   onOpen() {
-    this.titleEl.setText("Obsidian AR pronto");
+    this.titleEl.setText("Meta Quest Sync pronto");
     this.contentEl.addClass("obsidian-ar-pairing");
     this.contentEl.createEl("p", {
       text: "Abra a c\xE2mera ou o navegador do Quest e leia o QR Code. A URL e o token ficam no fragmento e s\xE3o removidos da barra ap\xF3s o pareamento."
@@ -4826,7 +4826,7 @@ var PairingModal = class extends import_obsidian2.Modal {
       margin: 1,
       errorCorrectionLevel: "M"
     }).catch((error) => {
-      console.error("Obsidian AR n\xE3o conseguiu desenhar o QR Code.", error);
+      console.error("Meta Quest Sync n\xE3o conseguiu desenhar o QR Code.", error);
       canvas.replaceWith(this.contentEl.createEl("p", {
         cls: "obsidian-ar-status",
         text: "N\xE3o foi poss\xEDvel desenhar o QR Code. Use o bot\xE3o Copiar link abaixo."
@@ -4871,7 +4871,7 @@ var ObsidianArPlugin = class extends import_obsidian2.Plugin {
   }, 1500, true);
   async onload() {
     await this.loadSettings();
-    this.addRibbonIcon("glasses", "Iniciar Obsidian AR", () => void this.startAr());
+    this.addRibbonIcon("glasses", "Iniciar Meta Quest Sync", () => void this.startAr());
     this.addCommand({
       id: "start-ar-session",
       name: "Iniciar sess\xE3o AR",
@@ -4908,14 +4908,14 @@ var ObsidianArPlugin = class extends import_obsidian2.Plugin {
   vaultPath() {
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof import_obsidian2.FileSystemAdapter)) {
-      throw new Error("Obsidian AR requer um vault local no aplicativo desktop.");
+      throw new Error("Meta Quest Sync requer um vault local no aplicativo desktop.");
     }
     return adapter.getBasePath();
   }
   async exportGraph(showNotice) {
     const root = this.settings.projectRoot.trim();
     if (!root) {
-      if (showNotice) new import_obsidian2.Notice("Configure a pasta do projeto Obsidian AR.");
+      if (showNotice) new import_obsidian2.Notice("Configure a pasta do projeto Meta Quest Sync.");
       return;
     }
     const graph = exportVaultGraph(
@@ -4943,14 +4943,14 @@ var ObsidianArPlugin = class extends import_obsidian2.Plugin {
     }
     const root = this.settings.projectRoot.trim();
     if (!root) {
-      new import_obsidian2.Notice("Abra Configura\xE7\xF5es \u2192 Obsidian AR e informe a pasta do projeto.");
+      new import_obsidian2.Notice("Abra Configura\xE7\xF5es \u2192 Meta Quest Sync e informe a pasta do projeto.");
       this.setSessionStatus("Informe a pasta do projeto antes de iniciar.", report);
       return false;
     }
     this.startPromise = (async () => {
       try {
         this.setSessionStatus("Exportando o grafo do vault\u2026", report);
-        new import_obsidian2.Notice("Obsidian AR: preparando grafo, ponte e t\xFAnel\u2026", 8e3);
+        new import_obsidian2.Notice("Meta Quest Sync: preparando grafo, ponte e t\xFAnel\u2026", 8e3);
         await this.exportGraph(false);
         this.setSessionStatus("Salvando a configura\xE7\xE3o segura da ponte\u2026", report);
         await this.sessionManager.configure(this.settings, this.vaultPath());
@@ -4960,13 +4960,13 @@ var ObsidianArPlugin = class extends import_obsidian2.Plugin {
         );
         this.showPairing();
         this.setSessionStatus("Sess\xE3o pronta para parear com o Quest.", report);
-        new import_obsidian2.Notice("Obsidian AR pronto para parear com o Quest.");
+        new import_obsidian2.Notice("Meta Quest Sync pronto para parear com o Quest.");
         return true;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error("Obsidian AR n\xE3o iniciou.", error);
+        console.error("Meta Quest Sync n\xE3o iniciou.", error);
         this.setSessionStatus(`Falha: ${message}`, report);
-        new import_obsidian2.Notice(`Obsidian AR: ${message}`, 12e3);
+        new import_obsidian2.Notice(`Meta Quest Sync: ${message}`, 12e3);
         return false;
       } finally {
         this.startPromise = null;
@@ -4981,7 +4981,7 @@ var ObsidianArPlugin = class extends import_obsidian2.Plugin {
       await this.sessionManager.stop(this.settings);
       this.activeSession = null;
       this.sessionStatus = "Sess\xE3o encerrada.";
-      new import_obsidian2.Notice("Sess\xE3o Obsidian AR encerrada.");
+      new import_obsidian2.Notice("Sess\xE3o Meta Quest Sync encerrada.");
     } catch (error) {
       new import_obsidian2.Notice(`N\xE3o foi poss\xEDvel encerrar: ${String(error)}`, 1e4);
     }
@@ -5017,7 +5017,7 @@ var ObsidianArSettingTab = class extends import_obsidian2.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Obsidian AR" });
+    containerEl.createEl("h2", { text: "Meta Quest Sync" });
     new import_obsidian2.Setting(containerEl).setName("Pasta do projeto").setDesc("Pasta absoluta do clone Obsidian-Ar que cont\xE9m Scripts e note-bridge-rs.").addText((text) => text.setPlaceholder("C:\\Projetos\\Obsidian-Ar").setValue(this.plugin.settings.projectRoot).onChange(async (value) => {
       this.plugin.settings.projectRoot = value.trim();
       await this.plugin.saveSettings();

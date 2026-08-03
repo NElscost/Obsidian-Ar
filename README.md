@@ -1,4 +1,4 @@
-# Obsidian AR
+# Meta Quest Sync
 
 Explore o grafo do seu vault em realidade aumentada no Meta Quest. O plugin do
 Obsidian prepara o grafo, inicia a ponte local segura, cria o túnel HTTPS e
@@ -61,11 +61,11 @@ No Windows também é possível usar:
 ```
 
 Reinicie o Obsidian, desative o modo restrito se necessário e habilite
-**Obsidian AR**.
+**Meta Quest Sync**.
 
 ### 3. Inicie a sessão
 
-Em **Configurações → Obsidian AR**:
+Em **Configurações → Meta Quest Sync**:
 
 1. informe a pasta absoluta do clone `Obsidian-Ar`;
 2. mantenha o visualizador HTTPS padrão ou use outro servidor compatível;

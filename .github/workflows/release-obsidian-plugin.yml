@@ -1,4 +1,4 @@
-name: Release Obsidian AR plugin
+name: Release Meta Quest Sync plugin
 
 on:
   push:
@@ -33,7 +33,7 @@ jobs:
       - name: Package plugin
         run: |
           cd obsidian-ar-plugin
-          zip ../obsidian-ar-plugin.zip main.js manifest.json styles.css
+          zip ../meta-quest-sync.zip main.js manifest.json styles.css
       - name: Verify tag matches manifest
         run: |
           VERSION=$(node -p "require('./obsidian-ar-plugin/manifest.json').version")
@@ -42,7 +42,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            obsidian-ar-plugin.zip
+            meta-quest-sync.zip
             obsidian-ar-plugin/main.js
             obsidian-ar-plugin/manifest.json
             obsidian-ar-plugin/styles.css
