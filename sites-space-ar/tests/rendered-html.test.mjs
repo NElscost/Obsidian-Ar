@@ -224,7 +224,7 @@ test("reenquadra o grafo dinâmico depois que o layout termina", async () => {
   assert.match(html, /createDynamicGraphLabels\(labelNodes\)/);
   assert.match(html, /labelAtlas/);
   assert.match(html, /MAX_DYNAMIC_SCALE_FACTOR\s*=\s*10/);
-  assert.match(html, /compact-v7-/);
+  assert.match(html, /compact-v8-/);
   assert.match(html, /labelScale/);
   assert.match(html, /Modo direto ativo: informe a URL HTTPS e o token da ponte/);
   assert.match(html, /Falha ao preparar a experiência/);
@@ -279,10 +279,24 @@ test("espalha o grafo conforme a quantidade de nós", async () => {
   assert.match(html, /Math\.pow\(normalizedRadius, 0\.68\)/);
   assert.match(html, /Separando regiões densas/);
   assert.match(html, /sourcePosition\.addScaledVector\(linkDirection, 2\.9\)/);
-  assert.match(html, /GRAPH_SPACING_EXPERIMENT_FACTOR = 1000/);
+  assert.match(html, /GRAPH_SPACING_EXPERIMENT_FACTOR = 1/);
   assert.match(html, /function scaleGraphSpacing/);
   assert.match(html, /scaleGraphSpacing\(data, GRAPH_SPACING_EXPERIMENT_FACTOR\)/);
-  assert.match(html, /NODE_RAY_MAX_DISTANCE = 1800/);
+  assert.match(html, /NODE_RAY_MAX_DISTANCE = 4/);
+});
+
+test("agrupa vaults grandes e expande hubs por pinça", async () => {
+  const html = await readFile(xrUrl, "utf8");
+
+  assert.match(html, /MAX_RENDERED_NODES = 1500/);
+  assert.match(html, /COLLAPSED_CORE_NODES = 1200/);
+  assert.match(html, /function buildHierarchicalGraph/);
+  assert.match(html, /function expandedClusterData/);
+  assert.match(html, /function expandClusterNode/);
+  assert.match(html, /clusterChildren/);
+  assert.match(html, /Agrupando.*nós em.*hubs/);
+  assert.match(html, /revelar as notas agrupadas/);
+  assert.match(html, /expandClusterNode\(hierarchyNode\)/);
 });
 
 test("configuração pública não depende dos metadados privados do Sites", async () => {

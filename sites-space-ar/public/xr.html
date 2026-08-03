@@ -604,8 +604,10 @@
     const HUGE_GRAPH_NODE_THRESHOLD = 9000;
     const MAX_DYNAMIC_LABELS = 384;
     const MAX_DYNAMIC_LINKS = 50000;
-    const GRAPH_SPACING_EXPERIMENT_FACTOR = 1000;
-    const NODE_RAY_MAX_DISTANCE = 1800;
+    const GRAPH_SPACING_EXPERIMENT_FACTOR = 1;
+    const MAX_RENDERED_NODES = 1500;
+    const COLLAPSED_CORE_NODES = 1200;
+    const NODE_RAY_MAX_DISTANCE = 4;
     const NODE_PICK_INTERVAL_SMALL_MS = 34;
     const NODE_PICK_INTERVAL_LARGE_MS = 66;
     const RECENT_NOTES_STORAGE_KEY = "space-ar-recent-notes";
@@ -952,7 +954,7 @@
     }
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.05, 2000);
+    const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 30);
     camera.position.set(0, 1.4, 2);
     scene.add(camera);
     let environment360Mesh = null;
@@ -2876,6 +2878,7 @@
 
     let model = null;
     let graphData = null;
+    let graphHierarchy = null;
     let forceGraph = null;
     let dynamicGraphActive = false;
     let dynamicGraphTicking = false;
@@ -3690,6 +3693,150 @@
       }
     }
 
+    function buildHierarchicalGraph(data) {
+      if (data.nodes.length <= MAX_RENDERED_NODES) {
+        graphHierarchy = null;
+        return data;
+      }
+
+      const nodesById = new Map(data.nodes.map((node) => [node.id, node]));
+      const adjacency = new Map(data.nodes.map((node) => [node.id, []]));
+      const degree = new Map(data.nodes.map((node) => [node.id, 0]));
+      for (const link of data.links) {
+        const sourceId = typeof link.source === "object" ? link.source.id : link.source;
+        const targetId = typeof link.target === "object" ? link.target.id : link.target;
+        if (!nodesById.has(sourceId) || !nodesById.has(targetId)) continue;
+        adjacency.get(sourceId).push(targetId);
+        adjacency.get(targetId).push(sourceId);
+        degree.set(sourceId, (degree.get(sourceId) ?? 0) + 1);
+        degree.set(targetId, (degree.get(targetId) ?? 0) + 1);
+      }
+
+      const ranked = [...data.nodes].sort((left, right) =>
+        ((degree.get(right.id) ?? 0) + (right.val ?? 1))
+        - ((degree.get(left.id) ?? 0) + (left.val ?? 1))
+      );
+      const coreNodes = ranked.slice(0, COLLAPSED_CORE_NODES);
+      const coreIds = new Set(coreNodes.map((node) => node.id));
+      const ownerById = new Map();
+      const queue = [];
+      for (const core of coreNodes) {
+        ownerById.set(core.id, core.id);
+        queue.push(core.id);
+      }
+      for (let queueIndex = 0; queueIndex < queue.length; queueIndex += 1) {
+        const nodeId = queue[queueIndex];
+        const ownerId = ownerById.get(nodeId);
+        for (const neighbourId of adjacency.get(nodeId) ?? []) {
+          if (ownerById.has(neighbourId)) continue;
+          ownerById.set(neighbourId, ownerId);
+          queue.push(neighbourId);
+        }
+      }
+      let fallbackIndex = 0;
+      for (const node of ranked) {
+        if (ownerById.has(node.id)) continue;
+        ownerById.set(node.id, coreNodes[fallbackIndex++ % coreNodes.length].id);
+      }
+
+      const childrenByOwner = new Map(coreNodes.map((node) => [node.id, []]));
+      for (const node of data.nodes) {
+        const ownerId = ownerById.get(node.id);
+        if (node.id !== ownerId) childrenByOwner.get(ownerId).push(node);
+      }
+      for (const core of coreNodes) {
+        core.clusterChildren = childrenByOwner.get(core.id);
+        core.clusterSize = core.clusterChildren.length;
+        core.clusterBaseLabel ??= core.label;
+        core.label = core.clusterSize
+          ? `${core.clusterBaseLabel ?? core.id} (+${core.clusterSize})`
+          : (core.clusterBaseLabel ?? core.id);
+        core.val = Math.max(core.val ?? 1, degree.get(core.id) ?? 1)
+          + Math.sqrt(core.clusterSize) * 2;
+      }
+
+      const collapsedLinks = [];
+      const seenLinks = new Set();
+      for (const link of data.links) {
+        const sourceId = typeof link.source === "object" ? link.source.id : link.source;
+        const targetId = typeof link.target === "object" ? link.target.id : link.target;
+        const sourceOwner = ownerById.get(sourceId);
+        const targetOwner = ownerById.get(targetId);
+        if (!sourceOwner || !targetOwner || sourceOwner === targetOwner) continue;
+        const key = sourceOwner < targetOwner
+          ? `${sourceOwner}\u0000${targetOwner}`
+          : `${targetOwner}\u0000${sourceOwner}`;
+        if (seenLinks.has(key)) continue;
+        seenLinks.add(key);
+        collapsedLinks.push({ source: sourceOwner, target: targetOwner });
+      }
+
+      const coreData = { nodes: coreNodes, links: collapsedLinks };
+      graphHierarchy = { fullData: data, coreData, expandedHubId: null };
+      return coreData;
+    }
+
+    function expandedClusterData(hub) {
+      const children = [...(hub.clusterChildren ?? [])]
+        .sort((left, right) => (right.val ?? 1) - (left.val ?? 1))
+        .slice(0, MAX_RENDERED_NODES - 1);
+      const hubNode = { ...hub, label: hub.clusterBaseLabel ?? hub.label };
+      const radius = Math.max(16, Math.sqrt(children.length) * 5.2);
+      const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+      const childNodes = children.map((node, index) => {
+        const y = 1 - ((index + 0.5) / Math.max(1, children.length)) * 2;
+        const horizontal = Math.sqrt(Math.max(0, 1 - y * y));
+        const angle = index * goldenAngle;
+        return {
+          ...node,
+          x: (hub.x ?? 0) + Math.cos(angle) * horizontal * radius,
+          y: (hub.y ?? 0) + y * radius,
+          z: (hub.z ?? 0) + Math.sin(angle) * horizontal * radius,
+          clusterChildren: null,
+          clusterSize: 0
+        };
+      });
+      return {
+        nodes: [hubNode, ...childNodes],
+        links: childNodes.map((node) => ({ source: hubNode.id, target: node.id }))
+      };
+    }
+
+    function disposeGraphObject(root) {
+      root?.traverse((object) => {
+        object.geometry?.dispose?.();
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        for (const material of materials) {
+          material?.map?.dispose?.();
+          material?.dispose?.();
+        }
+      });
+    }
+
+    function expandClusterNode(node) {
+      if (!graphHierarchy || !node?.clusterChildren?.length) return false;
+      const previousModel = model;
+      const nextData = expandedClusterData(node);
+      const previousPosition = previousModel.position.clone();
+      const previousQuaternion = previousModel.quaternion.clone();
+      const previousScale = previousModel.scale.clone();
+      contentRoot.remove(previousModel);
+      graphData = nextData;
+      model = createDynamicGraphVisual(nextData);
+      model.position.copy(previousPosition);
+      model.quaternion.copy(previousQuaternion);
+      model.scale.copy(previousScale);
+      contentRoot.add(model);
+      createNodeInteraction(nextData.nodes);
+      graphHierarchy.expandedHubId = node.id;
+      selectedNode = null;
+      candidateNode = null;
+      pointedNode = null;
+      disposeGraphObject(previousModel);
+      setXrMessage(`${node.clusterSize} notas reveladas em ${node.clusterBaseLabel ?? node.label}.`);
+      return true;
+    }
+
     function graphSignature(data) {
       let hash = 2166136261;
       const update = (value) => {
@@ -3703,7 +3850,7 @@
         update(typeof link.source === "string" ? link.source : link.source.id);
         update(typeof link.target === "string" ? link.target : link.target.id);
       }
-      return `compact-v7-${data.nodes.length}-${data.links.length}-${(hash >>> 0).toString(16)}`;
+      return `compact-v8-${data.nodes.length}-${data.links.length}-${(hash >>> 0).toString(16)}`;
     }
 
     function applyLargeGraphLayout(data) {
@@ -3843,18 +3990,25 @@
         cache: "no-store"
       });
       updateGraphProgress(14, "Decodificando dados");
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error ?? `HTTP ${response.status}`);
-      if (!Array.isArray(data.nodes) || !Array.isArray(data.links)) {
+      const rawData = await response.json();
+      if (!response.ok) throw new Error(rawData.error ?? `HTTP ${response.status}`);
+      if (!Array.isArray(rawData.nodes) || !Array.isArray(rawData.links)) {
         throw new Error("A ponte retornou um grafo inválido.");
       }
+      const originalNodeCount = rawData.nodes.length;
+      const data = buildHierarchicalGraph(rawData);
 
       const hugeGraph = data.nodes.length >= HUGE_GRAPH_NODE_THRESHOLD;
       graphProgressInitialEstimateMs = hugeGraph
-        ? 2500 + data.nodes.length * 0.18 + Math.min(data.links.length, MAX_DYNAMIC_LINKS) * 0.025
-        : 3200 + data.nodes.length * 0.55 + Math.min(data.links.length, MAX_DYNAMIC_LINKS) * 0.04;
+        ? 2500 + originalNodeCount * 0.18 + Math.min(rawData.links.length, MAX_DYNAMIC_LINKS) * 0.025
+        : 3200 + originalNodeCount * 0.3 + Math.min(rawData.links.length, MAX_DYNAMIC_LINKS) * 0.025;
       graphData = data;
-      updateGraphProgress(22, `Preparando ${data.nodes.length} nós`);
+      updateGraphProgress(
+        22,
+        originalNodeCount > data.nodes.length
+          ? `Agrupando ${originalNodeCount} nós em ${data.nodes.length} hubs`
+          : `Preparando ${data.nodes.length} nós`
+      );
       graphLayoutKey = graphSignature(data);
       const restored = restoreGraphLayout(data, graphLayoutKey);
       if (hugeGraph && !restored) {
@@ -4706,7 +4860,11 @@
         pinchStartPoint = point.clone();
         pinchTravel = 0;
         if (pendingSelectionPath) {
-          setXrMessage(`Pinça detectada em ${selectedNode.label}. Mantenha brevemente para abrir.`);
+          setXrMessage(
+            selectedNode.clusterChildren?.length && graphHierarchy?.expandedHubId !== selectedNode.id
+              ? `Pinça detectada em ${selectedNode.label}. Mantenha para revelar o grupo.`
+              : `Pinça detectada em ${selectedNode.label}. Mantenha brevemente para abrir.`
+          );
         }
         return;
       }
@@ -4836,9 +4994,9 @@
             positions[0] = pointerRayOrigin.x;
             positions[1] = pointerRayOrigin.y;
             positions[2] = pointerRayOrigin.z;
-            positions[3] = pointerRayOrigin.x + pointerDirection.x * 1500;
-            positions[4] = pointerRayOrigin.y + pointerDirection.y * 1500;
-            positions[5] = pointerRayOrigin.z + pointerDirection.z * 1500;
+            positions[3] = pointerRayOrigin.x + pointerDirection.x * 3.5;
+            positions[4] = pointerRayOrigin.y + pointerDirection.y * 3.5;
+            positions[5] = pointerRayOrigin.z + pointerDirection.z * 3.5;
             handRay.geometry.attributes.position.needsUpdate = true;
           }
         }
@@ -4966,13 +5124,26 @@
         const pulse = 1.18 + Math.sin(time * 0.008) * 0.12;
         highlightMesh.scale.setScalar(pulse * (dynamicGraphActive ? 16 : 1));
         if (gestureMode === "idle") {
-          setXrMessage(`${selectedNode.label}. Faça uma pinça para abrir a nota.`);
+          setXrMessage(
+            selectedNode.clusterChildren?.length && graphHierarchy?.expandedHubId !== selectedNode.id
+              ? `${selectedNode.label}. Faça uma pinça para revelar as notas agrupadas.`
+              : `${selectedNode.label}. Faça uma pinça para abrir a nota.`
+          );
         }
       }
     }
 
     async function requestNote(path) {
       if (noteRequestBusy) return;
+      const hierarchyNode = graphData?.nodes?.find((node) => node.id === path);
+      if (
+        hierarchyNode?.clusterChildren?.length &&
+        graphHierarchy?.expandedHubId !== hierarchyNode.id
+      ) {
+        expandClusterNode(hierarchyNode);
+        resetGestureState("await-release");
+        return;
+      }
       const config = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
       if (!config?.url || !config?.token) {
         setXrMessage("Configure a ponte do Obsidian antes de entrar em AR.");
