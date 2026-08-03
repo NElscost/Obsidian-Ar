@@ -1,0 +1,38 @@
+name: Release Obsidian AR plugin
+
+on:
+  push:
+    tags:
+      - "plugin-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: obsidian-ar-plugin/package-lock.json
+      - name: Build and test plugin
+        working-directory: obsidian-ar-plugin
+        run: |
+          npm ci
+          npm run build
+          npm test
+      - name: Package plugin
+        run: |
+          cd obsidian-ar-plugin
+          zip ../obsidian-ar-plugin.zip main.js manifest.json styles.css
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            obsidian-ar-plugin.zip
+            obsidian-ar-plugin/main.js
+            obsidian-ar-plugin/manifest.json
+            obsidian-ar-plugin/styles.css

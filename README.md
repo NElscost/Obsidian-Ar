@@ -43,8 +43,8 @@ versionados.
 
 ### Computador
 
-- Windows 10 ou 11;
-- Obsidian com suporte ao CLI;
+- Windows 10/11, Linux ou macOS;
+- Obsidian desktop; CLI necessário somente para alguns fluxos glTF legados;
 - Node.js 24 e npm recomendados (`nvm use 24` quando usar NVM);
 - Rust estável com Cargo;
 - Cloudflare Tunnel (`cloudflared`);
@@ -66,17 +66,17 @@ Para o fluxo glTF opcional:
 
 Clone o repositório e instale as dependências:
 
-```powershell
+```sh
 git clone https://github.com/NElscost/Obsidian-Ar.git
-cd .\Obsidian-Ar
-npm ci --prefix .\model-pipeline
-npm ci --prefix .\sites-space-ar
-cargo build --release --manifest-path .\note-bridge-rs\Cargo.toml
+cd Obsidian-Ar
+npm ci --prefix ./model-pipeline
+npm ci --prefix ./sites-space-ar
+cargo build --release --manifest-path ./note-bridge-rs/Cargo.toml
 ```
 
 Confirme a versão ativa antes de instalar as dependências:
 
-```powershell
+```sh
 node --version
 npm --version
 ```
@@ -90,7 +90,32 @@ só são necessários para o modo glTF e são criados localmente pelo pipeline. 
 
 ## Configuração
 
-Execute:
+### Plugin do Obsidian (fluxo recomendado)
+
+O plugin desktop em `obsidian-ar-plugin` reúne o fluxo principal dentro do
+Obsidian. Ele lê o grafo pela API do aplicativo, atualiza `graph.json`, inicia a
+ponte Axum e o Cloudflare Tunnel e mostra um QR Code de pareamento para o Quest.
+Assim, não é necessário usar o Obsidian CLI nem copiar URL e token manualmente.
+
+Para instalar a versão de desenvolvimento no vault configurado:
+
+```sh
+node ./Scripts/install-obsidian-plugin.mjs --vault "/caminho/absoluto/do/vault"
+```
+
+O atalho `Scripts\Instalar-PluginObsidianAr.bat` continua disponível no Windows.
+
+Habilite **Obsidian AR** nos plugins da comunidade, abra suas configurações,
+confirme a pasta absoluta do clone e pressione **Iniciar AR**. O plugin oferece
+também comandos para mostrar novamente o QR Code, atualizar o snapshot e encerrar
+a sessão. Consulte `obsidian-ar-plugin/README.md` para dependências e limitações.
+
+O QR transporta as credenciais no fragmento da URL. O visualizador remove o
+fragmento antes de carregar os módulos 3D e mantém o token somente durante a aba
+atual. O orquestrador usa PowerShell no Windows e o runner Node.js compartilhado
+em Linux/macOS.
+
+No Windows, o assistente abaixo continua disponível:
 
 ```powershell
 .\Scripts\Configurar-Projeto.bat
@@ -102,6 +127,10 @@ O assistente solicita os caminhos locais e cria:
 - `note-bridge.config.json`.
 
 Esses arquivos são ignorados pelo Git. Os exemplos seguros são `space-ar.config.example.json` e `note-bridge.config.example.json`.
+
+Em Linux/macOS, copie `note-bridge.config.example.json` para
+`note-bridge.config.json` e informe um `vaultPath` absoluto. O próprio plugin
+também grava essa configuração ao iniciar uma sessão.
 
 ## Gerar e otimizar o modelo
 
@@ -152,13 +181,24 @@ Os arquivos gerados ficam fora do controle de versão porque podem revelar nomes
 
 ## Ponte de notas
 
-Configure o vault, se necessário:
+Configure o vault em Linux/macOS, se necessário:
 
-```powershell
-.\Scripts\Configurar-NoteBridge.bat
+```sh
+cp note-bridge.config.example.json note-bridge.config.json
 ```
 
-Inicie e encerre a ponte:
+Inicie e encerre a ponte em Linux/macOS:
+
+```sh
+sh ./Scripts/Start-ObsidianNoteBridge.sh --port 8765
+sh ./Scripts/Stop-ObsidianNoteBridge.sh
+
+# Funciona mesmo quando o bit executável não foi preservado:
+node ./Scripts/note-bridge.mjs start --port 8765
+node ./Scripts/note-bridge.mjs stop
+```
+
+No Windows, os atalhos existentes continuam disponíveis:
 
 ```powershell
 .\Scripts\Iniciar-NoteBridge.bat
@@ -186,6 +226,10 @@ visualizador não exige reconfigurar nem reiniciar a ponte. Requisições privad
 continuam exigindo o token Bearer. HTTP é aceito somente em `localhost` para
 desenvolvimento.
 
+O runner multiplataforma compila a ponte somente quando o binário não existe ou
+quando as fontes Rust mudaram. Ele resolve automaticamente o nome do executável,
+usa caminhos nativos e encerra servidor e túnel por PID/grupo de processos.
+
 ### Named Tunnel e Cloudflare Access
 
 O Quick Tunnel continua disponível para desenvolvimento. Para uso recorrente,
@@ -199,9 +243,9 @@ crie no painel da Cloudflare:
 5. em `Advanced settings > CORS`, habilite **Bypass OPTIONS requests to
    origin**. A ponte Axum continua validando o preflight e a origem HTTPS.
 
-Execute `.\Scripts\Configurar-NoteBridge.bat`, selecione `named` e informe o
-hostname, o token do Named Tunnel e, opcionalmente, as duas partes do Service
-Token do Access.
+No Windows, execute `Scripts\Configurar-NoteBridge.bat`. Em Linux/macOS, edite
+`note-bridge.config.json`, use `tunnelMode: "named"`, informe `tunnelUrl` e
+grave o token no arquivo indicado por `tunnelTokenFile`.
 
 Os segredos são gravados em `.cloudflare-tunnel-token` e
 `.cloudflare-access.json`, ambos ignorados pelo Git. O token do túnel é
@@ -239,9 +283,9 @@ O script envia a URL e o token da execução atual sem usar a área de transfer�
 
 O cliente WebXR está em `sites-space-ar`. Para desenvolvimento local:
 
-```powershell
+```sh
 nvm use 24  # somente quando o NVM estiver instalado
-npm run dev --prefix .\sites-space-ar
+npm run dev --prefix ./sites-space-ar
 ```
 
 ### Passthrough ou fundo panorâmico 360°
@@ -267,7 +311,7 @@ Escolha um nome exclusivo para o seu visualizador. No exemplo abaixo, substitua
 `meu-obsidian-ar` por outro nome disponível. A criação do nome é necessária
 somente uma vez na sua conta zrok:
 
-```powershell
+```sh
 zrok2 create name -n public meu-obsidian-ar
 ```
 
@@ -275,7 +319,12 @@ O endereço resultante será
 `https://meu-obsidian-ar.shares.zrok.io`. Antes de iniciar o Vite, autorize esse
 hostname por variável de ambiente e execute o site na porta 3001:
 
-```powershell
+```sh
+# Linux/macOS
+SPACE_ALLOWED_DEV_HOSTS="meu-obsidian-ar.shares.zrok.io" \
+  npm run dev --prefix ./sites-space-ar -- --port 3001 --strictPort
+
+# Windows PowerShell
 $env:SPACE_ALLOWED_DEV_HOSTS = "meu-obsidian-ar.shares.zrok.io"
 npm run dev --prefix .\sites-space-ar -- --port 3001 --strictPort
 ```
@@ -283,7 +332,7 @@ npm run dev --prefix .\sites-space-ar -- --port 3001 --strictPort
 Mantenha esse terminal aberto. Em um segundo PowerShell, na raiz do projeto,
 publique a porta usando o mesmo nome:
 
-```powershell
+```sh
 zrok2 share public http://localhost:3001 -n public:meu-obsidian-ar
 ```
 
@@ -513,8 +562,8 @@ a aba do Quest para eliminar uma versão antiga em cache.
 
 Execute:
 
-```powershell
-cargo build --release --manifest-path .\note-bridge-rs\Cargo.toml
+```sh
+cargo build --release --manifest-path ./note-bridge-rs/Cargo.toml
 ```
 
 ### O Blender não atualiza o modelo
@@ -525,7 +574,7 @@ Confirme `blenderPath`, a presença de `space2.blend` e se o `graph.json` conté
 
 ```text
 Obsidian-Ar/
-├── Scripts/                 # atalhos BAT e automações PowerShell
+├── Scripts/                 # runner Node multiplataforma + atalhos PS1/BAT/SH
 ├── model-pipeline/          # validação e otimização glTF
 ├── note-bridge-rs/          # API Axum e cache
 ├── sites-space-ar/          # cliente WebXR e worker
@@ -535,15 +584,37 @@ Obsidian-Ar/
 └── space-ar.config.example.json
 ```
 
+## Compatibilidade por sistema
+
+| Recurso | Windows | Linux | macOS |
+| --- | --- | --- | --- |
+| Plugin, grafo direto, ponte Axum e QR Code | Sim | Sim | Sim |
+| Quick/Named Cloudflare Tunnel | Sim | Sim | Sim |
+| Site WebXR e desenvolvimento local | Sim | Sim | Sim |
+| Instalação do plugin pelo runner Node.js | Sim | Sim | Sim |
+| ADB pelo terminal | Sim | Sim | Sim |
+| Pipeline Blender automatizado | PowerShell completo | Manual ou PowerShell 7 | Manual ou PowerShell 7 |
+
+O modo recomendado — grafo direto a partir do vault — não depende de Blender,
+Obsidian CLI ou PowerShell. A automação histórica do glTF permanece em
+`Update-SpaceModel.ps1`; em Linux/macOS ela exige PowerShell 7 (`pwsh`) e
+caminhos adequados para Blender e Obsidian. A geração manual também pode usar
+`Scripts/Generate-SpaceBlend.py` dentro do Blender e o pipeline Node em
+`model-pipeline`.
+
+No macOS, as dependências podem ser instaladas por Homebrew. No Linux, use o
+gerenciador da distribuição ou os instaladores oficiais. Se o Obsidian estiver
+em Flatpak/Snap e não enxergar `node`, `cargo` ou `cloudflared` do host, inicie
+a ponte pelo terminal ou use uma instalação não sandboxed.
+
 ## Fluxo diário
 
-```powershell
-# 1. Inicie a ponte. O modo direto lê o vault automaticamente.
-.\Scripts\Iniciar-NoteBridge.bat
+```sh
+# Linux/macOS: o modo direto lê o vault automaticamente.
+node ./Scripts/note-bridge.mjs start
 
-# 2. Se necessário, envie a configuração ao Quest.
-.\Scripts\Enviar-NoteBridge-Quest.bat
+# Windows: .\Scripts\Iniciar-NoteBridge.bat
 
 # Opcional: reconstrua o glTF quando estiver usando o modo Blender.
-.\Scripts\Update-SpaceModel.ps1 -Mode All -FromObsidian
+pwsh ./Scripts/Update-SpaceModel.ps1 -Mode All -FromObsidian
 ```

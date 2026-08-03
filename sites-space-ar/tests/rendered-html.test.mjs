@@ -19,6 +19,8 @@ test("declara os recursos WebXR necessários", async () => {
   assert.match(html, /hand-tracking/);
   assert.match(html, /dom-overlay/);
   assert.match(html, /id="background-360"/);
+  assert.match(html, /class="panorama-options" open/);
+  assert.match(html, /max-height:\s*calc\(100dvh - 20px\)/);
   assert.match(html, /function prepareEnvironment360/);
   assert.match(html, /MAX_BACKGROUND_360_WIDTH\s*=\s*4096/);
   assert.match(html, /imageOrientation:\s*"flipY"/);
@@ -36,7 +38,8 @@ test("mantém o carregamento do modelo e a ponte de notas", async () => {
   assert.match(html, /loader\.setRequestHeader\(STATIC_ASSET_HEADERS\)/);
   assert.match(html, /function fetchStaticAsset/);
   assert.match(html, /async function fetchBridge/);
-  assert.match(html, /BRIDGE_RETRY_DELAYS_MS\s*=\s*\[0, 450, 1200, 2500\]/);
+  assert.match(html, /BRIDGE_RETRY_DELAYS_MS\s*=\s*\[0, 1000, 3000, 7000, 12000\]/);
+  assert.match(html, /Aguardando o túnel chegar ao Quest/);
   assert.match(html, /Quick Tunnel não está resolvendo/);
   assert.match(html, /function createGlbBuffer/);
   assert.match(html, /function createModelRevision/);
@@ -54,6 +57,11 @@ test("mantém o carregamento do modelo e a ponte de notas", async () => {
   assert.match(html, /NOTE_BRIDGE_STORAGE_KEY/);
   assert.match(html, /Markdown|markdown/);
   assert.match(html, /pulldown/i);
+  assert.match(html, /function pairingConfigFromBootstrap/);
+  assert.match(html, /get\("obsidian-ar"\)/);
+  assert.match(html, /space-ar-pairing-bootstrap/);
+  assert.match(html, /history\.replaceState/);
+  assert.match(html, /sessionStorage\.setItem\(NOTE_BRIDGE_STORAGE_KEY, JSON\.stringify\(pairedBridge\)\)/);
 });
 
 test("protege credenciais e habilita Cloudflare Access", async () => {

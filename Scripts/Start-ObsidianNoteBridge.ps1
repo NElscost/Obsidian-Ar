@@ -309,13 +309,18 @@ if ($tunnelMode -eq "named") {
   }
 }
 
-@{
+$stateJson = @{
   serverPid = $server.Id
   tunnelPid = $tunnel.Id
   url = $publishedUrl
   tunnelMode = $tunnelMode
   startedAt = (Get-Date).ToUniversalTime().ToString("o")
-} | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding UTF8
+} | ConvertTo-Json
+[System.IO.File]::WriteAllText(
+  $statePath,
+  $stateJson,
+  [System.Text.UTF8Encoding]::new($false)
+)
 
 Write-Output ""
 Write-Output "Ponte do Obsidian pronta."

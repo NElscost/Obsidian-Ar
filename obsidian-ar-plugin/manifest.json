@@ -1,0 +1,9 @@
+{
+  "id": "obsidian-ar",
+  "name": "Obsidian AR",
+  "version": "0.1.0",
+  "minAppVersion": "1.8.0",
+  "description": "Inicia e pareia o visualizador WebXR para explorar o vault em realidade aumentada.",
+  "author": "NElscost",
+  "isDesktopOnly": true
+}

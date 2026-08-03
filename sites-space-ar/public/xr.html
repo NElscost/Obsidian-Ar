@@ -5,6 +5,30 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#070b12">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://esm.sh; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' blob: https:; img-src 'self' data: blob: https:; font-src 'self' data: https://cdn.jsdelivr.net; media-src 'self' blob: https:; worker-src 'self' blob:; manifest-src 'self'">
+  <script>
+    (() => {
+      try {
+        const encoded = new URLSearchParams(location.hash.slice(1)).get("obsidian-ar");
+        if (!encoded) return;
+        const base64 = encoded.replaceAll("-", "+").replaceAll("_", "/");
+        const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+        const bytes = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
+        const payload = JSON.parse(new TextDecoder().decode(bytes));
+        const bridge = new URL(payload.url);
+        if (bridge.protocol !== "https:" || typeof payload.token !== "string") return;
+        if (payload.token.length < 32) return;
+        sessionStorage.setItem("space-ar-pairing-bootstrap", JSON.stringify({
+          url: bridge.origin,
+          token: payload.token,
+          accessClientId: "",
+          accessClientSecret: ""
+        }));
+        history.replaceState(null, "", `${location.pathname}${location.search}`);
+      } catch (error) {
+        console.warn("Pareamento Obsidian AR inválido.", error);
+      }
+    })();
+  </script>
   <title>Space AR · Meta Quest</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <style>
@@ -47,6 +71,10 @@
 
     .panel {
       width: min(450px, 100%);
+      max-height: calc(100dvh - 20px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
       padding: 20px;
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 28px;
@@ -162,6 +190,17 @@
     }
     .bridge-config details[open] summary { margin-bottom: 7px; }
     .bridge-config details input + input { margin-top: 7px; }
+    .bridge-config .panorama-options {
+      padding: 9px 10px;
+      border: 1px solid rgba(117, 167, 255, 0.28);
+      border-radius: 12px;
+      background: rgba(95, 149, 255, 0.08);
+    }
+    .bridge-config .panorama-options summary {
+      color: #dce7ff;
+      cursor: pointer;
+      font-weight: 700;
+    }
     .bridge-config small {
       display: block;
       margin-top: 6px;
@@ -485,7 +524,7 @@
           <input id="dynamic-graph" type="checkbox" checked>
           Gerar o grafo diretamente do vault, sem Blender ou glTF
         </label>
-        <details>
+        <details class="panorama-options" open>
           <summary>Fundo panorâmico 360° (opcional)</summary>
           <input id="background-360" type="file" accept="image/avif,image/webp,image/jpeg,image/png">
           <small>Sem arquivo: passthrough. Recomendado: imagem equiretangular 4096×2048 em WebP ou AVIF.</small>
@@ -564,12 +603,20 @@
       return headers;
     }
 
-    const BRIDGE_RETRY_DELAYS_MS = [0, 450, 1200, 2500];
+    // Quick Tunnels podem ser alcançáveis pelo computador antes de propagarem
+    // até o ponto de presença usado pelo Quest. A janela de ~23 s evita que
+    // essa propagação normal seja apresentada como uma falha definitiva.
+    const BRIDGE_RETRY_DELAYS_MS = [0, 1000, 3000, 7000, 12000];
 
     async function fetchBridge(config, path, options = {}) {
       let lastError = null;
-      for (const delay of BRIDGE_RETRY_DELAYS_MS) {
+      for (const [attempt, delay] of BRIDGE_RETRY_DELAYS_MS.entries()) {
         if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+        if (path === "/graph" && attempt > 0) {
+          setStatus(
+            `Aguardando o túnel chegar ao Quest… tentativa ${attempt + 1}/${BRIDGE_RETRY_DELAYS_MS.length}`
+          );
+        }
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 12000);
         try {
@@ -2911,6 +2958,17 @@
       nativeMicroGestureStates = new WeakMap();
     }
 
+    function pairingConfigFromBootstrap() {
+      try {
+        const stored = sessionStorage.getItem("space-ar-pairing-bootstrap");
+        sessionStorage.removeItem("space-ar-pairing-bootstrap");
+        return stored ? JSON.parse(stored) : null;
+      } catch (error) {
+        console.warn("Não foi possível concluir o pareamento Obsidian AR.", error);
+        return null;
+      }
+    }
+
     function isMicroGestureHandClosed(inputSource) {
       const state = noteMicroGestureStates.get(inputSource);
       const nativeState = nativeMicroGestureStates.get(inputSource);
@@ -2921,9 +2979,14 @@
     }
 
     try {
+      const pairedBridge = pairingConfigFromBootstrap();
       const sessionBridge = sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY);
       const legacyBridge = localStorage.getItem(NOTE_BRIDGE_STORAGE_KEY);
-      const storedBridge = JSON.parse(sessionBridge ?? legacyBridge ?? "null");
+      const storedBridge = pairedBridge ?? JSON.parse(sessionBridge ?? legacyBridge ?? "null");
+      if (pairedBridge) {
+        sessionStorage.setItem(NOTE_BRIDGE_STORAGE_KEY, JSON.stringify(pairedBridge));
+        localStorage.setItem(DYNAMIC_GRAPH_STORAGE_KEY, "true");
+      }
       if (!sessionBridge && legacyBridge && storedBridge) {
         sessionStorage.setItem(
           NOTE_BRIDGE_STORAGE_KEY,
@@ -2941,6 +3004,10 @@
       }
       dynamicGraphToggle.checked =
         localStorage.getItem(DYNAMIC_GRAPH_STORAGE_KEY) !== "false";
+      if (pairedBridge) {
+        bridgeFeedback.textContent = "Pareado pelo plugin. Entre em AR quando o grafo estiver pronto.";
+        bridgeFeedback.classList.add("success");
+      }
     } catch {}
 
     async function saveBridgeConfig() {

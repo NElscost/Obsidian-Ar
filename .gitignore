@@ -11,6 +11,7 @@ space-ar.config.json
 .pnpm-store/
 graphify-out/
 model-build/
+obsidian-ar-plugin/node_modules/
 
 # Grafo e modelos gerados a partir do vault
 graph.json
