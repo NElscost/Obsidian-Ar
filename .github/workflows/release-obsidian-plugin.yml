@@ -3,7 +3,7 @@ name: Release Obsidian AR plugin
 on:
   push:
     tags:
-      - "plugin-v*"
+      - "*.*.*"
 
 permissions:
   contents: write
@@ -24,10 +24,20 @@ jobs:
           npm ci
           npm run build
           npm test
+      - name: Verify community-directory files
+        run: |
+          cmp manifest.json obsidian-ar-plugin/manifest.json
+          cmp versions.json obsidian-ar-plugin/versions.json
+          cmp main.js obsidian-ar-plugin/main.js
+          cmp styles.css obsidian-ar-plugin/styles.css
       - name: Package plugin
         run: |
           cd obsidian-ar-plugin
           zip ../obsidian-ar-plugin.zip main.js manifest.json styles.css
+      - name: Verify tag matches manifest
+        run: |
+          VERSION=$(node -p "require('./obsidian-ar-plugin/manifest.json').version")
+          test "$GITHUB_REF_NAME" = "$VERSION"
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
