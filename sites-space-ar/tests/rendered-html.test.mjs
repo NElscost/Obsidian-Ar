@@ -221,15 +221,68 @@ test("reenquadra o grafo dinâmico depois que o layout termina", async () => {
   assert.match(html, /new THREE\.InstancedMesh/);
   assert.match(html, /new THREE\.LineSegments/);
   assert.match(html, /createDynamicGraphVisual\(data\)/);
-  assert.match(html, /createDynamicGraphLabels\(data\.nodes\)/);
+  assert.match(html, /createDynamicGraphLabels\(labelNodes\)/);
   assert.match(html, /labelAtlas/);
   assert.match(html, /MAX_DYNAMIC_SCALE_FACTOR\s*=\s*10/);
-  assert.match(html, /compact-v2-/);
+  assert.match(html, /compact-v7-/);
   assert.match(html, /labelScale/);
   assert.match(html, /Modo direto ativo: informe a URL HTTPS e o token da ponte/);
   assert.match(html, /Falha ao preparar a experiência/);
   assert.doesNotMatch(html, /Grafo dinâmico indisponível; usando glTF/);
   assert.doesNotMatch(html, /nodeMaterial = new THREE\.MeshBasicMaterial\(\{\s*vertexColors:/);
+});
+
+test("exibe progresso com estimativa e tempo restante durante o grafo", async () => {
+  const html = await readFile(xrUrl, "utf8");
+
+  assert.match(html, /id="graph-progress"/);
+  assert.match(html, /function startGraphProgress/);
+  assert.match(html, /function updateGraphProgress/);
+  assert.match(html, /Decorrido.*restante/);
+  assert.match(html, /finishGraphProgress/);
+});
+
+test("ativa orçamento de renderização para vaults com mais de dez mil nós", async () => {
+  const html = await readFile(xrUrl, "utf8");
+
+  assert.match(html, /HUGE_GRAPH_NODE_THRESHOLD = 9000/);
+  assert.match(html, /MAX_DYNAMIC_LABELS = 384/);
+  assert.match(html, /MAX_DYNAMIC_LINKS = 50000/);
+  assert.match(html, /function applyLargeGraphLayout/);
+  assert.match(html, /new THREE\.InstancedMesh\(proxyGeometry, proxyMaterial, nodes\.length\)/);
+  assert.match(html, /data\.nodes\.length > MAX_DYNAMIC_LABELS/);
+  assert.match(html, /Math\.ceil\(data\.links\.length \/ MAX_DYNAMIC_LINKS\)/);
+});
+
+test("reduz o custo por frame e mantém os rótulos nítidos", async () => {
+  const html = await readFile(xrUrl, "utf8");
+
+  assert.match(html, /NODE_PICK_INTERVAL_LARGE_MS = 66/);
+  assert.match(html, /time - lastNodeRaycastAt >= nodePickInterval/);
+  assert.match(html, /if \(!scanNodes\) continue/);
+  assert.match(html, /data\.nodes\.length >= LARGE_GRAPH_NODE_THRESHOLD \? 6 : 8/);
+  assert.match(html, /const cellWidth = 384/);
+  assert.match(html, /context\.font = "650 36px system-ui, sans-serif"/);
+  assert.match(html, /viewPosition\.z \+= 0\.008 \* labelScale/);
+  assert.match(html, /labels\.frustumCulled = true/);
+});
+
+test("espalha o grafo conforme a quantidade de nós", async () => {
+  const html = await readFile(xrUrl, "utf8");
+
+  assert.match(html, /Math\.pow\(dynamicNodeCount \/ 120, 0\.36\)/);
+  assert.match(html, /TARGET_SIZE_METERS\s*\* adaptiveSizeMultiplier\s*\* \(dynamicGraphActive \? GRAPH_SPACING_EXPERIMENT_FACTOR : 1\)/);
+  assert.match(html, /charge\.strength\(-42 \* forceScale\)/);
+  assert.match(html, /linkForce\.distance\(24 \* Math\.sqrt\(forceScale\)\)/);
+  assert.match(html, /Preparando distribuição espacial/);
+  assert.match(html, /function expandDenseGraphLayout/);
+  assert.match(html, /Math\.pow\(normalizedRadius, 0\.68\)/);
+  assert.match(html, /Separando regiões densas/);
+  assert.match(html, /sourcePosition\.addScaledVector\(linkDirection, 2\.9\)/);
+  assert.match(html, /GRAPH_SPACING_EXPERIMENT_FACTOR = 1000/);
+  assert.match(html, /function scaleGraphSpacing/);
+  assert.match(html, /scaleGraphSpacing\(data, GRAPH_SPACING_EXPERIMENT_FACTOR\)/);
+  assert.match(html, /NODE_RAY_MAX_DISTANCE = 1800/);
 });
 
 test("configuração pública não depende dos metadados privados do Sites", async () => {

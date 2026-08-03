@@ -164,6 +164,33 @@
       text-align: center;
     }
 
+    .graph-progress {
+      display: grid;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .graph-progress[hidden] { display: none; }
+    .graph-progress-track {
+      height: 8px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.09);
+    }
+    .graph-progress-bar {
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #75a7ff, #75e7d0);
+      transition: width 180ms ease;
+    }
+    .graph-progress-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: #8190a7;
+      font-size: 11px;
+    }
+
     .bridge-config {
       display: grid;
       gap: 10px;
@@ -534,6 +561,13 @@
       </div>
       <button id="enter-ar" type="button" disabled>Verificando compatibilidade…</button>
       <p id="status" class="status" role="status">Carregando Space.gltf…</p>
+      <div id="graph-progress" class="graph-progress" role="progressbar" aria-label="Processamento do grafo" aria-valuemin="0" aria-valuemax="100" hidden>
+        <div class="graph-progress-track"><div id="graph-progress-bar" class="graph-progress-bar"></div></div>
+        <div class="graph-progress-meta">
+          <span id="graph-progress-percent">0%</span>
+          <span id="graph-progress-time">Estimando…</span>
+        </div>
+      </div>
     </section>
   </main>
 
@@ -566,6 +600,14 @@
     const NOTE_BRIDGE_STORAGE_KEY = "space-ar-note-bridge";
     const DYNAMIC_GRAPH_STORAGE_KEY = "space-ar-dynamic-graph";
     const GRAPH_LAYOUT_STORAGE_KEY = "space-ar-graph-layout-v1";
+    const LARGE_GRAPH_NODE_THRESHOLD = 5000;
+    const HUGE_GRAPH_NODE_THRESHOLD = 9000;
+    const MAX_DYNAMIC_LABELS = 384;
+    const MAX_DYNAMIC_LINKS = 50000;
+    const GRAPH_SPACING_EXPERIMENT_FACTOR = 1000;
+    const NODE_RAY_MAX_DISTANCE = 1800;
+    const NODE_PICK_INTERVAL_SMALL_MS = 34;
+    const NODE_PICK_INTERVAL_LARGE_MS = 66;
     const RECENT_NOTES_STORAGE_KEY = "space-ar-recent-notes";
     const MAX_BACKGROUND_360_WIDTH = 4096;
     const MAX_BACKGROUND_360_HEIGHT = 2048;
@@ -574,6 +616,10 @@
     const enterButton = document.querySelector("#enter-ar");
     const replaceButton = document.querySelector("#replace");
     const statusLabel = document.querySelector("#status");
+    const graphProgress = document.querySelector("#graph-progress");
+    const graphProgressBar = document.querySelector("#graph-progress-bar");
+    const graphProgressPercent = document.querySelector("#graph-progress-percent");
+    const graphProgressTime = document.querySelector("#graph-progress-time");
     const xrHud = document.querySelector("#xr-hud");
     const xrMessage = document.querySelector("#xr-message");
     const bridgeUrlInput = document.querySelector("#bridge-url");
@@ -906,7 +952,7 @@
     }
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 30);
+    const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.05, 2000);
     camera.position.set(0, 1.4, 2);
     scene.add(camera);
     let environment360Mesh = null;
@@ -2862,6 +2908,7 @@
     let pinchTravel = 0;
     let pendingSelectionPath = null;
     let lastNodeHitAt = 0;
+    let lastNodeRaycastAt = 0;
     let pointedNode = null;
     let candidateNode = null;
     let candidateNodeSince = 0;
@@ -3060,6 +3107,47 @@
       statusLabel.textContent = message;
     }
 
+    let graphProgressStartedAt = 0;
+    let graphProgressInitialEstimateMs = 0;
+
+    function formatProgressDuration(milliseconds) {
+      const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
+      if (totalSeconds < 60) return `${totalSeconds} s`;
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      return `${minutes} min ${String(seconds).padStart(2, "0")} s`;
+    }
+
+    function startGraphProgress(nodeCount = 0, linkCount = 0) {
+      graphProgressStartedAt = performance.now();
+      const huge = nodeCount >= HUGE_GRAPH_NODE_THRESHOLD;
+      graphProgressInitialEstimateMs = huge
+        ? 2500 + nodeCount * 0.18 + Math.min(linkCount, MAX_DYNAMIC_LINKS) * 0.025
+        : 3200 + nodeCount * 0.55 + Math.min(linkCount, MAX_DYNAMIC_LINKS) * 0.04;
+      graphProgress.hidden = false;
+      updateGraphProgress(1, "Iniciando…");
+    }
+
+    function updateGraphProgress(percent, stage) {
+      const bounded = THREE.MathUtils.clamp(percent, 0, 100);
+      const elapsed = graphProgressStartedAt ? performance.now() - graphProgressStartedAt : 0;
+      const projected = bounded > 4
+        ? Math.max(graphProgressInitialEstimateMs, elapsed / (bounded / 100))
+        : graphProgressInitialEstimateMs;
+      const remaining = Math.max(0, projected - elapsed);
+      graphProgress.value = bounded;
+      graphProgress.setAttribute("aria-valuenow", String(Math.round(bounded)));
+      graphProgress.setAttribute("aria-valuetext", stage);
+      graphProgressBar.style.width = `${bounded}%`;
+      graphProgressPercent.textContent = `${Math.round(bounded)}% · ${stage}`;
+      graphProgressTime.textContent =
+        `Decorrido ${formatProgressDuration(elapsed)} · restante ~${formatProgressDuration(remaining)}`;
+    }
+
+    function finishGraphProgress(stage = "Concluído") {
+      updateGraphProgress(100, stage);
+    }
+
     function setXrMessage(message) {
       xrMessage.textContent = message;
     }
@@ -3219,7 +3307,14 @@
       const largestDimension = Math.max(size.x, size.y, size.z, 0.001);
 
       root.position.set(-center.x, -center.y + size.y * 0.5, -center.z);
-      baseModelScale = TARGET_SIZE_METERS / largestDimension;
+      const dynamicNodeCount = dynamicGraphActive ? (graphData?.nodes?.length ?? 0) : 0;
+      const adaptiveSizeMultiplier = dynamicNodeCount > 120
+        ? THREE.MathUtils.clamp(Math.pow(dynamicNodeCount / 120, 0.36), 1, 5.5)
+        : 1;
+      const targetSizeMeters = TARGET_SIZE_METERS
+        * adaptiveSizeMultiplier
+        * (dynamicGraphActive ? GRAPH_SPACING_EXPERIMENT_FACTOR : 1);
+      baseModelScale = targetSizeMeters / largestDimension;
       contentRoot.scale.setScalar(baseModelScale);
       contentRoot.rotation.set(0, INITIAL_MODEL_YAW, 0);
       contentRoot.updateMatrixWorld(true);
@@ -3271,11 +3366,27 @@
         opacity: 0,
         depthWrite: false
       });
-      for (const node of nodes) {
-        const proxy = new THREE.Mesh(proxyGeometry, proxyMaterial);
-        setNodeLocalPosition(proxy.position, node);
-        proxy.userData.node = node;
-        nodeInteractionRoot.add(proxy);
+      if (nodes.length >= LARGE_GRAPH_NODE_THRESHOLD) {
+        const proxyMesh = new THREE.InstancedMesh(proxyGeometry, proxyMaterial, nodes.length);
+        const proxyMatrix = new THREE.Matrix4();
+        const proxyPosition = new THREE.Vector3();
+        proxyMesh.name = "node-interaction-instances";
+        proxyMesh.userData.nodes = nodes;
+        for (let index = 0; index < nodes.length; index += 1) {
+          setNodeLocalPosition(proxyPosition, nodes[index]);
+          proxyMatrix.makeTranslation(proxyPosition.x, proxyPosition.y, proxyPosition.z);
+          proxyMesh.setMatrixAt(index, proxyMatrix);
+        }
+        proxyMesh.instanceMatrix.needsUpdate = true;
+        proxyMesh.computeBoundingSphere();
+        nodeInteractionRoot.add(proxyMesh);
+      } else {
+        for (const node of nodes) {
+          const proxy = new THREE.Mesh(proxyGeometry, proxyMaterial);
+          setNodeLocalPosition(proxy.position, node);
+          proxy.userData.node = node;
+          nodeInteractionRoot.add(proxy);
+        }
       }
       highlightMesh = new THREE.Mesh(
         new THREE.SphereGeometry(0.095, 12, 8),
@@ -3295,7 +3406,11 @@
       const root = new THREE.Group();
       root.name = "vault-graph";
 
-      const nodeGeometry = new THREE.SphereGeometry(2.7, 8, 6);
+      const nodeGeometry = new THREE.SphereGeometry(
+        2.7,
+        data.nodes.length >= LARGE_GRAPH_NODE_THRESHOLD ? 6 : 8,
+        data.nodes.length >= LARGE_GRAPH_NODE_THRESHOLD ? 4 : 6
+      );
       const nodeMaterial = new THREE.MeshBasicMaterial({
         color: 0xffffff,
         toneMapped: false
@@ -3321,10 +3436,17 @@
       nodeMesh.computeBoundingSphere();
       root.add(nodeMesh);
 
+      updateGraphProgress(84, "Criando conexões");
       const links = createSynapseLinks(data, true, 0.34);
       if (links) root.add(links);
 
-      root.add(createDynamicGraphLabels(data.nodes));
+      updateGraphProgress(91, "Gerando rótulos");
+      const labelNodes = data.nodes.length > MAX_DYNAMIC_LABELS
+        ? [...data.nodes]
+            .sort((left, right) => (right.val ?? 1) - (left.val ?? 1))
+            .slice(0, MAX_DYNAMIC_LABELS)
+        : data.nodes;
+      root.add(createDynamicGraphLabels(labelNodes));
       return root;
     }
 
@@ -3336,8 +3458,11 @@
       const directions = [];
       const sourcePosition = new THREE.Vector3();
       const targetPosition = new THREE.Vector3();
+      const linkDirection = new THREE.Vector3();
       let linkIndex = 0;
-      for (const link of data.links) {
+      const linkStep = Math.max(1, Math.ceil(data.links.length / MAX_DYNAMIC_LINKS));
+      for (let dataLinkIndex = 0; dataLinkIndex < data.links.length; dataLinkIndex += linkStep) {
+        const link = data.links[dataLinkIndex];
         const source = typeof link.source === "object"
           ? link.source
           : nodesById.get(link.source);
@@ -3351,6 +3476,15 @@
         } else {
           sourcePosition.set(source.x ?? 0, source.z ?? 0, -(source.y ?? 0));
           targetPosition.set(target.x ?? 0, target.z ?? 0, -(target.y ?? 0));
+        }
+        if (dynamicCoordinates) {
+          linkDirection.copy(targetPosition).sub(sourcePosition);
+          const linkLength = linkDirection.length();
+          if (linkLength > 6.2) {
+            linkDirection.multiplyScalar(1 / linkLength);
+            sourcePosition.addScaledVector(linkDirection, 2.9);
+            targetPosition.addScaledVector(linkDirection, -2.9);
+          }
         }
         positions.push(
           sourcePosition.x, sourcePosition.y, sourcePosition.z,
@@ -3413,7 +3547,7 @@
           }
         `,
         transparent: true,
-        depthTest: false,
+        depthTest: true,
         depthWrite: false,
         toneMapped: false
       });
@@ -3424,15 +3558,15 @@
     }
 
     function createDynamicGraphLabels(nodes) {
-      const cellWidth = 192;
-      const cellHeight = 30;
+      const cellWidth = 384;
+      const cellHeight = 60;
       const columns = 8;
       const rows = Math.ceil(nodes.length / columns);
       const canvas = document.createElement("canvas");
       canvas.width = cellWidth * columns;
       canvas.height = cellHeight * rows;
       const context = canvas.getContext("2d", { alpha: true });
-      context.font = "600 18px system-ui, sans-serif";
+      context.font = "650 36px system-ui, sans-serif";
       context.textBaseline = "middle";
 
       const positions = [];
@@ -3502,6 +3636,7 @@
             vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
             viewPosition.xy += corner * labelSize * labelScale;
             viewPosition.y += 0.0075 * labelScale;
+            viewPosition.z += 0.008 * labelScale;
             gl_Position = projectionMatrix * viewPosition;
           }
         `,
@@ -3515,14 +3650,14 @@
           }
         `,
         transparent: true,
-        depthTest: false,
+        depthTest: true,
         depthWrite: false,
         toneMapped: false
       });
       dynamicLabelMaterial = material;
       const labels = new THREE.Mesh(geometry, material);
       labels.name = "vault-labels";
-      labels.frustumCulled = false;
+      labels.frustumCulled = true;
       labels.renderOrder = 2;
       return labels;
     }
@@ -3539,7 +3674,17 @@
     function syncDynamicNodeProxies() {
       if (!dynamicGraphActive || !nodeInteractionRoot) return;
       for (const proxy of nodeInteractionRoot.children) {
-        if (proxy.userData.node) {
+        if (proxy.isInstancedMesh && Array.isArray(proxy.userData.nodes)) {
+          const matrix = new THREE.Matrix4();
+          const position = new THREE.Vector3();
+          for (let index = 0; index < proxy.userData.nodes.length; index += 1) {
+            setNodeLocalPosition(position, proxy.userData.nodes[index]);
+            matrix.makeTranslation(position.x, position.y, position.z);
+            proxy.setMatrixAt(index, matrix);
+          }
+          proxy.instanceMatrix.needsUpdate = true;
+          proxy.computeBoundingSphere();
+        } else if (proxy.userData.node) {
           setNodeLocalPosition(proxy.position, proxy.userData.node);
         }
       }
@@ -3558,7 +3703,98 @@
         update(typeof link.source === "string" ? link.source : link.source.id);
         update(typeof link.target === "string" ? link.target : link.target.id);
       }
-      return `compact-v2-${data.nodes.length}-${data.links.length}-${(hash >>> 0).toString(16)}`;
+      return `compact-v7-${data.nodes.length}-${data.links.length}-${(hash >>> 0).toString(16)}`;
+    }
+
+    function applyLargeGraphLayout(data) {
+      const count = Math.max(1, data.nodes.length);
+      const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+      const baseRadius = Math.max(72, Math.sqrt(count) * 1.48);
+      for (let index = 0; index < count; index += 1) {
+        const node = data.nodes[index];
+        const y = 1 - ((index + 0.5) / count) * 2;
+        const horizontal = Math.sqrt(Math.max(0, 1 - y * y));
+        const angle = index * goldenAngle;
+        const degreeOffset = Math.min(18, Math.log2((node.val ?? 1) + 1) * 2.2);
+        const radius = baseRadius + ((index % 7) - 3) * 1.6 - degreeOffset;
+        node.x = Math.cos(angle) * horizontal * radius;
+        node.y = y * radius;
+        node.z = Math.sin(angle) * horizontal * radius;
+        node.vx = 0;
+        node.vy = 0;
+        node.vz = 0;
+      }
+    }
+
+    function expandDenseGraphLayout(data) {
+      if (!Array.isArray(data.nodes) || data.nodes.length < 2) return;
+      const center = new THREE.Vector3();
+      for (const node of data.nodes) {
+        center.x += node.x ?? 0;
+        center.y += node.y ?? 0;
+        center.z += node.z ?? 0;
+      }
+      center.multiplyScalar(1 / data.nodes.length);
+
+      let maxRadius = 0;
+      for (const node of data.nodes) {
+        maxRadius = Math.max(
+          maxRadius,
+          Math.hypot(
+            (node.x ?? 0) - center.x,
+            (node.y ?? 0) - center.y,
+            (node.z ?? 0) - center.z
+          )
+        );
+      }
+      if (maxRadius < 0.001) return;
+
+      const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+      for (let index = 0; index < data.nodes.length; index += 1) {
+        const node = data.nodes[index];
+        let dx = (node.x ?? 0) - center.x;
+        let dy = (node.y ?? 0) - center.y;
+        let dz = (node.z ?? 0) - center.z;
+        let radius = Math.hypot(dx, dy, dz);
+        if (radius < 0.0001) {
+          const y = 1 - (index / Math.max(1, data.nodes.length - 1)) * 2;
+          const radial = Math.sqrt(Math.max(0, 1 - y * y));
+          const angle = index * goldenAngle;
+          dx = Math.cos(angle) * radial;
+          dy = y;
+          dz = Math.sin(angle) * radial;
+          radius = 1;
+        }
+        const normalizedRadius = THREE.MathUtils.clamp(radius / maxRadius, 0, 1);
+        const expandedRadius = maxRadius * (
+          normalizedRadius * 0.08 + Math.pow(normalizedRadius, 0.68) * 0.92
+        );
+        const scale = expandedRadius / radius;
+        node.x = center.x + dx * scale;
+        node.y = center.y + dy * scale;
+        node.z = center.z + dz * scale;
+      }
+    }
+
+    function scaleGraphSpacing(data, factor) {
+      if (!Array.isArray(data.nodes) || data.nodes.length < 2 || factor === 1) return;
+      const center = data.nodes.reduce(
+        (result, node) => {
+          result.x += node.x ?? 0;
+          result.y += node.y ?? 0;
+          result.z += node.z ?? 0;
+          return result;
+        },
+        { x: 0, y: 0, z: 0 }
+      );
+      center.x /= data.nodes.length;
+      center.y /= data.nodes.length;
+      center.z /= data.nodes.length;
+      for (const node of data.nodes) {
+        node.x = center.x + ((node.x ?? 0) - center.x) * factor;
+        node.y = center.y + ((node.y ?? 0) - center.y) * factor;
+        node.z = center.z + ((node.z ?? 0) - center.z) * factor;
+      }
     }
 
     function restoreGraphLayout(data, key) {
@@ -3600,22 +3836,43 @@
     }
 
     async function loadDynamicGraph(config) {
+      startGraphProgress();
+      updateGraphProgress(4, "Baixando o grafo");
       setStatus("Lendo o vault e calculando o grafo 3D…");
       const response = await fetchBridge(config, "/graph", {
         cache: "no-store"
       });
+      updateGraphProgress(14, "Decodificando dados");
       const data = await response.json();
       if (!response.ok) throw new Error(data.error ?? `HTTP ${response.status}`);
       if (!Array.isArray(data.nodes) || !Array.isArray(data.links)) {
         throw new Error("A ponte retornou um grafo inválido.");
       }
 
+      const hugeGraph = data.nodes.length >= HUGE_GRAPH_NODE_THRESHOLD;
+      graphProgressInitialEstimateMs = hugeGraph
+        ? 2500 + data.nodes.length * 0.18 + Math.min(data.links.length, MAX_DYNAMIC_LINKS) * 0.025
+        : 3200 + data.nodes.length * 0.55 + Math.min(data.links.length, MAX_DYNAMIC_LINKS) * 0.04;
       graphData = data;
+      updateGraphProgress(22, `Preparando ${data.nodes.length} nós`);
       graphLayoutKey = graphSignature(data);
       const restored = restoreGraphLayout(data, graphLayoutKey);
-      const { default: ThreeForceGraph } = await import(
-        "https://esm.sh/three-forcegraph@1.43.1?external=three"
-      );
+      if (hugeGraph && !restored) {
+        applyLargeGraphLayout(data);
+        scaleGraphSpacing(data, GRAPH_SPACING_EXPERIMENT_FACTOR);
+      }
+      if (hugeGraph) {
+        dynamicGraphActive = true;
+        dynamicGraphTicking = false;
+        forceGraph = null;
+        updateGraphProgress(72, restored ? "Usando layout em cache" : "Aplicando layout otimizado");
+        if (!restored) cacheGraphLayout();
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      } else {
+      updateGraphProgress(30, restored ? "Restaurando layout" : "Preparando distribuição espacial");
+        const { default: ThreeForceGraph } = await import(
+          "https://esm.sh/three-forcegraph@1.43.1?external=three"
+        );
       let stopLayout;
       const layoutStopped = new Promise((resolve) => {
         stopLayout = resolve;
@@ -3630,9 +3887,9 @@
         .linkColor(() => "#8290a8")
         .linkOpacity(0.24)
         .linkWidth(0)
-        .warmupTicks(restored ? 0 : 180)
-        .cooldownTicks(restored ? 1 : 90)
-        .cooldownTime(restored ? 80 : 3500)
+        .warmupTicks(restored ? 0 : (data.nodes.length >= LARGE_GRAPH_NODE_THRESHOLD ? 45 : 180))
+        .cooldownTicks(restored ? 1 : (data.nodes.length >= LARGE_GRAPH_NODE_THRESHOLD ? 35 : 90))
+        .cooldownTime(restored ? 80 : (data.nodes.length >= LARGE_GRAPH_NODE_THRESHOLD ? 2200 : 3500))
         .onEngineStop(() => {
           dynamicGraphTicking = false;
           syncDynamicNodeProxies();
@@ -3640,13 +3897,19 @@
           stopLayout();
         });
       const charge = forceGraph.d3Force("charge");
-      if (charge?.strength) charge.strength(-26);
+      const forceScale = THREE.MathUtils.clamp(
+        Math.log10(Math.max(10, data.nodes.length)) / 3,
+        1,
+        1.75
+      );
+      if (charge?.strength) charge.strength(-42 * forceScale);
       const linkForce = forceGraph.d3Force("link");
-      if (linkForce?.distance) linkForce.distance(16);
+      if (linkForce?.distance) linkForce.distance(24 * Math.sqrt(forceScale));
       forceGraph.graphData(data);
 
       dynamicGraphActive = true;
       dynamicGraphTicking = true;
+      updateGraphProgress(50, "Calculando o layout 3D");
       forceGraph.tickFrame();
       await Promise.race([
         layoutStopped,
@@ -3655,17 +3918,27 @@
       forceGraph.tickFrame();
       forceGraph.pauseAnimation?.();
       dynamicGraphTicking = false;
+      if (!restored) {
+        updateGraphProgress(70, "Separando regiões densas");
+        expandDenseGraphLayout(data);
+        scaleGraphSpacing(data, GRAPH_SPACING_EXPERIMENT_FACTOR);
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
       cacheGraphLayout();
+      updateGraphProgress(76, "Layout concluído");
+      }
 
       // Use o ForceGraph somente para calcular o layout. A geometria visual é
       // criada diretamente com Three.js para evitar diferenças de renderer no
       // WebXR do Quest.
       model = createDynamicGraphVisual(data);
       contentRoot.add(model);
+      updateGraphProgress(96, "Preparando seleção dos nós");
       createNodeInteraction(data.nodes);
       normalizeModel(model);
+      finishGraphProgress(hugeGraph ? "Pronto · modo de grande vault" : "Concluído");
       setStatus(
-        `Grafo dinâmico pronto: ${data.nodes.length} notas e ${data.links.length} conexões.`
+        `Grafo dinâmico pronto: ${data.nodes.length} notas e ${data.links.length} conexões.${hugeGraph ? " Modo otimizado para grande vault ativo." : ""}`
       );
     }
 
@@ -3861,7 +4134,7 @@
         )
       );
       nodeRaycaster.set(origin, direction);
-      nodeRaycaster.far = 4;
+      nodeRaycaster.far = NODE_RAY_MAX_DISTANCE;
       return nodeRaycaster.intersectObjects(arNoteControls, false)[0] ?? null;
     }
 
@@ -4468,6 +4741,11 @@
 
     function updateNodePointing(frame, time) {
       if (!isPlaced || !nodeInteractionRoot || !xrSession) return;
+      const nodePickInterval = (graphData?.nodes?.length ?? 0) >= LARGE_GRAPH_NODE_THRESHOLD
+        ? NODE_PICK_INTERVAL_LARGE_MS
+        : NODE_PICK_INTERVAL_SMALL_MS;
+      const scanNodes = arNoteGroup.visible || time - lastNodeRaycastAt >= nodePickInterval;
+      if (scanNodes && !arNoteGroup.visible) lastNodeRaycastAt = time;
       let nearest = null;
       let nearestControl = null;
       let nearestControlRatio = null;
@@ -4547,7 +4825,7 @@
           pointerDirection.copy(pointerTipPosition).sub(pointerBasePosition).normalize();
         }
         nodeRaycaster.set(pointerRayOrigin, pointerDirection);
-        nodeRaycaster.far = 4;
+        nodeRaycaster.far = NODE_RAY_MAX_DISTANCE;
         if (handRayIndex < handPointerRays.length) {
           const handRay = handPointerRays[handRayIndex++];
           handRay.visible =
@@ -4558,9 +4836,9 @@
             positions[0] = pointerRayOrigin.x;
             positions[1] = pointerRayOrigin.y;
             positions[2] = pointerRayOrigin.z;
-            positions[3] = pointerRayOrigin.x + pointerDirection.x * 3.5;
-            positions[4] = pointerRayOrigin.y + pointerDirection.y * 3.5;
-            positions[5] = pointerRayOrigin.z + pointerDirection.z * 3.5;
+            positions[3] = pointerRayOrigin.x + pointerDirection.x * 1500;
+            positions[4] = pointerRayOrigin.y + pointerDirection.y * 1500;
+            positions[5] = pointerRayOrigin.z + pointerDirection.z * 1500;
             handRay.geometry.attributes.position.needsUpdate = true;
           }
         }
@@ -4572,13 +4850,28 @@
           }
           continue;
         }
+        if (!scanNodes) continue;
         let hit = null;
         for (const proxy of nodeInteractionRoot.children) {
+          if (proxy.isInstancedMesh && Array.isArray(proxy.userData.nodes)) {
+            const instanceHit = nodeRaycaster.intersectObject(proxy, false)[0];
+            const node = Number.isInteger(instanceHit?.instanceId)
+              ? proxy.userData.nodes[instanceHit.instanceId]
+              : null;
+            if (node) {
+              const depth = instanceHit.distance;
+              const score = depth * 0.000001;
+              if (!hit || score < hit.score) {
+                hit = { object: proxy, node, distance: depth, score };
+              }
+            }
+            continue;
+          }
           if (!proxy.userData.node) continue;
           proxy.getWorldPosition(nodeWorldPosition);
           nodeRayOffset.copy(nodeWorldPosition).sub(pointerRayOrigin);
           const depth = nodeRayOffset.dot(pointerDirection);
-          if (depth <= 0.05 || depth > 4) continue;
+          if (depth <= 0.05 || depth > NODE_RAY_MAX_DISTANCE) continue;
           const perpendicularSquared = Math.max(
             0,
             nodeRayOffset.lengthSq() - depth * depth
@@ -4645,23 +4938,25 @@
         return;
       }
 
-      pointedNode = nearest?.object.userData.node ?? null;
-      if (pointedNode) {
-        lastNodeHitAt = time;
-        if (selectedNode?.id === pointedNode.id) {
-          candidateNode = null;
-        } else if (candidateNode?.id === pointedNode.id) {
-          if (time - candidateNodeSince >= 110) {
-            selectedNode = pointedNode;
+      if (scanNodes) {
+        pointedNode = nearest?.node ?? nearest?.object.userData.node ?? null;
+        if (pointedNode) {
+          lastNodeHitAt = time;
+          if (selectedNode?.id === pointedNode.id) {
             candidateNode = null;
+          } else if (candidateNode?.id === pointedNode.id) {
+            if (time - candidateNodeSince >= 110) {
+              selectedNode = pointedNode;
+              candidateNode = null;
+            }
+          } else {
+            candidateNode = pointedNode;
+            candidateNodeSince = time;
           }
-        } else {
-          candidateNode = pointedNode;
-          candidateNodeSince = time;
+        } else if (time - lastNodeHitAt > 280) {
+          selectedNode = null;
+          candidateNode = null;
         }
-      } else if (time - lastNodeHitAt > 280) {
-        selectedNode = null;
-        candidateNode = null;
       }
       if (!highlightMesh) return;
       highlightMesh.visible = Boolean(selectedNode);
