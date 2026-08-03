@@ -605,8 +605,8 @@
     const MAX_DYNAMIC_LABELS = 384;
     const MAX_DYNAMIC_LINKS = 50000;
     const GRAPH_SPACING_EXPERIMENT_FACTOR = 1;
-    const MAX_RENDERED_NODES = 1500;
-    const COLLAPSED_CORE_NODES = 1200;
+    const MAX_RENDERED_NODES = 1000;
+    const COLLAPSED_CORE_NODES = 800;
     const NODE_RAY_MAX_DISTANCE = 4;
     const NODE_PICK_INTERVAL_SMALL_MS = 34;
     const NODE_PICK_INTERVAL_LARGE_MS = 66;
@@ -3779,7 +3779,7 @@
     function expandedClusterData(hub) {
       const children = [...(hub.clusterChildren ?? [])]
         .sort((left, right) => (right.val ?? 1) - (left.val ?? 1))
-        .slice(0, MAX_RENDERED_NODES - 1);
+        .slice(0, MAX_RENDERED_NODES - 2);
       const hubNode = { ...hub, label: hub.clusterBaseLabel ?? hub.label };
       const radius = Math.max(16, Math.sqrt(children.length) * 5.2);
       const goldenAngle = Math.PI * (3 - Math.sqrt(5));
@@ -3796,8 +3796,18 @@
           clusterSize: 0
         };
       });
+      const backNode = {
+        id: `__cluster_back__:${hub.id}`,
+        label: "← Voltar ao grafo",
+        color: "#75e7d0",
+        val: Math.max(8, Math.sqrt(children.length)),
+        x: (hub.x ?? 0) - radius * 0.32,
+        y: (hub.y ?? 0) + radius * 0.32,
+        z: hub.z ?? 0,
+        isClusterBack: true
+      };
       return {
-        nodes: [hubNode, ...childNodes],
+        nodes: [backNode, hubNode, ...childNodes],
         links: childNodes.map((node) => ({ source: hubNode.id, target: node.id }))
       };
     }
@@ -3813,10 +3823,8 @@
       });
     }
 
-    function expandClusterNode(node) {
-      if (!graphHierarchy || !node?.clusterChildren?.length) return false;
+    function replaceDynamicGraphView(nextData) {
       const previousModel = model;
-      const nextData = expandedClusterData(node);
       const previousPosition = previousModel.position.clone();
       const previousQuaternion = previousModel.quaternion.clone();
       const previousScale = previousModel.scale.clone();
@@ -3828,12 +3836,26 @@
       model.scale.copy(previousScale);
       contentRoot.add(model);
       createNodeInteraction(nextData.nodes);
-      graphHierarchy.expandedHubId = node.id;
       selectedNode = null;
       candidateNode = null;
       pointedNode = null;
       disposeGraphObject(previousModel);
+    }
+
+    function expandClusterNode(node) {
+      if (!graphHierarchy || !node?.clusterChildren?.length) return false;
+      replaceDynamicGraphView(expandedClusterData(node));
+      graphHierarchy.expandedHubId = node.id;
       setXrMessage(`${node.clusterSize} notas reveladas em ${node.clusterBaseLabel ?? node.label}.`);
+      return true;
+    }
+
+    function collapseClusterGraph() {
+      if (!graphHierarchy?.expandedHubId) return false;
+      replaceDynamicGraphView(graphHierarchy.coreData);
+      graphHierarchy.expandedHubId = null;
+      resetNoteMicroGestures();
+      setXrMessage("Visualização principal do grafo restaurada.");
       return true;
     }
 
@@ -3850,7 +3872,7 @@
         update(typeof link.source === "string" ? link.source : link.source.id);
         update(typeof link.target === "string" ? link.target : link.target.id);
       }
-      return `compact-v8-${data.nodes.length}-${data.links.length}-${(hash >>> 0).toString(16)}`;
+      return `compact-v9-${data.nodes.length}-${data.links.length}-${(hash >>> 0).toString(16)}`;
     }
 
     function applyLargeGraphLayout(data) {
@@ -4425,14 +4447,23 @@
         time - state.lastActionAt >= 180
       ) {
         const action = rightStarted ? "next" : "previous";
-        const oldPage = arNotePage;
-        activateNoteControl(action);
         state.lastActionAt = time;
-        if (arNotePage !== oldPage) {
+        if (!arNoteGroup.visible && graphHierarchy?.expandedHubId) {
+          if (action === "previous") collapseClusterGraph();
+        } else {
+          const oldPage = arNotePage;
+          activateNoteControl(action);
+          if (arNotePage !== oldPage) {
+            setXrMessage(
+              rightStarted
+                ? "Microgesto nativo para a direita: próxima página."
+                : "Microgesto nativo para a esquerda: página anterior."
+            );
+          }
+        }
+        if (!arNoteGroup.visible && graphHierarchy?.expandedHubId && action !== "previous") {
           setXrMessage(
-            rightStarted
-              ? "Microgesto nativo para a direita: próxima página."
-              : "Microgesto nativo para a esquerda: página anterior."
+            "Use o polegar para a esquerda para voltar ao grafo principal."
           );
         }
       }
@@ -4443,7 +4474,9 @@
     }
 
     function updateNoteMicroGestures(frame, time) {
-      if (!arNoteGroup.visible || arNotePages.length < 2 || !xrSession) return;
+      const clusterNavigationActive = !arNoteGroup.visible && Boolean(graphHierarchy?.expandedHubId);
+      if ((!arNoteGroup.visible || arNotePages.length < 2) && !clusterNavigationActive) return;
+      if (!xrSession) return;
       const xrCamera = renderer.xr.getCamera(camera);
       xrCamera.getWorldQuaternion(microGestureCameraQuaternion);
       microGestureCameraRight
@@ -4688,16 +4721,24 @@
         ) continue;
 
         const action = screenMovement > 0 ? "next" : "previous";
-        const oldPage = arNotePage;
-        activateNoteControl(action);
         state.awaitingNeutral = true;
         state.neutralSince = 0;
-        if (arNotePage !== oldPage) {
-          setXrMessage(
-            screenMovement > 0
-              ? "Polegar para a direita: próxima página."
-              : "Polegar para a esquerda: página anterior."
-          );
+        if (clusterNavigationActive) {
+          if (action === "previous") {
+            collapseClusterGraph();
+          } else {
+            setXrMessage("Use o polegar para a esquerda para voltar ao grafo principal.");
+          }
+        } else {
+          const oldPage = arNotePage;
+          activateNoteControl(action);
+          if (arNotePage !== oldPage) {
+            setXrMessage(
+              screenMovement > 0
+                ? "Polegar para a direita: próxima página."
+                : "Polegar para a esquerda: página anterior."
+            );
+          }
         }
       }
     }
@@ -4861,9 +4902,11 @@
         pinchTravel = 0;
         if (pendingSelectionPath) {
           setXrMessage(
-            selectedNode.clusterChildren?.length && graphHierarchy?.expandedHubId !== selectedNode.id
-              ? `Pinça detectada em ${selectedNode.label}. Mantenha para revelar o grupo.`
-              : `Pinça detectada em ${selectedNode.label}. Mantenha brevemente para abrir.`
+            selectedNode.isClusterBack || graphHierarchy?.expandedHubId === selectedNode.id
+              ? "Mantenha a pinça para voltar ao grafo principal."
+              : selectedNode.clusterChildren?.length
+                ? `Pinça detectada em ${selectedNode.label}. Mantenha para revelar o grupo.`
+                : `Pinça detectada em ${selectedNode.label}. Mantenha brevemente para abrir.`
           );
         }
         return;
@@ -5125,9 +5168,11 @@
         highlightMesh.scale.setScalar(pulse * (dynamicGraphActive ? 16 : 1));
         if (gestureMode === "idle") {
           setXrMessage(
-            selectedNode.clusterChildren?.length && graphHierarchy?.expandedHubId !== selectedNode.id
-              ? `${selectedNode.label}. Faça uma pinça para revelar as notas agrupadas.`
-              : `${selectedNode.label}. Faça uma pinça para abrir a nota.`
+            selectedNode.isClusterBack || graphHierarchy?.expandedHubId === selectedNode.id
+              ? "Faça uma pinça para voltar ao grafo principal."
+              : selectedNode.clusterChildren?.length
+                ? `${selectedNode.label}. Faça uma pinça para revelar as notas agrupadas.`
+                : `${selectedNode.label}. Faça uma pinça para abrir a nota.`
           );
         }
       }
@@ -5136,11 +5181,24 @@
     async function requestNote(path) {
       if (noteRequestBusy) return;
       const hierarchyNode = graphData?.nodes?.find((node) => node.id === path);
+      if (hierarchyNode?.isClusterBack) {
+        collapseClusterGraph();
+        resetGestureState("await-release");
+        return;
+      }
       if (
         hierarchyNode?.clusterChildren?.length &&
         graphHierarchy?.expandedHubId !== hierarchyNode.id
       ) {
         expandClusterNode(hierarchyNode);
+        resetGestureState("await-release");
+        return;
+      }
+      if (
+        hierarchyNode?.clusterChildren?.length &&
+        graphHierarchy?.expandedHubId === hierarchyNode.id
+      ) {
+        collapseClusterGraph();
         resetGestureState("await-release");
         return;
       }
