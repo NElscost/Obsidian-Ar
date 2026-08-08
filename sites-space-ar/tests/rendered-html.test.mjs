@@ -238,6 +238,10 @@ test("procura notas por voz e pulsa o resultado no grafo", async () => {
   assert.match(html, /async function requestVoicePermissionBeforeAr/);
   assert.match(html, /navigator\.mediaDevices\.getUserMedia/);
   assert.match(html, /new MediaRecorder/);
+  assert.match(html, /recorder\.start\(\)/);
+  assert.match(html, /function updateBridgeVoiceCapture/);
+  assert.match(html, /updateBridgeVoiceCapture\(time\)/);
+  assert.match(html, /bridgeCapabilityCache\.delete\(config\.url\)/);
   assert.match(html, /\/transcribe/);
   assert.match(html, /voice-transcribe/);
   assert.match(html, /if \(voiceAllowed\) startVoiceNoteSearch\(\)/);

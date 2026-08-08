@@ -188,6 +188,9 @@ curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin 
 The default path is `.models/ggml-tiny.bin`. To use another model or language,
 set `whisperModelPath` and `whisperLanguage` (for example `pt`, `en`, or
 `auto`) in `note-bridge.config.json`. The model directory is ignored by Git.
+While listening, the bridge console reports every received audio segment, the
+transcribed text and processing time; silent segments are discarded before
+Whisper inference to avoid unnecessary CPU use.
 
 The local note graph is deliberately bounded to 27 neighbors. It uses one
 instanced node mesh, one line geometry, and one text atlas, without starting a

@@ -107,7 +107,7 @@ fn bridge_capabilities(state: &AppState) -> Vec<&'static str> {
     capabilities
 }
 
-const BRIDGE_API_VERSION: u32 = 2;
+const BRIDGE_API_VERSION: u32 = 3;
 
 fn is_allowed_web_origin(origin: &HeaderValue) -> bool {
     let Ok(origin) = origin.to_str() else {
@@ -651,6 +651,8 @@ async fn transcribe_voice(State(state): State<AppState>, request: Request<Body>)
         Ok(_) => return error(StatusCode::BAD_REQUEST, "Audio vazio."),
         Err(_) => return error(StatusCode::PAYLOAD_TOO_LARGE, "Audio excede 2 MB."),
     };
+    println!("[VOICE] áudio recebido: {} bytes.", bytes.len());
+    let started = Instant::now();
     let _guard = state.transcription_lock.lock().await;
     let language = state.whisper_language.clone();
     let nonce = rand::random::<u64>();
@@ -688,6 +690,19 @@ async fn transcribe_voice(State(state): State<AppState>, request: Request<Body>)
         .chunks_exact(4)
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect::<Vec<_>>();
+    if samples.is_empty() {
+        return error(StatusCode::UNPROCESSABLE_ENTITY, "Audio sem amostras.");
+    }
+    let rms =
+        (samples.iter().map(|sample| sample * sample).sum::<f32>() / samples.len() as f32).sqrt();
+    if rms < 0.0015 {
+        println!(
+            "[VOICE] silêncio ignorado ({} ms, RMS {:.5}).",
+            started.elapsed().as_millis(),
+            rms
+        );
+        return Json(json!({ "text": "" })).into_response();
+    }
     let result = tokio::task::spawn_blocking(move || -> Result<String> {
         let mut whisper_state = context.create_state()?;
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
@@ -712,9 +727,26 @@ async fn transcribe_voice(State(state): State<AppState>, request: Request<Body>)
     })
     .await;
     match result {
-        Ok(Ok(text)) => Json(json!({ "text": text })).into_response(),
-        Ok(Err(err)) => error(StatusCode::UNPROCESSABLE_ENTITY, err.to_string()),
-        Err(err) => error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        Ok(Ok(text)) => {
+            println!(
+                "[VOICE] transcrição OK ({} ms): {}",
+                started.elapsed().as_millis(),
+                if text.is_empty() {
+                    "<silêncio>"
+                } else {
+                    text.as_str()
+                }
+            );
+            Json(json!({ "text": text })).into_response()
+        }
+        Ok(Err(err)) => {
+            eprintln!("[VOICE] falha na transcrição: {err}");
+            error(StatusCode::UNPROCESSABLE_ENTITY, err.to_string())
+        }
+        Err(err) => {
+            eprintln!("[VOICE] tarefa de transcrição interrompida: {err}");
+            error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+        }
     }
 }
 

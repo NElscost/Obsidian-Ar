@@ -3598,7 +3598,8 @@
     let voiceRestartTimer = null;
     let voiceMediaStream = null;
     let voiceMediaRecorder = null;
-    let voiceSegmentTimer = null;
+    let voiceSegmentDeadline = 0;
+    let voiceRecorderAttemptAt = 0;
     let voiceBridgeBusy = false;
     let voiceBridgeSupported = false;
     let voiceHighlightedNode = null;
@@ -4532,7 +4533,7 @@
 
     function findBestNoteMatch(spokenText) {
       const query = normalizeNoteSearchText(spokenText)
-        .replace(/^(?:procure|buscar|busque|encontre|find|search)(?: por)?(?: a| o)?(?: nota| note)?(?: do| da| de| sobre| called| about)?\s+/, "")
+        .replace(/^(?:procure|buscar|busque|encontre|find|search|seach)(?: por)?(?: a| o)?(?: nota| note)?(?: do| da| de| sobre| called| about)?\s+/, "")
         .trim();
       const data = graphHierarchy?.fullData ?? graphData;
       if (!query || !data?.nodes?.length) return null;
@@ -4545,7 +4546,7 @@
     }
 
     function isVoiceSearchCommand(spokenText) {
-      return /^(?:procure|buscar|busque|encontre|find|search)\b/i.test(
+      return /^(?:procure|buscar|busque|encontre|find|search|seach)\b/i.test(
         normalizeNoteSearchText(spokenText)
       );
     }
@@ -4576,14 +4577,23 @@
 
     function handleVoiceTranscript(transcript) {
       const text = String(transcript ?? "").trim();
-      if (text && isVoiceSearchCommand(text)) highlightNoteSearchResult(text);
+      if (!text) {
+        setXrMessage("Nenhuma fala detectada. Tente novamente mais perto do microfone.");
+      } else if (isVoiceSearchCommand(text)) {
+        highlightNoteSearchResult(text);
+      } else {
+        setXrMessage(`Ouvi “${text}”. Comece com “Procure”, “Busque” ou “Search”.`);
+      }
     }
 
     function stopBridgeVoiceCapture(stopStream = false) {
-      clearTimeout(voiceSegmentTimer);
-      voiceSegmentTimer = null;
-      if (voiceMediaRecorder?.state === "recording") voiceMediaRecorder.stop();
-      voiceMediaRecorder = null;
+      voiceSegmentDeadline = 0;
+      const recorder = voiceMediaRecorder;
+      if (recorder?.state === "recording") {
+        try { recorder.stop(); } catch {}
+      } else {
+        voiceMediaRecorder = null;
+      }
       if (stopStream && voiceMediaStream) {
         for (const track of voiceMediaStream.getTracks()) track.stop();
         voiceMediaStream = null;
@@ -4594,6 +4604,7 @@
       const config = voiceBridgeConfig();
       if (!config?.url || !blob?.size) return;
       voiceBridgeBusy = true;
+      setXrMessage("Transcrevendo comando de voz no computador…");
       try {
         const response = await fetch(`${config.url}/transcribe`, {
           method: "POST",
@@ -4613,40 +4624,65 @@
 
     function beginBridgeVoiceSegment() {
       if (!voiceCaptureEnabled || !xrSession || !voiceMediaStream || voiceBridgeBusy ||
-          voiceMediaRecorder?.state === "recording") return;
+          voiceMediaRecorder?.state === "recording") return false;
+      voiceRecorderAttemptAt = performance.now();
       const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
       const mimeType = candidates.find((type) => MediaRecorder.isTypeSupported?.(type)) ?? "";
       const chunks = [];
+      let recorder;
       try {
-        voiceMediaRecorder = new MediaRecorder(voiceMediaStream, {
-          ...(mimeType ? { mimeType } : {}),
-          audioBitsPerSecond: 32_000
+        recorder = new MediaRecorder(voiceMediaStream, mimeType ? { mimeType } : undefined);
+        voiceMediaRecorder = recorder;
+        recorder.addEventListener("dataavailable", (event) => {
+          if (event.data?.size) chunks.push(event.data);
         });
+        recorder.addEventListener("error", (event) => {
+          console.warn("MediaRecorder falhou no Quest.", event.error ?? event);
+          setXrMessage(`Falha na captura do microfone: ${describeError(event.error ?? event)}`);
+        });
+        recorder.addEventListener("stop", async () => {
+          if (voiceMediaRecorder === recorder) voiceMediaRecorder = null;
+          voiceSegmentDeadline = 0;
+          if (chunks.length) {
+            await transcribeVoiceBlob(new Blob(chunks, {
+              type: recorder.mimeType || mimeType || "audio/webm"
+            }));
+          } else if (voiceCaptureEnabled && xrSession) {
+            setXrMessage("O microfone não retornou áudio; tentando novamente…");
+          }
+        }, { once: true });
+        recorder.start();
       } catch (error) {
+        if (voiceMediaRecorder === recorder) voiceMediaRecorder = null;
+        voiceSegmentDeadline = 0;
+        console.warn("Não foi possível iniciar o MediaRecorder.", error);
         setXrMessage(`Captura de voz indisponível: ${describeError(error)}`);
-        return;
+        return false;
       }
-      voiceMediaRecorder.addEventListener("dataavailable", (event) => {
-        if (event.data?.size) chunks.push(event.data);
-      });
-      voiceMediaRecorder.addEventListener("stop", async () => {
-        const recorder = voiceMediaRecorder;
-        voiceMediaRecorder = null;
-        if (chunks.length) {
-          await transcribeVoiceBlob(new Blob(chunks, {
-            type: recorder?.mimeType || mimeType || "audio/webm"
-          }));
-        }
-        if (voiceCaptureEnabled && xrSession) {
-          voiceSegmentTimer = setTimeout(beginBridgeVoiceSegment, 250);
-        }
-      }, { once: true });
-      voiceMediaRecorder.start(250);
+      voiceSegmentDeadline = performance.now() + 5_000;
       voiceSearchButton.textContent = "●";
       voiceSearchButton.setAttribute("aria-label", "Ouvindo comando de voz");
-      voiceSegmentTimer = setTimeout(() => {
-        if (voiceMediaRecorder?.state === "recording") voiceMediaRecorder.stop();
-      }, 4_500);
+      return true;
+    }
+
+    function updateBridgeVoiceCapture(time) {
+      if (!voiceCaptureEnabled || !xrSession || !voiceBridgeSupported) return;
+      if (voiceMediaRecorder?.state === "recording") {
+        if (voiceSegmentDeadline > 0 && time >= voiceSegmentDeadline) {
+          try {
+            voiceMediaRecorder.requestData?.();
+            voiceMediaRecorder.stop();
+          } catch (error) {
+            console.warn("Não foi possível finalizar o segmento de voz.", error);
+            voiceMediaRecorder = null;
+            voiceSegmentDeadline = 0;
+          }
+        }
+        return;
+      }
+      if (!voiceBridgeBusy && time - voiceRecorderAttemptAt >= 500) {
+        beginBridgeVoiceSegment();
+      }
     }
 
     function startVoiceNoteSearch() {
@@ -4728,6 +4764,7 @@
       if (!SpeechRecognition) {
         try {
           const config = voiceBridgeConfig();
+          if (config?.url) bridgeCapabilityCache.delete(config.url);
           const capabilities = config?.url ? await ensureVideoBridge(config) : null;
           voiceBridgeSupported = Boolean(
             window.MediaRecorder && capabilities?.capabilities?.includes("voice-transcribe")
@@ -6345,6 +6382,7 @@
         updateSpatialNoteAudio();
         updateVideoPresentation(time);
         updateAudioWaveformProgress();
+        updateBridgeVoiceCapture(time);
         const graphIntroPulseActive = updateGraphIntroPulse(time);
         if (!graphIntroPulseActive) {
           updateNoteMicroGestures(frame, time);
