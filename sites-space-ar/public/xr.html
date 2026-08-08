@@ -2842,8 +2842,6 @@
     const audioListenerForward = new THREE.Vector3();
     const audioListenerUp = new THREE.Vector3();
     const audioSourcePosition = new THREE.Vector3();
-    const localGraphParentQuaternion = new THREE.Quaternion();
-    const localGraphCameraQuaternion = new THREE.Quaternion();
     function updateSpatialNoteAudio() {
       if (!spatialAudioContext || !spatialAudioPanner || !activeNoteAudio) return;
       const xrCamera = renderer.xr.isPresenting ? renderer.xr.getCamera(camera) : camera;
@@ -2867,17 +2865,6 @@
       setAudioParam(spatialAudioPanner.positionX, audioSourcePosition.x, now);
       setAudioParam(spatialAudioPanner.positionY, audioSourcePosition.y, now);
       setAudioParam(spatialAudioPanner.positionZ, audioSourcePosition.z, now);
-    }
-
-    function updateLocalGraphFacingCamera() {
-      if (!localNoteGraphGroup?.visible) return;
-      const xrCamera = renderer.xr.isPresenting ? renderer.xr.getCamera(camera) : camera;
-      arNoteGroup.getWorldQuaternion(localGraphParentQuaternion);
-      xrCamera.getWorldQuaternion(localGraphCameraQuaternion);
-      localNoteGraphGroup.quaternion
-        .copy(localGraphParentQuaternion)
-        .invert()
-        .multiply(localGraphCameraQuaternion);
     }
 
     function createArVideoSurface(video) {
@@ -3192,39 +3179,54 @@
 
       localNoteGraphGroup = new THREE.Group();
       localNoteGraphGroup.name = "local-note-graph";
-      localNoteGraphGroup.position.set(panelWidth / 2 + 0.145, 0, 0.003);
+      localNoteGraphGroup.position.set(panelWidth / 2 + 0.16, 0, 0.003);
       const visibleNodes = [center, ...neighbours];
-      const positions = new Map([[center.id, new THREE.Vector3(0, 0, 0)]]);
-      neighbours.forEach((node, index) => {
-        const ring = index < 9 ? 0 : 1;
-        const ringIndex = ring ? index - 9 : index;
-        const ringCount = ring ? Math.max(1, neighbours.length - 9) : Math.min(9, neighbours.length);
-        const angle = (ringIndex / ringCount) * Math.PI * 2 - Math.PI / 2;
-        const radiusX = ring ? 0.098 : 0.057;
-        const radiusY = ring ? 0.135 : 0.078;
-        positions.set(node.id, new THREE.Vector3(
-          Math.cos(angle) * radiusX,
-          Math.sin(angle) * radiusY,
-          0
-        ));
+      const sourcePositions = visibleNodes.map((node, index) => {
+        const position = new THREE.Vector3(
+          Number(node.x) || 0,
+          Number(node.y) || 0,
+          Number(node.z) || 0
+        );
+        if (position.lengthSq() < 1e-8 && index > 0) {
+          const angle = index * Math.PI * (3 - Math.sqrt(5));
+          const y = 1 - (index / Math.max(1, visibleNodes.length - 1)) * 2;
+          const radius = Math.sqrt(Math.max(0, 1 - y * y));
+          position.set(Math.cos(angle) * radius, y, Math.sin(angle) * radius);
+        }
+        return position;
       });
+      const bounds = new THREE.Box3().setFromPoints(sourcePositions);
+      const boundsCenter = bounds.getCenter(new THREE.Vector3());
+      const boundsSize = bounds.getSize(new THREE.Vector3());
+      const localScale = 0.22 / Math.max(boundsSize.x, boundsSize.y, boundsSize.z, 0.001);
+      const localNodes = visibleNodes.map((node, index) => {
+        const position = sourcePositions[index].clone().sub(boundsCenter).multiplyScalar(localScale);
+        return {
+          ...node,
+          color: localGraphNodeColor(node),
+          x: position.x,
+          y: position.y,
+          z: position.z
+        };
+      });
+      const localNodesById = new Map(localNodes.map((node) => [node.id, node]));
+      const localLinks = relevantLinks.map(([source, target]) => ({ source, target }));
 
       const localNodeGeometry = new THREE.SphereGeometry(0.009, 8, 6);
       const localNodeMaterial = new THREE.MeshBasicMaterial({
         color: 0xffffff,
-        vertexColors: true,
         depthTest: false,
         toneMapped: false
       });
-      const nodes = new THREE.InstancedMesh(localNodeGeometry, localNodeMaterial, visibleNodes.length);
+      const nodes = new THREE.InstancedMesh(localNodeGeometry, localNodeMaterial, localNodes.length);
       nodes.userData.noteAction = "local-note";
-      nodes.userData.localGraphNodes = visibleNodes;
+      nodes.userData.localGraphNodes = localNodes;
       nodes.userData.highlightScale = false;
       const matrix = new THREE.Matrix4();
       const scale = new THREE.Vector3();
-      for (let index = 0; index < visibleNodes.length; index += 1) {
-        const node = visibleNodes[index];
-        const position = positions.get(node.id);
+      for (let index = 0; index < localNodes.length; index += 1) {
+        const node = localNodes[index];
+        const position = new THREE.Vector3(node.x, node.y, node.z);
         const size = index === 0 ? 1.75 : THREE.MathUtils.clamp(Math.sqrt(node.val ?? 1) * 0.55, 0.75, 1.35);
         scale.setScalar(size);
         matrix.compose(position, new THREE.Quaternion(), scale);
@@ -3237,94 +3239,22 @@
       localNoteGraphGroup.add(nodes);
       arNoteControls.push(nodes);
 
-      const atlas = document.createElement("canvas");
-      atlas.width = 1024;
-      atlas.height = 1024;
-      const atlasContext = atlas.getContext("2d");
-      atlasContext.clearRect(0, 0, atlas.width, atlas.height);
-      atlasContext.font = "600 30px system-ui, sans-serif";
-      atlasContext.textAlign = "center";
-      atlasContext.textBaseline = "middle";
-      atlasContext.fillStyle = "#f4f7ff";
-      const columns = 4;
-      const rows = 7;
-      const cellWidth = atlas.width / columns;
-      const cellHeight = atlas.height / rows;
-      const labelPositions = [];
-      const labelUvs = [];
-      for (let index = 0; index < visibleNodes.length; index += 1) {
-        const node = visibleNodes[index];
-        const column = index % columns;
-        const row = Math.floor(index / columns);
-        const rawLabel = String(node.label || node.id || "Nota")
-          .replace(/\.md$/iu, "")
-          .split("/")
-          .pop();
-        const label = rawLabel.length > 22 ? `${rawLabel.slice(0, 21)}…` : rawLabel;
-        atlasContext.fillText(
-          label,
-          column * cellWidth + cellWidth / 2,
-          row * cellHeight + cellHeight / 2,
-          cellWidth - 14
-        );
-        const position = positions.get(node.id);
-        const halfWidth = THREE.MathUtils.clamp(0.0028 * label.length, 0.025, 0.062);
-        const halfHeight = 0.007;
-        const x0 = position.x - halfWidth;
-        const x1 = position.x + halfWidth;
-        const y0 = position.y + 0.012;
-        const y1 = y0 + halfHeight * 2;
-        labelPositions.push(x0, y0, 0.002, x1, y0, 0.002, x1, y1, 0.002);
-        labelPositions.push(x0, y0, 0.002, x1, y1, 0.002, x0, y1, 0.002);
-        const u0 = column / columns;
-        const u1 = (column + 1) / columns;
-        const v0 = 1 - (row + 1) / rows;
-        const v1 = 1 - row / rows;
-        labelUvs.push(u0, v0, u1, v0, u1, v1, u0, v0, u1, v1, u0, v1);
-      }
-      const labelGeometry = new THREE.BufferGeometry();
-      labelGeometry.setAttribute("position", new THREE.Float32BufferAttribute(labelPositions, 3));
-      labelGeometry.setAttribute("uv", new THREE.Float32BufferAttribute(labelUvs, 2));
-      const labelTexture = new THREE.CanvasTexture(atlas);
-      labelTexture.colorSpace = THREE.SRGBColorSpace;
-      labelTexture.minFilter = THREE.LinearFilter;
-      labelTexture.generateMipmaps = false;
-      const labels = new THREE.Mesh(
-        labelGeometry,
-        new THREE.MeshBasicMaterial({
-          map: labelTexture,
-          transparent: true,
-          depthTest: false,
-          toneMapped: false
-        })
-      );
+      const labels = createDynamicGraphLabels(localNodes, {
+        trackGlobal: false,
+        labelScale: 1.15,
+        depthTest: false
+      });
       labels.renderOrder = 1001;
       labels.raycast = () => {};
       localNoteGraphGroup.add(labels);
 
-      const linePositions = [];
-      for (const [sourceId, targetId] of relevantLinks) {
-        const source = positions.get(sourceId);
-        const target = positions.get(targetId);
-        if (!source || !target) continue;
-        linePositions.push(source.x, source.y, 0, target.x, target.y, 0);
-      }
-      if (linePositions.length) {
-        const lineGeometry = new THREE.BufferGeometry();
-        lineGeometry.setAttribute(
-          "position",
-          new THREE.Float32BufferAttribute(linePositions, 3)
+      if (localLinks.length) {
+        const lines = createSynapseLinks(
+          { nodes: [...localNodesById.values()], links: localLinks },
+          true,
+          0.42
         );
-        const lines = new THREE.LineSegments(
-          lineGeometry,
-          new THREE.LineBasicMaterial({
-            color: 0x8290a8,
-            transparent: true,
-            opacity: 0.58,
-            depthTest: false,
-            toneMapped: false
-          })
-        );
+        lines.material.depthTest = false;
         lines.renderOrder = 999;
         lines.raycast = () => {};
         localNoteGraphGroup.add(lines);
@@ -4144,7 +4074,7 @@
       return lines;
     }
 
-    function createDynamicGraphLabels(nodes) {
+    function createDynamicGraphLabels(nodes, options = {}) {
       const cellWidth = 384;
       const cellHeight = 60;
       const columns = 8;
@@ -4211,7 +4141,7 @@
       const material = new THREE.ShaderMaterial({
         uniforms: {
           labelAtlas: { value: texture },
-          labelScale: { value: Math.sqrt(userScaleFactor) }
+          labelScale: { value: options.labelScale ?? Math.sqrt(userScaleFactor) }
         },
         vertexShader: `
           attribute vec2 corner;
@@ -4237,11 +4167,11 @@
           }
         `,
         transparent: true,
-        depthTest: true,
+        depthTest: options.depthTest ?? true,
         depthWrite: false,
         toneMapped: false
       });
-      dynamicLabelMaterial = material;
+      if (options.trackGlobal !== false) dynamicLabelMaterial = material;
       const labels = new THREE.Mesh(geometry, material);
       labels.name = "vault-labels";
       labels.frustumCulled = true;
@@ -5934,7 +5864,6 @@
           environment360Mesh.position.copy(environment360Position);
         }
         updatePlacement(frame);
-        updateLocalGraphFacingCamera();
         updateSpatialNoteAudio();
         updateAudioWaveformProgress();
         const graphIntroPulseActive = updateGraphIntroPulse(time);

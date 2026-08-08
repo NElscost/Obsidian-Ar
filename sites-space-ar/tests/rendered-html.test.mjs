@@ -217,7 +217,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /space-ar-note-cache-v4/);
 });
 
-test("mostra um ego graph instanciado ao lado da nota sem nova simulação", async () => {
+test("mostra uma cópia 3D local ao lado da nota sem nova simulação", async () => {
   const html = await readFile(xrUrl, "utf8");
   assert.match(html, /function createLocalNoteGraph/);
   assert.match(html, /graphHierarchy\?\.fullData \?\? graphData/);
@@ -227,8 +227,10 @@ test("mostra um ego graph instanciado ao lado da nota sem nova simulação", asy
   assert.match(html, /nodes\.userData\.noteAction = "local-note"/);
   assert.match(html, /nodes\.setColorAt\(index, new THREE\.Color\(localGraphNodeColor\(node\)\)\)/);
   assert.match(html, /function localGraphNodeColor/);
-  assert.match(html, /function updateLocalGraphFacingCamera/);
-  assert.match(html, /const atlas = document\.createElement\("canvas"\)/);
+  assert.match(html, /const bounds = new THREE\.Box3\(\)\.setFromPoints\(sourcePositions\)/);
+  assert.match(html, /createDynamicGraphLabels\(localNodes, \{/);
+  assert.match(html, /trackGlobal: false/);
+  assert.match(html, /const lines = createSynapseLinks/);
   assert.match(html, /action === "local-note"/);
   assert.match(html, /void requestNote\(path\)/);
   assert.match(html, /createLocalNoteGraph\(path, width\)/);
