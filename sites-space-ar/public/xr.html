@@ -1178,25 +1178,50 @@
     const fallbackVirtualHands = [];
 
     function styleVirtualHandMeshes(root) {
+      const meshes = [];
       root?.traverse((object) => {
-        if (!object.isMesh || object.userData.spaceArHandStyled) return;
-        object.userData.spaceArHandStyled = true;
-        const materialWasArray = Array.isArray(object.material);
-        const materials = materialWasArray ? object.material : [object.material];
-        const styledMaterials = materials.map((source) => {
-          const material = source.clone();
-          const isOutline = /outline/i.test(material.name || object.name || "");
-          material.transparent = true;
-          material.opacity = isOutline ? 0.62 : 0.34;
-          material.depthWrite = false;
-          material.toneMapped = false;
-          material.color?.set(isOutline ? 0xffffff : 0x000000);
-          material.needsUpdate = true;
-          return material;
-        });
-        object.material = materialWasArray ? styledMaterials : styledMaterials[0];
-        object.renderOrder = 1200;
+        if (object.isMesh && !object.userData.spaceArHandOutline) meshes.push(object);
       });
+      for (const object of meshes) {
+        if (!object.userData.spaceArHandStyled) {
+          object.userData.spaceArHandStyled = true;
+          const materialWasArray = Array.isArray(object.material);
+          const materials = materialWasArray ? object.material : [object.material];
+          const styledMaterials = materials.map((source) => {
+            const material = source.clone();
+            material.transparent = true;
+            material.opacity = 0.34;
+            material.depthWrite = false;
+            material.toneMapped = false;
+            material.color?.set(0x000000);
+            material.needsUpdate = true;
+            return material;
+          });
+          object.material = materialWasArray ? styledMaterials : styledMaterials[0];
+          object.renderOrder = 1200;
+        }
+        if (object.userData.spaceArOutlineCreated) continue;
+        object.userData.spaceArOutlineCreated = true;
+        const outline = object.clone(false);
+        outline.name = `${object.name || "hand"}-space-ar-outline`;
+        outline.userData.spaceArHandStyled = true;
+        outline.userData.spaceArHandOutline = true;
+        outline.position.set(0, 0, 0);
+        outline.quaternion.identity();
+        outline.scale.setScalar(1.035);
+        outline.material = new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          transparent: true,
+          opacity: 0.5,
+          side: THREE.BackSide,
+          depthTest: false,
+          depthWrite: false,
+          toneMapped: false
+        });
+        outline.raycast = () => {};
+        outline.renderOrder = 1199;
+        object.add(outline);
+      }
     }
 
     async function initializeVirtualHands() {
@@ -3730,6 +3755,7 @@
     let noteMicroGestureStates = new WeakMap();
     let nativeMicroGestureStates = new WeakMap();
     const NATIVE_MICRO_GESTURE_BUTTONS = Object.freeze({
+      tapThumb: 4,
       swipeLeft: 5,
       swipeRight: 6
     });
@@ -3972,20 +3998,14 @@
       highlightNoteSearchResult(query);
     }
 
-    function maybeOpenSearchFromSwipe(state, action, time) {
-      if (arNoteGroup.visible || graphHierarchy?.expandedHubId) return false;
-      const repeated = state.lastSearchSwipeAction === action &&
-        time - (state.lastSearchSwipeAt ?? 0) <= 900;
-      state.lastSearchSwipeAction = action;
-      state.lastSearchSwipeAt = time;
+    function registerDoubleThumbTap(state, time) {
+      const repeated = time - (state.lastThumbTapAt ?? 0) <= 650;
+      state.lastThumbTapAt = repeated ? 0 : time;
       if (repeated) {
-        state.lastSearchSwipeAt = 0;
-        state.lastSearchSwipeAction = "";
         openKeyboardSearch();
       } else {
-        setXrMessage("Repita o microgesto do polegar para abrir a busca digitada.");
+        setXrMessage("Toque novamente o polegar para abrir a busca digitada.");
       }
-      return true;
     }
 
     function rememberRecentNote(path) {
@@ -5623,6 +5643,7 @@
       const profiles = Array.from(inputSource.profiles ?? []);
       const buttons = inputSource.gamepad?.buttons;
       return profiles.includes("oculus-hand") &&
+        Boolean(buttons?.[NATIVE_MICRO_GESTURE_BUTTONS.tapThumb]) &&
         Boolean(buttons?.[NATIVE_MICRO_GESTURE_BUTTONS.swipeLeft]) &&
         Boolean(buttons?.[NATIVE_MICRO_GESTURE_BUTTONS.swipeRight]);
     }
@@ -5633,26 +5654,32 @@
       let state = nativeMicroGestureStates.get(inputSource);
       if (!state) {
         state = {
+          tapPressed: false,
           leftPressed: false,
           rightPressed: false,
           pressed: false,
           suppressRayUntil: 0,
           lastActionAt: 0,
-          lastSearchSwipeAt: 0,
-          lastSearchSwipeAction: ""
+          lastThumbTapAt: 0
         };
         nativeMicroGestureStates.set(inputSource, state);
       }
 
       const buttons = inputSource.gamepad.buttons;
+      const tapButton = buttons[NATIVE_MICRO_GESTURE_BUTTONS.tapThumb];
       const leftButton = buttons[NATIVE_MICRO_GESTURE_BUTTONS.swipeLeft];
       const rightButton = buttons[NATIVE_MICRO_GESTURE_BUTTONS.swipeRight];
+      const tapPressed = tapButton.pressed || tapButton.value > 0.5;
       const leftPressed = leftButton.pressed || leftButton.value > 0.5;
       const rightPressed = rightButton.pressed || rightButton.value > 0.5;
+      const tapStarted = tapPressed && !state.tapPressed;
       const leftStarted = leftPressed && !state.leftPressed;
       const rightStarted = rightPressed && !state.rightPressed;
 
-      state.pressed = leftPressed || rightPressed;
+      state.pressed = tapPressed || leftPressed || rightPressed;
+      if (tapStarted && !arNoteGroup.visible && !graphHierarchy?.expandedHubId) {
+        registerDoubleThumbTap(state, time);
+      }
       if (state.pressed) state.suppressRayUntil = time + 260;
 
       if (
@@ -5661,9 +5688,7 @@
       ) {
         const action = rightStarted ? "next" : "previous";
         state.lastActionAt = time;
-        if (maybeOpenSearchFromSwipe(state, action, time)) {
-          // A repeated swipe while viewing the graph opens the Quest keyboard.
-        } else if (!arNoteGroup.visible && graphHierarchy?.expandedHubId) {
+        if (!arNoteGroup.visible && graphHierarchy?.expandedHubId) {
           if (action === "previous") collapseClusterGraph();
         } else {
           const oldPage = arNotePage;
@@ -5683,6 +5708,7 @@
         }
       }
 
+      state.tapPressed = tapPressed;
       state.leftPressed = leftPressed;
       state.rightPressed = rightPressed;
       return true;
@@ -5736,6 +5762,8 @@
             lateralTravel: 0,
             screenTravel: 0,
             peakNormalizedSpeed: 0,
+            thumbTapContact: false,
+            lastThumbTapAt: 0,
             handedness: inputSource.handedness || "none"
           };
           noteMicroGestureStates.set(inputSource, state);
@@ -5803,6 +5831,11 @@
           0.055,
           0.14
         );
+        const thumbTapContact = state.thumb.distanceTo(state.proximals[0]) < state.handScale * 0.38;
+        if (thumbTapContact && !state.thumbTapContact && graphSearchGestureActive) {
+          registerDoubleThumbTap(state, time);
+        }
+        state.thumbTapContact = thumbTapContact;
         let closedFingers = 0;
         for (let index = 0; index < fingerNames.length; index += 1) {
           const pipAngle = jointAngle(
@@ -5939,9 +5972,7 @@
         const action = screenMovement > 0 ? "next" : "previous";
         state.awaitingNeutral = true;
         state.neutralSince = 0;
-        if (maybeOpenSearchFromSwipe(state, action, time)) {
-          // The second matching swipe opens the DOM-overlay search input.
-        } else if (clusterNavigationActive) {
+        if (clusterNavigationActive) {
           if (action === "previous") {
             collapseClusterGraph();
           } else {

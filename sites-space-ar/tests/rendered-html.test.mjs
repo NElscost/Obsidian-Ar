@@ -251,7 +251,9 @@ test("procura notas por voz e pulsa o resultado no grafo", async () => {
   assert.match(html, /const spokenTitle = words\.slice\(start\)\.join/);
   assert.match(html, /exactMatches\.length === 1/);
   assert.match(html, /id="xr-search-input"/);
-  assert.match(html, /function maybeOpenSearchFromSwipe/);
+  assert.match(html, /function registerDoubleThumbTap/);
+  assert.match(html, /tapThumb:\s*4/);
+  assert.match(html, /time - \(state\.lastThumbTapAt \?\? 0\) <= 650/);
   assert.match(html, /ownerById/);
   assert.match(html, /voiceHighlightUntil = performance\.now\(\) \+ 10_000/);
   assert.match(html, /Nota encontrada:/);
@@ -283,8 +285,10 @@ test("carrega mãos virtuais do IWSDK sob demanda com fallback Three.js", async 
   assert.match(html, /iwInputManager\.update\(renderer\.xr, delta, time \/ 1000\)/);
   assert.match(html, /XRHandModelFactory/);
   assert.match(html, /function styleVirtualHandMeshes/);
-  assert.match(html, /material\.opacity = isOutline \? 0\.62 : 0\.34/);
-  assert.match(html, /material\.color\?\.set\(isOutline \? 0xffffff : 0x000000\)/);
+  assert.match(html, /outline\.scale\.setScalar\(1\.035\)/);
+  assert.match(html, /color: 0xffffff/);
+  assert.match(html, /opacity: 0\.5/);
+  assert.match(html, /side: THREE\.BackSide/);
 });
 
 test("quebra trechos longos em blocos de código sem perder a formatação", async () => {
