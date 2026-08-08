@@ -177,6 +177,10 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /new THREE\.VideoTexture\(video\)/);
   assert.match(html, /noteVideoTracks\[0\] \?\? noteAudioTracks\[0\]/);
   assert.match(html, /function describeVideoPlaybackError/);
+  assert.match(html, /function beginNoteVideoPreparation/);
+  assert.match(html, /Vídeo pronto\. Faça a pinça/);
+  assert.match(html, /if \(isVideo && !preparedNoteVideo\)/);
+  assert.match(html, /if \(isVideo && !activeNoteVideoSurface\) createArVideoSurface/);
   assert.match(html, /MP4 com H\.264 \+ AAC/);
   assert.match(html, /async function toggleNoteAudio/);
   assert.match(html, /activeNoteAudio\.preload = "none"/);
@@ -204,6 +208,16 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /new THREE\.PlaneGeometry\(0\.024, 0\.024\)/);
   assert.match(html, /activeNoteAudio\.currentTime = 0/);
   assert.match(html, /space-ar-note-cache-v4/);
+});
+
+test("mostra um ego graph instanciado ao lado da nota sem nova simulação", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /function createLocalNoteGraph/);
+  assert.match(html, /graphHierarchy\?\.fullData \?\? graphData/);
+  assert.match(html, /\.slice\(0, 27\)/);
+  assert.match(html, /new THREE\.InstancedMesh/);
+  assert.match(html, /new THREE\.LineSegments/);
+  assert.match(html, /createLocalNoteGraph\(path, width\)/);
 });
 
 test("quebra trechos longos em blocos de código sem perder a formatação", async () => {

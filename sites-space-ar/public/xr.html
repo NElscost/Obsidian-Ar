@@ -1124,6 +1124,11 @@
     let activeNoteAudioControl = null;
     let activeNoteVideoSurface = null;
     let activeNoteVideoTexture = null;
+    let preparedNoteVideo = null;
+    let noteVideoPreparation = null;
+    let noteVideoPreparationError = null;
+    let noteVideoPreparationGeneration = 0;
+    let localNoteGraphGroup = null;
     let spatialAudioContext = null;
     let spatialAudioSource = null;
     let spatialAudioPanner = null;
@@ -1142,6 +1147,7 @@
 
     function disposeArNote() {
       audioWaveformGeneration += 1;
+      noteVideoPreparationGeneration += 1;
       cancelNoteCapture();
       if (activeNoteAudio) {
         activeNoteAudio.pause();
@@ -1149,12 +1155,17 @@
         activeNoteAudio.load();
       }
       if (activeNoteAudioObjectUrl) URL.revokeObjectURL(activeNoteAudioObjectUrl);
+      if (preparedNoteVideo?.objectUrl) URL.revokeObjectURL(preparedNoteVideo.objectUrl);
       activeNoteAudio = null;
       activeNoteAudioObjectUrl = null;
       activeNoteAudioControl = null;
       activeNoteVideoTexture?.dispose();
       activeNoteVideoTexture = null;
       activeNoteVideoSurface = null;
+      preparedNoteVideo = null;
+      noteVideoPreparation = null;
+      noteVideoPreparationError = null;
+      localNoteGraphGroup = null;
       spatialAudioSource?.disconnect();
       spatialAudioPanner?.disconnect();
       spatialAudioSource = null;
@@ -1558,7 +1569,10 @@
         headers: bridgeRequestHeaders(config, true),
         body: JSON.stringify({ notePath, assetPath })
       });
-      if (!response.ok) throw new Error(`Mídia HTTP ${response.status}`);
+      if (!response.ok) {
+        const message = await response.text().catch(() => "");
+        throw new Error(message || `Mídia HTTP ${response.status}`);
+      }
       return response.blob();
     }
 
@@ -2776,18 +2790,77 @@
       return describeError(error || video?.error || "falha desconhecida");
     }
 
+    function beginNoteVideoPreparation(track, notePath) {
+      const generation = noteVideoPreparationGeneration;
+      noteVideoPreparationError = null;
+      preparedNoteVideo = null;
+      if (activeNoteAudioControl) {
+        activeNoteAudioControl.material.color.setHex(0xffd166);
+      }
+      noteVideoPreparation = (async () => {
+        try {
+          let source = track.source;
+          let objectUrl = null;
+          if (!isNetworkSource(source) && !isBrowserLocalSource(source)) {
+            const config = JSON.parse(
+              sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null"
+            );
+            if (!config?.url || !config?.token) {
+              throw new Error("Configure a ponte para preparar o vídeo do vault.");
+            }
+            setXrMessage("Preparando vídeo… a primeira conversão AV1/HEVC pode demorar.");
+            const blob = await fetchVaultAsset(config, notePath, source);
+            if (blob.size > 256 * 1024 * 1024) {
+              throw new Error("Vídeo maior que 256 MB; use uma versão WebM/MP4 otimizada.");
+            }
+            objectUrl = URL.createObjectURL(blob);
+            source = objectUrl;
+          }
+          if (generation !== noteVideoPreparationGeneration) {
+            if (objectUrl) URL.revokeObjectURL(objectUrl);
+            return;
+          }
+          preparedNoteVideo = { source, objectUrl, track };
+          if (activeNoteAudioControl) {
+            activeNoteAudioControl.material.color.setHex(0x63e6be);
+          }
+          setXrMessage("Vídeo pronto. Faça a pinça no botão verde para reproduzir.");
+        } catch (error) {
+          if (generation !== noteVideoPreparationGeneration) return;
+          noteVideoPreparationError = error;
+          if (activeNoteAudioControl) {
+            activeNoteAudioControl.material.color.setHex(0xff6b6b);
+          }
+          setXrMessage(`Falha ao preparar vídeo: ${describeError(error)}`);
+        } finally {
+          if (generation === noteVideoPreparationGeneration) {
+            noteVideoPreparation = null;
+          }
+        }
+      })();
+    }
+
     async function toggleNoteAudio() {
       const track = noteVideoTracks[0] ?? noteAudioTracks[0];
       if (!track) return;
       const isVideo = track.kind === "video";
       try {
+        if (isVideo && !preparedNoteVideo) {
+          if (noteVideoPreparationError) throw noteVideoPreparationError;
+          setXrMessage("O vídeo ainda está sendo preparado. Aguarde a confirmação e faça a pinça novamente.");
+          return;
+        }
         // Ative durante o gesto; depois de um fetch o Quest pode retirar a ativação do usuário.
         const spatialContext = await ensureSpatialAudioContext();
         if (!activeNoteAudio) {
           const config = JSON.parse(
             sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null"
           );
-          let source = track.source;
+          let source = isVideo ? preparedNoteVideo.source : track.source;
+          if (isVideo && preparedNoteVideo.objectUrl) {
+            activeNoteAudioObjectUrl = preparedNoteVideo.objectUrl;
+            preparedNoteVideo.objectUrl = null;
+          }
           if (!isNetworkSource(source) && !isBrowserLocalSource(source)) {
             if (!config?.url || !config?.token) {
               throw new Error(`Configure a ponte para reproduzir ${isVideo ? "vídeo" : "áudio"} do vault.`);
@@ -2808,7 +2881,6 @@
           activeNoteAudio.preload = "none";
           activeNoteAudio.src = source;
           activeNoteAudio.volume = 1;
-          if (isVideo) createArVideoSurface(activeNoteAudio);
           const spatial = connectSpatialNoteAudio(activeNoteAudio, spatialContext);
           if (isVideo) {
             activeNoteAudio.addEventListener("error", () => {
@@ -2831,6 +2903,7 @@
         }
         if (activeNoteAudio.paused) {
           await activeNoteAudio.play();
+          if (isVideo && !activeNoteVideoSurface) createArVideoSurface(activeNoteAudio);
           setXrMessage(`Reproduzindo ${isVideo ? "vídeo" : "áudio"}: ${track.label}.`);
         } else {
           activeNoteAudio.pause();
@@ -2915,6 +2988,135 @@
       setXrMessage(`Página ${arNotePage + 1} de ${arNotePages.length}.`);
     }
 
+    function graphEndpointId(endpoint) {
+      return typeof endpoint === "object" && endpoint
+        ? (endpoint.id ?? endpoint.path ?? "")
+        : String(endpoint ?? "");
+    }
+
+    function createLocalNoteGraph(notePath, panelWidth) {
+      const data = graphHierarchy?.fullData ?? graphData;
+      if (!data?.nodes?.length || !data?.links?.length || !notePath) return;
+      const normalize = (value) => String(value ?? "")
+        .replaceAll("\\", "/")
+        .replace(/^\.\//u, "")
+        .toLocaleLowerCase();
+      const targetKey = normalize(notePath);
+      const nodesById = new Map(data.nodes.map((node) => [String(node.id), node]));
+      const center = data.nodes.find((node) =>
+        normalize(node.id) === targetKey || normalize(node.path) === targetKey
+      );
+      if (!center) return;
+      const neighbourIds = new Set();
+      const relevantLinks = [];
+      for (const link of data.links) {
+        const sourceId = graphEndpointId(link.source);
+        const targetId = graphEndpointId(link.target);
+        if (sourceId === center.id) neighbourIds.add(targetId);
+        if (targetId === center.id) neighbourIds.add(sourceId);
+      }
+      const neighbours = [...neighbourIds]
+        .map((id) => nodesById.get(id))
+        .filter(Boolean)
+        .sort((left, right) => (right.val ?? 1) - (left.val ?? 1))
+        .slice(0, 27);
+      const visibleIds = new Set([center.id, ...neighbours.map((node) => node.id)]);
+      for (const link of data.links) {
+        const sourceId = graphEndpointId(link.source);
+        const targetId = graphEndpointId(link.target);
+        if (visibleIds.has(sourceId) && visibleIds.has(targetId)) {
+          relevantLinks.push([sourceId, targetId]);
+        }
+      }
+
+      localNoteGraphGroup = new THREE.Group();
+      localNoteGraphGroup.name = "local-note-graph";
+      localNoteGraphGroup.position.set(panelWidth / 2 + 0.145, 0, 0.003);
+      const background = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.245, 0.33),
+        new THREE.MeshBasicMaterial({
+          color: 0x07111f,
+          transparent: true,
+          opacity: 0.82,
+          depthTest: false,
+          toneMapped: false
+        })
+      );
+      background.position.z = -0.004;
+      background.renderOrder = 998;
+      background.raycast = () => {};
+      localNoteGraphGroup.add(background);
+
+      const visibleNodes = [center, ...neighbours];
+      const positions = new Map([[center.id, new THREE.Vector3(0, 0, 0)]]);
+      neighbours.forEach((node, index) => {
+        const ring = index < 9 ? 0 : 1;
+        const ringIndex = ring ? index - 9 : index;
+        const ringCount = ring ? Math.max(1, neighbours.length - 9) : Math.min(9, neighbours.length);
+        const angle = (ringIndex / ringCount) * Math.PI * 2 - Math.PI / 2;
+        const radiusX = ring ? 0.098 : 0.057;
+        const radiusY = ring ? 0.135 : 0.078;
+        positions.set(node.id, new THREE.Vector3(
+          Math.cos(angle) * radiusX,
+          Math.sin(angle) * radiusY,
+          0
+        ));
+      });
+
+      const localNodeGeometry = new THREE.SphereGeometry(0.009, 8, 6);
+      const localNodeMaterial = new THREE.MeshBasicMaterial({
+        vertexColors: true,
+        depthTest: false,
+        toneMapped: false
+      });
+      const nodes = new THREE.InstancedMesh(localNodeGeometry, localNodeMaterial, visibleNodes.length);
+      const matrix = new THREE.Matrix4();
+      const scale = new THREE.Vector3();
+      for (let index = 0; index < visibleNodes.length; index += 1) {
+        const node = visibleNodes[index];
+        const position = positions.get(node.id);
+        const size = index === 0 ? 1.75 : THREE.MathUtils.clamp(Math.sqrt(node.val ?? 1) * 0.55, 0.75, 1.35);
+        scale.setScalar(size);
+        matrix.compose(position, new THREE.Quaternion(), scale);
+        nodes.setMatrixAt(index, matrix);
+        nodes.setColorAt(index, new THREE.Color(index === 0 ? 0x63e6be : (node.color || 0x75a7ff)));
+      }
+      nodes.instanceMatrix.needsUpdate = true;
+      if (nodes.instanceColor) nodes.instanceColor.needsUpdate = true;
+      nodes.renderOrder = 1000;
+      nodes.raycast = () => {};
+      localNoteGraphGroup.add(nodes);
+
+      const linePositions = [];
+      for (const [sourceId, targetId] of relevantLinks) {
+        const source = positions.get(sourceId);
+        const target = positions.get(targetId);
+        if (!source || !target) continue;
+        linePositions.push(source.x, source.y, 0, target.x, target.y, 0);
+      }
+      if (linePositions.length) {
+        const lineGeometry = new THREE.BufferGeometry();
+        lineGeometry.setAttribute(
+          "position",
+          new THREE.Float32BufferAttribute(linePositions, 3)
+        );
+        const lines = new THREE.LineSegments(
+          lineGeometry,
+          new THREE.LineBasicMaterial({
+            color: 0x8290a8,
+            transparent: true,
+            opacity: 0.58,
+            depthTest: false,
+            toneMapped: false
+          })
+        );
+        lines.renderOrder = 999;
+        lines.raycast = () => {};
+        localNoteGraphGroup.add(lines);
+      }
+      arNoteGroup.add(localNoteGraphGroup);
+    }
+
     async function showNoteInAr(
       title,
       source,
@@ -2963,6 +3165,7 @@
       );
       arNoteSurface.renderOrder = 1000;
       arNoteGroup.add(arNoteSurface);
+      createLocalNoteGraph(path, width);
       addArNoteControl("close", width / 2 - 0.03, height / 2 - 0.03, 0xff6b6b);
       addArNoteControl(
         "pin",
@@ -2983,6 +3186,9 @@
         );
         if (noteAudioTracks.length) {
           void prepareAudioWaveform(noteAudioTracks[0], path, width, height);
+        }
+        if (noteVideoTracks.length) {
+          beginNoteVideoPreparation(noteVideoTracks[0], path);
         }
       }
       drawArNotePage();
