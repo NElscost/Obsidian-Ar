@@ -422,3 +422,20 @@ test("configuração pública não depende dos metadados privados do Sites", asy
   assert.match(viteConfig, /SPACE_ALLOWED_DEV_HOSTS/);
   assert.match(sitesPlugin, /Public clones can build without/);
 });
+
+
+test("mantém a busca digitada dentro da sessão WebXR", async () => {
+  const html = await readFile(xrUrl, "utf8");
+
+  assert.match(html, /function updateJointDoubleThumbTap/);
+  assert.match(html, /thumbTapGestureStates/);
+  assert.match(html, /function keyboardTexture/);
+  assert.match(html, /function addArSearchKey/);
+  assert.match(html, /arNoteControls\.push\(key\)/);
+  assert.match(html, /Busca 3D aberta/);
+  assert.match(html, /function searchResultGraphData/);
+  assert.match(html, /replaceDynamicGraphView\(resultData\)/);
+  assert.match(html, /expandedHubId = "__search__:"/);
+  assert.match(html, /1\.55 \+ Math\.sin\([^\n]+\) \* 0\.55/);
+  assert.doesNotMatch(html, /xrSearchInput\.focus\(\{ preventScroll: true \}\)/);
+});

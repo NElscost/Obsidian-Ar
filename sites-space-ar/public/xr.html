@@ -1313,6 +1313,9 @@
     let arNotePage = 0;
     let arNoteTitle = "";
     let arNotePath = "";
+    let arSearchKeyboardActive = false;
+    let arSearchQuery = "";
+    let arSearchDisplay = null;
     let noteAudioTracks = [];
     let noteVideoTracks = [];
     let activeNoteAudio = null;
@@ -1407,6 +1410,9 @@
       arNotePages = [];
       arNotePage = 0;
       arNotePath = "";
+      arSearchKeyboardActive = false;
+      arSearchQuery = "";
+      arSearchDisplay = null;
       pointedNoteControl = null;
       pointedNoteControlInstanceId = null;
       pointedNoteControlRatio = null;
@@ -3375,6 +3381,7 @@
     }
 
     function activateNoteControl(action, event, options = {}) {
+      if (action.startsWith("search-")) { activateArSearchKey(action); return; }
       if (action === "close") {
         closeNote();
         return;
@@ -3754,6 +3761,7 @@
     });
     let noteMicroGestureStates = new WeakMap();
     let nativeMicroGestureStates = new WeakMap();
+    let thumbTapGestureStates = new WeakMap();
     const NATIVE_MICRO_GESTURE_BUTTONS = Object.freeze({
       tapThumb: 4,
       swipeLeft: 5,
@@ -3803,6 +3811,7 @@
     function resetNoteMicroGestures() {
       noteMicroGestureStates = new WeakMap();
       nativeMicroGestureStates = new WeakMap();
+      thumbTapGestureStates = new WeakMap();
     }
 
     function pairingConfigFromBootstrap() {
@@ -3971,41 +3980,137 @@
     }
 
 
+    function keyboardTexture(text, options = {}) {
+      const canvas = document.createElement("canvas");
+      canvas.width = options.width ?? 512;
+      canvas.height = options.height ?? 128;
+      const context = canvas.getContext("2d");
+      context.fillStyle = options.background ?? "#192438";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = options.color ?? "#f5f7ff";
+      context.font = options.font ?? "600 46px system-ui, sans-serif";
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.fillText(String(text), canvas.width / 2, canvas.height / 2, canvas.width - 24);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.minFilter = THREE.LinearFilter;
+      texture.generateMipmaps = false;
+      return texture;
+    }
+
+    function updateArSearchDisplay() {
+      if (!arSearchDisplay) return;
+      arSearchDisplay.material.map?.dispose();
+      arSearchDisplay.material.map = keyboardTexture(arSearchQuery || "Digite o nome da nota…", {
+        width: 1024,
+        height: 128,
+        background: "#0b1220",
+        color: arSearchQuery ? "#ffffff" : "#8fa3bd",
+        font: "500 42px system-ui, sans-serif"
+      });
+      arSearchDisplay.material.needsUpdate = true;
+    }
+
+    function addArSearchKey(label, action, x, y, width = 0.052, color = "#26354d") {
+      const key = new THREE.Mesh(
+        new THREE.PlaneGeometry(width, 0.052),
+        new THREE.MeshBasicMaterial({
+          map: keyboardTexture(label, { background: color }),
+          transparent: true,
+          depthTest: false,
+          toneMapped: false
+        })
+      );
+      key.position.set(x, y, 0.006);
+      key.renderOrder = 1002;
+      key.userData.noteAction = action;
+      arNoteControls.push(key);
+      arNoteGroup.add(key);
+      return key;
+    }
+
     function closeKeyboardSearch() {
       xrSearch.classList.remove("visible");
       xrSearchInput.blur();
+      if (arSearchKeyboardActive) disposeArNote();
+      arSearchKeyboardActive = false;
+      arSearchQuery = "";
+      arSearchDisplay = null;
     }
 
     function openKeyboardSearch() {
-      if (!xrSession) return;
-      xrSearch.classList.add("visible");
-      xrSearchInput.value = "";
-      setXrMessage("Digite o nome da nota no teclado virtual e pressione Buscar.");
-      requestAnimationFrame(() => {
-        xrSearchInput.focus({ preventScroll: true });
-        xrSearchInput.click();
+      if (!xrSession || arSearchKeyboardActive) return;
+      disposeArNote();
+      noteWindowAnchor?.delete?.();
+      noteWindowAnchor = null;
+      noteWindowPinned = false;
+      arSearchKeyboardActive = true;
+      arSearchQuery = "";
+      arNoteGroup.visible = true;
+      arNoteGroup.position.set(0, -0.02, -0.78);
+      arNoteGroup.quaternion.identity();
+      camera.add(arNoteGroup);
+
+      const background = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.72, 0.46),
+        new THREE.MeshBasicMaterial({ color: 0x08111f, transparent: true, opacity: 0.96, depthTest: false, toneMapped: false })
+      );
+      background.position.z = -0.002;
+      background.renderOrder = 1000;
+      arNoteGroup.add(background);
+
+      arSearchDisplay = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.64, 0.065),
+        new THREE.MeshBasicMaterial({ transparent: true, depthTest: false, toneMapped: false })
+      );
+      arSearchDisplay.position.set(0, 0.165, 0.004);
+      arSearchDisplay.renderOrder = 1001;
+      arNoteGroup.add(arSearchDisplay);
+      updateArSearchDisplay();
+
+      const rows = ["ABCDEFGHIJ", "KLMNOPQRST", "UVWXYZÁÉÍÓ", "ÚÇ"];
+      rows.forEach((letters, rowIndex) => {
+        const width = 0.052;
+        const gap = 0.008;
+        const total = letters.length * width + Math.max(0, letters.length - 1) * gap;
+        [...letters].forEach((letter, index) => {
+          addArSearchKey(letter, "search-char:" + letter, -total / 2 + width / 2 + index * (width + gap), 0.088 - rowIndex * 0.061, width);
+        });
       });
+      addArSearchKey("⌫", "search-backspace", -0.264, -0.166, 0.096, "#643548");
+      addArSearchKey("ESPAÇO", "search-space", -0.092, -0.166, 0.226, "#334866");
+      addArSearchKey("BUSCAR", "search-submit", 0.116, -0.166, 0.15, "#167c68");
+      addArSearchKey("×", "search-close", 0.278, -0.166, 0.07, "#8b3040");
+      setXrMessage("Busca 3D aberta. Aponte com a palma e faça pinça para digitar.");
     }
 
     function submitKeyboardSearch(event) {
       event?.preventDefault();
-      const query = xrSearchInput.value.trim();
+      const query = arSearchKeyboardActive ? arSearchQuery.trim() : xrSearchInput.value.trim();
       if (!query) {
-        xrSearchInput.focus({ preventScroll: true });
+        setXrMessage("Digite parte do nome da nota.");
         return;
       }
       closeKeyboardSearch();
       highlightNoteSearchResult(query);
     }
 
+    function activateArSearchKey(action) {
+      if (!arSearchKeyboardActive) return;
+      if (action === "search-close") return closeKeyboardSearch();
+      if (action === "search-submit") return submitKeyboardSearch();
+      if (action === "search-backspace") arSearchQuery = [...arSearchQuery].slice(0, -1).join("");
+      else if (action === "search-space") arSearchQuery += " ";
+      else if (action.startsWith("search-char:")) arSearchQuery += action.slice(12);
+      updateArSearchDisplay();
+    }
+
     function registerDoubleThumbTap(state, time) {
       const repeated = time - (state.lastThumbTapAt ?? 0) <= 650;
       state.lastThumbTapAt = repeated ? 0 : time;
-      if (repeated) {
-        openKeyboardSearch();
-      } else {
-        setXrMessage("Toque novamente o polegar para abrir a busca digitada.");
-      }
+      if (repeated) openKeyboardSearch();
+      else setXrMessage("Toque novamente o polegar para abrir a busca 3D.");
     }
 
     function rememberRecentNote(path) {
@@ -4734,6 +4839,33 @@
       return Boolean(words.length && (isVoiceCommandWord(words[0]) || words.includes("nota") || words.includes("note")));
     }
 
+    function searchResultGraphData(targetId) {
+      const fullData = graphHierarchy?.fullData ?? graphData;
+      const nodesById = new Map(fullData.nodes.map((node) => [node.id, node]));
+      const neighbourIds = new Set();
+      for (const link of fullData.links) {
+        const source = graphEndpointId(link.source);
+        const target = graphEndpointId(link.target);
+        if (source === targetId) neighbourIds.add(target);
+        if (target === targetId) neighbourIds.add(source);
+      }
+      const neighbours = [...neighbourIds].map((id) => nodesById.get(id)).filter(Boolean)
+        .sort((left, right) => (right.val ?? 1) - (left.val ?? 1))
+        .slice(0, Math.min(96, renderedNodeLimit - 2));
+      const centerSource = nodesById.get(targetId);
+      if (!centerSource) return null;
+      const center = { ...centerSource, x: 0, y: 0, z: 0, val: Math.max(10, centerSource.val ?? 1) };
+      const radius = Math.max(12, Math.sqrt(neighbours.length) * 3.6);
+      const nodes = neighbours.map((node, index) => {
+        const angle = index * Math.PI * (3 - Math.sqrt(5));
+        const y = 1 - ((index + 0.5) / Math.max(1, neighbours.length)) * 2;
+        const horizontal = Math.sqrt(Math.max(0, 1 - y * y));
+        return { ...node, x: Math.cos(angle) * horizontal * radius, y: y * radius, z: Math.sin(angle) * horizontal * radius };
+      });
+      const back = { id: "__cluster_back__:search:" + targetId, label: "← Voltar ao grafo", color: "#75e7d0", val: 8, x: -radius * 0.45, y: radius * 0.4, z: 0, isClusterBack: true };
+      return { nodes: [back, center, ...nodes], links: nodes.map((node) => ({ source: center.id, target: node.id })) };
+    }
+
     function highlightNoteSearchResult(spokenText) {
       const match = findBestNoteMatch(spokenText);
       if (!match) {
@@ -4741,12 +4873,12 @@
         return;
       }
       let target = graphData?.nodes?.find((node) => node.id === match.node.id) ?? null;
-      if (!target && graphHierarchy) {
-        const ownerId = graphHierarchy.ownerById?.get(match.node.id);
-        const hub = graphHierarchy.coreData.nodes.find((node) => node.id === ownerId);
-        if (hub) {
-          expandClusterNode(hub);
-          target = graphData.nodes.find((node) => node.id === match.node.id) ?? hub;
+      if (dynamicGraphActive && graphHierarchy) {
+        const resultData = searchResultGraphData(match.node.id);
+        if (resultData) {
+          replaceDynamicGraphView(resultData);
+          graphHierarchy.expandedHubId = "__search__:" + match.node.id;
+          target = graphData.nodes.find((node) => node.id === match.node.id) ?? null;
         }
       }
       voiceHighlightedNode = target ?? match.node;
@@ -5639,6 +5771,40 @@
       return true;
     }
 
+    function updateJointDoubleThumbTap(frame, inputSource, time) {
+      if (!inputSource.hand || arNoteGroup.visible || graphHierarchy?.expandedHubId || arSearchKeyboardActive) return false;
+      let state = thumbTapGestureStates.get(inputSource);
+      if (!state) {
+        state = {
+          wrist: new THREE.Vector3(),
+          thumb: new THREE.Vector3(),
+          indexBase: new THREE.Vector3(),
+          middleBase: new THREE.Vector3(),
+          contact: false,
+          lastReleaseAt: 0,
+          lastThumbTapAt: 0
+        };
+        thumbTapGestureStates.set(inputSource, state);
+      }
+      const valid =
+        jointPosition(frame, inputSource.hand.get("wrist"), state.wrist) &&
+        jointPosition(frame, inputSource.hand.get("thumb-tip"), state.thumb) &&
+        jointPosition(frame, inputSource.hand.get("index-finger-phalanx-proximal") ?? inputSource.hand.get("index-finger-metacarpal"), state.indexBase) &&
+        jointPosition(frame, inputSource.hand.get("middle-finger-metacarpal") ?? inputSource.hand.get("middle-finger-phalanx-proximal"), state.middleBase);
+      if (!valid) return false;
+      const handScale = THREE.MathUtils.clamp(state.wrist.distanceTo(state.middleBase), 0.055, 0.14);
+      const distance = state.thumb.distanceTo(state.indexBase);
+      const touching = state.contact
+        ? distance < handScale * 0.58
+        : distance < handScale * 0.42;
+      if (touching && !state.contact && time - state.lastReleaseAt >= 110) {
+        registerDoubleThumbTap(state, time);
+      }
+      if (!touching && state.contact) state.lastReleaseAt = time;
+      state.contact = touching;
+      return touching;
+    }
+
     function hasNativeMicroGestures(inputSource) {
       const profiles = Array.from(inputSource.profiles ?? []);
       const buttons = inputSource.gamepad?.buttons;
@@ -5728,9 +5894,11 @@
 
       for (const inputSource of xrSession.inputSources) {
         if (!inputSource.hand) continue;
-        // Quest Browser exposes XR_META_hand_tracking_microgestures through the
-        // oculus-hand gamepad profile. Prefer those native boolean states and
-        // retain the joint-based recognizer below as a cross-device fallback.
+        // Detect the thumb-to-index-base tap from joints even when the Quest exposes
+        // a native microgesture profile with a different gamepad button mapping.
+        updateJointDoubleThumbTap(frame, inputSource, time);
+        if (arSearchKeyboardActive) continue;
+        // Prefer native swipe states for paging; retain the joint recognizer below.
         if (updateNativeNoteMicroGestures(inputSource, time)) continue;
         let state = noteMicroGestureStates.get(inputSource);
         if (!state) {
@@ -6401,6 +6569,14 @@
                     ? `ir para ${formatAudioTime(pointedNoteControl.userData.bookmarkSeconds)}`
                   : action === "local-note"
                     ? `abrir ${pointedLocalNotePath || "esta nota"}`
+                  : action === "search-submit"
+                    ? "buscar a nota"
+                  : action === "search-close"
+                    ? "fechar a busca"
+                  : action === "search-backspace"
+                    ? "apagar a última letra"
+                  : action.startsWith("search-")
+                    ? "digitar esta tecla"
                 : action === "next" ? "avançar" : "voltar";
           setXrMessage(`Faça uma pinça para ${label}.`);
         }
@@ -6435,7 +6611,7 @@
         setNodeLocalPosition(highlightMesh.position, highlightedNode);
         highlightMesh.material.color.set(highlightedNode.color ?? "#8db4ff");
         const voicePulse = highlightedNode === voiceHighlightedNode
-          ? 1.35 + Math.sin(time * 0.014) * 0.35
+          ? 1.55 + Math.sin(time * 0.014) * 0.55
           : 1.18 + Math.sin(time * 0.008) * 0.12;
         highlightMesh.scale.setScalar(voicePulse * (dynamicGraphActive ? 16 : 1));
         if (selectedNode && gestureMode === "idle") {
