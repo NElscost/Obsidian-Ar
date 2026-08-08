@@ -326,6 +326,56 @@
       line-height: 1;
     }
 
+
+    #keyboard-search {
+      display: inline-grid !important;
+      place-items: center;
+      width: 44px;
+      min-width: 44px;
+      height: 44px;
+      min-height: 44px;
+      padding: 0;
+      border: 1px solid rgba(255, 255, 255, 0.34);
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.11);
+      color: #fff;
+      font-size: 19px;
+    }
+    .xr-search {
+      position: fixed;
+      z-index: 8;
+      left: 50%;
+      bottom: max(86px, calc(env(safe-area-inset-bottom) + 76px));
+      display: none;
+      width: min(560px, calc(100% - 28px));
+      grid-template-columns: 1fr auto auto;
+      gap: 8px;
+      padding: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.24);
+      border-radius: 16px;
+      background: rgba(7, 11, 18, 0.92);
+      transform: translateX(-50%);
+      pointer-events: auto;
+    }
+    .xr-search.visible { display: grid; }
+    .xr-search input {
+      min-width: 0;
+      min-height: 46px;
+      border: 1px solid rgba(141, 180, 255, 0.45);
+      border-radius: 12px;
+      padding: 0 14px;
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      font: inherit;
+      font-size: 16px;
+    }
+    .xr-search button {
+      width: auto;
+      min-width: 74px;
+      min-height: 46px;
+      padding: 0 14px;
+    }
+
     .note-panel {
       position: fixed;
       z-index: 5;
@@ -616,8 +666,14 @@
   <aside id="xr-hud" class="xr-hud" aria-live="polite">
     <p id="xr-message">Procure uma superfície e faça uma pinça para posicionar.</p>
     <button id="voice-search" type="button" aria-label="Procurar nota por voz" title="Procurar nota por voz">🎙</button>
+    <button id="keyboard-search" type="button" aria-label="Digitar busca de nota" title="Digitar busca de nota">⌨</button>
     <button id="replace" type="button">Reposicionar</button>
   </aside>
+  <form id="xr-search" class="xr-search" role="search">
+    <input id="xr-search-input" type="search" inputmode="search" enterkeyhint="search" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Nome da nota">
+    <button type="submit">Buscar</button>
+    <button id="xr-search-close" type="button" aria-label="Fechar busca">Fechar</button>
+  </form>
   <aside id="note-panel" class="note-panel" aria-live="polite">
     <header class="note-header">
       <h2 id="note-title">Nota</h2>
@@ -670,6 +726,10 @@
     const xrHud = document.querySelector("#xr-hud");
     const xrMessage = document.querySelector("#xr-message");
     const voiceSearchButton = document.querySelector("#voice-search");
+    const keyboardSearchButton = document.querySelector("#keyboard-search");
+    const xrSearch = document.querySelector("#xr-search");
+    const xrSearchInput = document.querySelector("#xr-search-input");
+    const xrSearchCloseButton = document.querySelector("#xr-search-close");
     const bridgeUrlInput = document.querySelector("#bridge-url");
     const bridgeTokenInput = document.querySelector("#bridge-token");
     const accessClientIdInput = document.querySelector("#access-client-id");
@@ -1127,10 +1187,10 @@
           const material = source.clone();
           const isOutline = /outline/i.test(material.name || object.name || "");
           material.transparent = true;
-          material.opacity = isOutline ? 0.78 : 0.24;
+          material.opacity = isOutline ? 0.62 : 0.34;
           material.depthWrite = false;
           material.toneMapped = false;
-          material.color?.set(0x000000);
+          material.color?.set(isOutline ? 0xffffff : 0x000000);
           material.needsUpdate = true;
           return material;
         });
@@ -3884,6 +3944,50 @@
       xrMessage.textContent = message;
     }
 
+
+    function closeKeyboardSearch() {
+      xrSearch.classList.remove("visible");
+      xrSearchInput.blur();
+    }
+
+    function openKeyboardSearch() {
+      if (!xrSession) return;
+      xrSearch.classList.add("visible");
+      xrSearchInput.value = "";
+      setXrMessage("Digite o nome da nota no teclado virtual e pressione Buscar.");
+      requestAnimationFrame(() => {
+        xrSearchInput.focus({ preventScroll: true });
+        xrSearchInput.click();
+      });
+    }
+
+    function submitKeyboardSearch(event) {
+      event?.preventDefault();
+      const query = xrSearchInput.value.trim();
+      if (!query) {
+        xrSearchInput.focus({ preventScroll: true });
+        return;
+      }
+      closeKeyboardSearch();
+      highlightNoteSearchResult(query);
+    }
+
+    function maybeOpenSearchFromSwipe(state, action, time) {
+      if (arNoteGroup.visible || graphHierarchy?.expandedHubId) return false;
+      const repeated = state.lastSearchSwipeAction === action &&
+        time - (state.lastSearchSwipeAt ?? 0) <= 900;
+      state.lastSearchSwipeAction = action;
+      state.lastSearchSwipeAt = time;
+      if (repeated) {
+        state.lastSearchSwipeAt = 0;
+        state.lastSearchSwipeAction = "";
+        openKeyboardSearch();
+      } else {
+        setXrMessage("Repita o microgesto do polegar para abrir a busca digitada.");
+      }
+      return true;
+    }
+
     function rememberRecentNote(path) {
       try {
         const recent = JSON.parse(
@@ -4540,10 +4644,17 @@
 
     function voiceQueryCandidates(spokenText) {
       const words = normalizeNoteSearchText(spokenText).split(/\s+/).filter(Boolean);
-      const meaningful = words.filter((word, index) => !(index === 0 && isVoiceCommandWord(word)) && !VOICE_FILLER_WORDS.has(word));
+      let start = 0;
+      if (words.length && isVoiceCommandWord(words[0])) start = 1;
+      while (start < words.length && VOICE_FILLER_WORDS.has(words[start])) start += 1;
+      const spokenTitle = words.slice(start).join(" ");
+      const meaningful = words.slice(start).filter((word) => !VOICE_FILLER_WORDS.has(word));
       const candidates = new Set();
+      if (spokenTitle) candidates.add(spokenTitle);
       for (let size = 1; size <= Math.min(4, meaningful.length); size += 1) {
-        for (let start = 0; start + size <= meaningful.length; start += 1) candidates.add(meaningful.slice(start, start + size).join(" "));
+        for (let offset = 0; offset + size <= meaningful.length; offset += 1) {
+          candidates.add(meaningful.slice(offset, offset + size).join(" "));
+        }
       }
       return [...candidates].sort((left, right) => right.length - left.length);
     }
@@ -4574,6 +4685,15 @@
       if (!sourceData?.nodes?.length) return null;
       const candidates = voiceQueryCandidates(spokenText);
       if (!candidates.length) return null;
+      const primaryQuery = candidates[0];
+      const exactMatches = sourceData.nodes.filter((node) => {
+        const label = normalizeNoteSearchText(node?.label ?? "");
+        const fileName = String(node?.id ?? "").split(/[\\/]/).at(-1) ?? "";
+        return label === primaryQuery || normalizeNoteSearchText(fileName) === primaryQuery;
+      });
+      if (exactMatches.length === 1) {
+        return { node: exactMatches[0], score: 2000, exact: true };
+      }
       const ranked = [];
       for (const node of sourceData.nodes) {
         let score = 0;
@@ -4583,6 +4703,7 @@
       ranked.sort((left, right) => right.score - left.score);
       const best = ranked[0];
       const second = ranked[1];
+      console.info("[VOICE] correspondência de nota", { spokenText, candidates, best: best?.node?.id, score: best?.score, second: second?.node?.id, secondScore: second?.score });
       if (!best || best.score < 330) return null;
       if (second && best.score < 900 && best.score - second.score < 18) return null;
       return best;
@@ -5516,7 +5637,9 @@
           rightPressed: false,
           pressed: false,
           suppressRayUntil: 0,
-          lastActionAt: 0
+          lastActionAt: 0,
+          lastSearchSwipeAt: 0,
+          lastSearchSwipeAction: ""
         };
         nativeMicroGestureStates.set(inputSource, state);
       }
@@ -5538,7 +5661,9 @@
       ) {
         const action = rightStarted ? "next" : "previous";
         state.lastActionAt = time;
-        if (!arNoteGroup.visible && graphHierarchy?.expandedHubId) {
+        if (maybeOpenSearchFromSwipe(state, action, time)) {
+          // A repeated swipe while viewing the graph opens the Quest keyboard.
+        } else if (!arNoteGroup.visible && graphHierarchy?.expandedHubId) {
           if (action === "previous") collapseClusterGraph();
         } else {
           const oldPage = arNotePage;
@@ -5565,7 +5690,8 @@
 
     function updateNoteMicroGestures(frame, time) {
       const clusterNavigationActive = !arNoteGroup.visible && Boolean(graphHierarchy?.expandedHubId);
-      if ((!arNoteGroup.visible || arNotePages.length < 2) && !clusterNavigationActive) return;
+      const graphSearchGestureActive = !arNoteGroup.visible && !clusterNavigationActive;
+      if ((!arNoteGroup.visible || arNotePages.length < 2) && !clusterNavigationActive && !graphSearchGestureActive) return;
       if (!xrSession) return;
       const xrCamera = renderer.xr.getCamera(camera);
       xrCamera.getWorldQuaternion(microGestureCameraQuaternion);
@@ -5813,7 +5939,9 @@
         const action = screenMovement > 0 ? "next" : "previous";
         state.awaitingNeutral = true;
         state.neutralSince = 0;
-        if (clusterNavigationActive) {
+        if (maybeOpenSearchFromSwipe(state, action, time)) {
+          // The second matching swipe opens the DOM-overlay search input.
+        } else if (clusterNavigationActive) {
           if (action === "previous") {
             collapseClusterGraph();
           } else {
@@ -6487,6 +6615,7 @@
       reticle.visible = false;
       document.body.classList.remove("session-active");
       xrHud.classList.remove("visible");
+      closeKeyboardSearch();
       notePanel.classList.remove("visible");
       disposeArNote();
       disposeEnvironment360();
@@ -6504,6 +6633,9 @@
 
     enterButton.addEventListener("click", startSession);
     voiceSearchButton.addEventListener("click", startVoiceNoteSearch);
+    keyboardSearchButton.addEventListener("click", openKeyboardSearch);
+    xrSearch.addEventListener("submit", submitKeyboardSearch);
+    xrSearchCloseButton.addEventListener("click", closeKeyboardSearch);
     saveBridgeButton.addEventListener("click", saveBridgeConfig);
     dynamicGraphToggle.addEventListener("change", () => {
       localStorage.setItem(

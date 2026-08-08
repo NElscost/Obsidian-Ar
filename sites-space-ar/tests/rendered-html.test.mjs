@@ -248,6 +248,10 @@ test("procura notas por voz e pulsa o resultado no grafo", async () => {
   assert.match(html, /function isVoiceSearchCommand/);
   assert.match(html, /function findBestNoteMatch/);
   assert.match(html, /function highlightNoteSearchResult/);
+  assert.match(html, /const spokenTitle = words\.slice\(start\)\.join/);
+  assert.match(html, /exactMatches\.length === 1/);
+  assert.match(html, /id="xr-search-input"/);
+  assert.match(html, /function maybeOpenSearchFromSwipe/);
   assert.match(html, /ownerById/);
   assert.match(html, /voiceHighlightUntil = performance\.now\(\) \+ 10_000/);
   assert.match(html, /Nota encontrada:/);
@@ -279,8 +283,8 @@ test("carrega mãos virtuais do IWSDK sob demanda com fallback Three.js", async 
   assert.match(html, /iwInputManager\.update\(renderer\.xr, delta, time \/ 1000\)/);
   assert.match(html, /XRHandModelFactory/);
   assert.match(html, /function styleVirtualHandMeshes/);
-  assert.match(html, /material\.opacity = isOutline \? 0\.78 : 0\.24/);
-  assert.match(html, /material\.color\?\.set\(0x000000\)/);
+  assert.match(html, /material\.opacity = isOutline \? 0\.62 : 0\.34/);
+  assert.match(html, /material\.color\?\.set\(isOutline \? 0xffffff : 0x000000\)/);
 });
 
 test("quebra trechos longos em blocos de código sem perder a formatação", async () => {

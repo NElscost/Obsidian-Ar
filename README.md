@@ -128,6 +128,9 @@ Wait for graph processing to complete, then enter AR.
 - use two pinches to scale and rotate it;
 - point with the palm ray and pinch to open a note;
 - close four fingers and swipe the thumb to change pages;
+- while viewing the main graph, repeat the same thumb swipe twice within 900 ms
+  to open the typed-search field and the Quest virtual keyboard;
+- the keyboard button in the AR HUD opens the same typed-search fallback;
 - use the 3D controls to pin, navigate, play media, or close the note;
 - select a labeled node in the note's local graph to replace both panels with
   the corresponding note and its neighborhood;
