@@ -277,7 +277,7 @@
       z-index: 4;
       left: 50%;
       bottom: max(24px, env(safe-area-inset-bottom));
-      width: min(520px, calc(100% - 32px));
+      width: min(680px, calc(100% - 24px));
       transform: translateX(-50%);
       display: none;
       gap: 10px;
@@ -293,6 +293,7 @@
 
     .xr-hud p {
       flex: 1;
+      min-width: 0;
       margin: 0;
       color: #f1f5fb;
       font-size: 13px;
@@ -300,12 +301,23 @@
     }
 
     .xr-hud button {
+      flex: 0 0 auto;
       width: auto;
+      min-width: 92px;
       min-height: 40px;
       padding: 0 14px;
       background: rgba(255, 255, 255, 0.12);
       color: #fff;
       font-size: 12px;
+    }
+    #voice-search {
+      display: inline-grid !important;
+      place-items: center;
+      min-width: 104px;
+      border: 1px solid rgba(117, 231, 208, 0.55);
+      background: rgba(38, 177, 151, 0.3);
+      color: #eafffa;
+      font-weight: 800;
     }
 
     .note-panel {
@@ -597,7 +609,7 @@
 
   <aside id="xr-hud" class="xr-hud" aria-live="polite">
     <p id="xr-message">Procure uma superfície e faça uma pinça para posicionar.</p>
-    <button id="voice-search" type="button" aria-label="Procurar nota por voz">Voz</button>
+    <button id="voice-search" type="button" aria-label="Procurar nota por voz">🎙 Voz</button>
     <button id="replace" type="button">Reposicionar</button>
   </aside>
   <aside id="note-panel" class="note-panel" aria-live="polite">
@@ -2926,7 +2938,7 @@
       );
     }
 
-    function tryCreateVideoMediaLayer(video, width = 0.54, height = 0.304) {
+    function tryCreateVideoMediaLayer(video, width = 0.59, height = 0.435) {
       if (!xrSession || !referenceSpace || typeof XRMediaBinding === "undefined") return false;
       const currentLayers = Array.from(xrSession.renderState?.layers ?? []);
       // Three.js precisa manter sua projection layer; sem ela usamos VideoTexture.
@@ -2978,9 +2990,10 @@
       activeNoteVideoTexture.generateMipmaps = false;
       activeNoteVideoGroup = new THREE.Group();
       activeNoteVideoGroup.name = "note-video-window";
-      activeNoteVideoGroup.position.set(-0.615, 0.015, 0.006);
+      // Both panels are 0.62 m wide: half + half + a 2.5 cm gap.
+      activeNoteVideoGroup.position.set(-0.645, 0, 0.006);
       const videoBackdrop = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.57, 0.334),
+        new THREE.PlaneGeometry(0.62, 0.465),
         new THREE.MeshBasicMaterial({
           color: 0x03060b,
           transparent: true,
@@ -2994,7 +3007,7 @@
       videoBackdrop.raycast = () => {};
       activeNoteVideoBackdrop = videoBackdrop;
       activeNoteVideoSurface = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.54, 0.304),
+        new THREE.PlaneGeometry(0.59, 0.435),
         new THREE.MeshBasicMaterial({
           map: activeNoteVideoTexture,
           toneMapped: false,
@@ -3009,16 +3022,14 @@
       const resize = () => {
         if (!activeNoteVideoSurface || !video.videoWidth || !video.videoHeight) return;
         const aspect = video.videoWidth / video.videoHeight;
-        let width = 0.54;
+        let width = 0.59;
         let height = width / aspect;
-        if (height > 0.36) {
-          height = 0.36;
+        if (height > 0.435) {
+          height = 0.435;
           width = height * aspect;
         }
         activeNoteVideoSurface.geometry.dispose();
         activeNoteVideoSurface.geometry = new THREE.PlaneGeometry(width, height);
-        videoBackdrop.geometry.dispose();
-        videoBackdrop.geometry = new THREE.PlaneGeometry(width + 0.03, height + 0.03);
         if (activeNoteVideoLayer) {
           try {
             activeNoteVideoLayer.width = width;
@@ -4554,7 +4565,7 @@
         });
         voiceRecognition.addEventListener("end", () => {
           voiceRecognitionActive = false;
-          voiceSearchButton.textContent = "Voz";
+          voiceSearchButton.textContent = "🎙 Voz";
         });
       }
       if (voiceRecognitionActive) {
@@ -4562,13 +4573,13 @@
         return;
       }
       voiceRecognitionActive = true;
-      voiceSearchButton.textContent = "Ouvindo…";
+      voiceSearchButton.textContent = "🎙 Ouvindo…";
       setXrMessage("Diga: “Procure a nota do Carl Sagan”.");
       try {
         voiceRecognition.start();
       } catch {
         voiceRecognitionActive = false;
-        voiceSearchButton.textContent = "Voz";
+        voiceSearchButton.textContent = "🎙 Voz";
       }
     }
 

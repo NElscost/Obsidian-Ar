@@ -175,7 +175,6 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function extractNoteVideoTracks/);
   assert.match(html, /function createArVideoSurface/);
   assert.match(html, /activeNoteVideoGroup\.name = "note-video-window"/);
-  assert.match(html, /activeNoteVideoGroup\.position\.set\(-0\.615, 0\.015, 0\.006\)/);
   assert.match(html, /activeNoteVideoGroup\.add\(videoBackdrop, activeNoteVideoSurface\)/);
   assert.match(html, /new THREE\.VideoTexture\(video\)/);
   assert.match(html, /noteVideoTracks\[0\] \?\? noteAudioTracks\[0\]/);
@@ -196,6 +195,8 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function tryCreateVideoMediaLayer/);
   assert.match(html, /new XRMediaBinding\(xrSession\)/);
   assert.match(html, /function updateVideoPresentation/);
+  assert.match(html, /activeNoteVideoGroup\.position\.set\(-0\.645, 0, 0\.006\)/);
+  assert.match(html, /new THREE\.PlaneGeometry\(0\.62, 0\.465\)/);
   assert.match(html, /async function recoverVideoWithBlob/);
   assert.match(html, /Streaming indisponível neste Quest/);
   assert.match(html, /createMediaElementSource/);
@@ -231,6 +232,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
 test("procura notas por voz e pulsa o resultado no grafo", async () => {
   const html = await readFile(xrUrl, "utf8");
   assert.match(html, /id="voice-search"/);
+  assert.match(html, /#voice-search/);
   assert.match(html, /window\.SpeechRecognition \?\? window\.webkitSpeechRecognition/);
   assert.match(html, /function findBestNoteMatch/);
   assert.match(html, /function highlightNoteSearchResult/);
