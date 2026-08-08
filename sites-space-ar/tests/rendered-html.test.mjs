@@ -196,6 +196,8 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function tryCreateVideoMediaLayer/);
   assert.match(html, /new XRMediaBinding\(xrSession\)/);
   assert.match(html, /function updateVideoPresentation/);
+  assert.match(html, /async function recoverVideoWithBlob/);
+  assert.match(html, /Streaming indisponível neste Quest/);
   assert.match(html, /createMediaElementSource/);
   assert.match(html, /async function ensureSpatialAudioContext/);
   assert.match(html, /spatialAudioContext\.state === "running"/);
@@ -224,6 +226,17 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /new THREE\.PlaneGeometry\(0\.024, 0\.024\)/);
   assert.match(html, /activeNoteAudio\.currentTime = 0/);
   assert.match(html, /space-ar-note-cache-v4/);
+});
+
+test("procura notas por voz e pulsa o resultado no grafo", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /id="voice-search"/);
+  assert.match(html, /window\.SpeechRecognition \?\? window\.webkitSpeechRecognition/);
+  assert.match(html, /function findBestNoteMatch/);
+  assert.match(html, /function highlightNoteSearchResult/);
+  assert.match(html, /ownerById/);
+  assert.match(html, /voiceHighlightUntil = performance\.now\(\) \+ 10_000/);
+  assert.match(html, /Nota encontrada:/);
 });
 
 test("mostra uma cópia 3D local ao lado da nota sem nova simulação", async () => {

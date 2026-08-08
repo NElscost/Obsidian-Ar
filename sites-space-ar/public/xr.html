@@ -597,6 +597,7 @@
 
   <aside id="xr-hud" class="xr-hud" aria-live="polite">
     <p id="xr-message">Procure uma superfície e faça uma pinça para posicionar.</p>
+    <button id="voice-search" type="button" aria-label="Procurar nota por voz">Voz</button>
     <button id="replace" type="button">Reposicionar</button>
   </aside>
   <aside id="note-panel" class="note-panel" aria-live="polite">
@@ -650,6 +651,7 @@
     const graphProgressTime = document.querySelector("#graph-progress-time");
     const xrHud = document.querySelector("#xr-hud");
     const xrMessage = document.querySelector("#xr-message");
+    const voiceSearchButton = document.querySelector("#voice-search");
     const bridgeUrlInput = document.querySelector("#bridge-url");
     const bridgeTokenInput = document.querySelector("#bridge-token");
     const accessClientIdInput = document.querySelector("#access-client-id");
@@ -1216,6 +1218,7 @@
     let noteVideoPreparation = null;
     let noteVideoPreparationError = null;
     let noteVideoPreparationGeneration = 0;
+    let videoFallbackBusy = false;
     let localNoteGraphGroup = null;
     let pointedLocalNotePath = null;
     let spatialAudioContext = null;
@@ -1259,6 +1262,7 @@
       preparedNoteVideo = null;
       noteVideoPreparation = null;
       noteVideoPreparationError = null;
+      videoFallbackBusy = false;
       localNoteGraphGroup = null;
       pointedLocalNotePath = null;
       spatialAudioSource?.disconnect();
@@ -3048,6 +3052,7 @@
         try {
           let source = track.source;
           let objectUrl = null;
+          let streaming = false;
           if (!isNetworkSource(source) && !isBrowserLocalSource(source)) {
             const config = JSON.parse(
               sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null"
@@ -3062,6 +3067,7 @@
             if (canUseTicket) {
               const ticket = await fetchVaultMediaTicket(config, notePath, source);
               source = ticket.source;
+              streaming = true;
             } else {
               const blob = await fetchVaultAsset(config, notePath, source);
               if (blob.size > 256 * 1024 * 1024) {
@@ -3075,7 +3081,7 @@
             if (objectUrl) URL.revokeObjectURL(objectUrl);
             return;
           }
-          preparedNoteVideo = { source, objectUrl, track, streaming: isNetworkSource(source) };
+          preparedNoteVideo = { source, objectUrl, track, streaming };
           if (activeNoteAudioControl) {
             activeNoteAudioControl.material.color.setHex(0x63e6be);
           }
@@ -3093,6 +3099,37 @@
           }
         }
       })();
+    }
+
+    async function recoverVideoWithBlob(track) {
+      if (videoFallbackBusy || !activeNoteAudio || !preparedNoteVideo?.streaming) return false;
+      videoFallbackBusy = true;
+      preparedNoteVideo.streaming = false;
+      try {
+        const config = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
+        if (!config?.url || !config?.token) return false;
+        setXrMessage("Streaming indisponível neste Quest; tentando modo compatível…");
+        const blob = await fetchVaultAsset(config, arNotePath, track.source);
+        if (blob.size > 256 * 1024 * 1024) {
+          throw new Error("Vídeo maior que 256 MB no modo compatível.");
+        }
+        if (activeNoteAudioObjectUrl) URL.revokeObjectURL(activeNoteAudioObjectUrl);
+        activeNoteAudioObjectUrl = URL.createObjectURL(blob);
+        activeNoteAudio.pause();
+        activeNoteAudio.removeAttribute("crossorigin");
+        activeNoteAudio.src = activeNoteAudioObjectUrl;
+        activeNoteAudio.load();
+        await activeNoteAudio.play();
+        if (!activeNoteVideoSurface) createArVideoSurface(activeNoteAudio);
+        setXrMessage(`Reproduzindo vídeo em modo compatível: ${track.label}.`);
+        return true;
+      } catch (error) {
+        setXrMessage(`Falha no vídeo: ${describeVideoPlaybackError(activeNoteAudio, error)}`);
+        return false;
+      } finally {
+        videoFallbackBusy = false;
+        updateAudioControlColor();
+      }
     }
 
     async function toggleNoteAudio() {
@@ -3143,6 +3180,10 @@
           const spatial = connectSpatialNoteAudio(activeNoteAudio, spatialContext);
           if (isVideo) {
             activeNoteAudio.addEventListener("error", () => {
+              if (preparedNoteVideo?.streaming) {
+                void recoverVideoWithBlob(track);
+                return;
+              }
               setXrMessage(`Falha no vídeo: ${describeVideoPlaybackError(activeNoteAudio)}`);
             });
           }
@@ -3522,6 +3563,10 @@
     let baseModelScale = 1;
     let userScaleFactor = 1;
     let graphIntroPulseStartedAt = null;
+    let voiceRecognition = null;
+    let voiceRecognitionActive = false;
+    let voiceHighlightedNode = null;
+    let voiceHighlightUntil = 0;
     const synapsePulseTime = { value: 0 };
     let xrSession = null;
     let referenceSpace = null;
@@ -4420,8 +4465,111 @@
       }
 
       const coreData = { nodes: coreNodes, links: collapsedLinks };
-      graphHierarchy = { fullData: data, coreData, expandedHubId: null };
+      graphHierarchy = { fullData: data, coreData, ownerById, expandedHubId: null };
       return coreData;
+    }
+
+    function normalizeNoteSearchText(value) {
+      return String(value ?? "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/\.md$/i, "")
+        .replace(/[^a-z0-9]+/gi, " ")
+        .trim()
+        .toLowerCase();
+    }
+
+    function noteSearchScore(node, query) {
+      const title = normalizeNoteSearchText(node.label ?? node.id);
+      const path = normalizeNoteSearchText(node.id);
+      if (!title || !query) return 0;
+      if (title === query) return 1000;
+      if (title.startsWith(query)) return 820 - Math.abs(title.length - query.length);
+      if (title.includes(query)) return 700 - Math.abs(title.length - query.length);
+      const tokens = query.split(/\s+/).filter((token) => token.length > 1);
+      const titleTokens = new Set(`${title} ${path}`.split(/\s+/));
+      const matched = tokens.filter((token) =>
+        [...titleTokens].some((candidate) => candidate === token || candidate.startsWith(token))
+      ).length;
+      return tokens.length ? (matched / tokens.length) * 600 - Math.abs(title.length - query.length) : 0;
+    }
+
+    function findBestNoteMatch(spokenText) {
+      const query = normalizeNoteSearchText(spokenText)
+        .replace(/^(?:procure|buscar|busque|encontre|find|search)(?: por)?(?: a| o)?(?: nota| note)?(?: do| da| de| sobre| called| about)?\s+/, "")
+        .trim();
+      const data = graphHierarchy?.fullData ?? graphData;
+      if (!query || !data?.nodes?.length) return null;
+      let best = null;
+      for (const node of data.nodes) {
+        const score = noteSearchScore(node, query);
+        if (!best || score > best.score) best = { node, score, query };
+      }
+      return best?.score >= 260 ? best : null;
+    }
+
+    function highlightNoteSearchResult(spokenText) {
+      const match = findBestNoteMatch(spokenText);
+      if (!match) {
+        setXrMessage(`Nenhuma nota semelhante a “${spokenText}” foi encontrada.`);
+        return;
+      }
+      let target = graphData?.nodes?.find((node) => node.id === match.node.id) ?? null;
+      if (!target && graphHierarchy) {
+        const ownerId = graphHierarchy.ownerById?.get(match.node.id);
+        const hub = graphHierarchy.coreData.nodes.find((node) => node.id === ownerId);
+        if (hub) {
+          expandClusterNode(hub);
+          target = graphData.nodes.find((node) => node.id === match.node.id) ?? hub;
+        }
+      }
+      voiceHighlightedNode = target ?? match.node;
+      voiceHighlightUntil = performance.now() + 10_000;
+      setXrMessage(`Nota encontrada: ${match.node.label ?? match.node.id}. O nó piscará por 10 segundos.`);
+    }
+
+    function startVoiceNoteSearch() {
+      const SpeechRecognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        setXrMessage("Busca por voz não disponível neste navegador.");
+        return;
+      }
+      if (!voiceRecognition) {
+        voiceRecognition = new SpeechRecognition();
+        voiceRecognition.lang = navigator.language || "pt-BR";
+        voiceRecognition.interimResults = false;
+        voiceRecognition.continuous = false;
+        voiceRecognition.maxAlternatives = 3;
+        voiceRecognition.addEventListener("result", (event) => {
+          const alternatives = Array.from(event.results[event.results.length - 1] ?? []);
+          const best = alternatives
+            .map((item) => ({ transcript: item.transcript, match: findBestNoteMatch(item.transcript) }))
+            .sort((left, right) => (right.match?.score ?? 0) - (left.match?.score ?? 0))[0];
+          highlightNoteSearchResult(best?.transcript ?? "");
+        });
+        voiceRecognition.addEventListener("error", (event) => {
+          setXrMessage(event.error === "not-allowed"
+            ? "Permissão do microfone negada. Autorize-a nas permissões do site."
+            : `Busca por voz indisponível: ${event.error}.`);
+        });
+        voiceRecognition.addEventListener("end", () => {
+          voiceRecognitionActive = false;
+          voiceSearchButton.textContent = "Voz";
+        });
+      }
+      if (voiceRecognitionActive) {
+        voiceRecognition.stop();
+        return;
+      }
+      voiceRecognitionActive = true;
+      voiceSearchButton.textContent = "Ouvindo…";
+      setXrMessage("Diga: “Procure a nota do Carl Sagan”.");
+      try {
+        voiceRecognition.start();
+      } catch {
+        voiceRecognitionActive = false;
+        voiceSearchButton.textContent = "Voz";
+      }
     }
 
     function expandedClusterData(hub) {
@@ -5849,19 +5997,23 @@
         }
       }
       if (!highlightMesh) return;
-      highlightMesh.visible = Boolean(selectedNode);
-      if (selectedNode) {
-        setNodeLocalPosition(highlightMesh.position, selectedNode);
-        highlightMesh.material.color.set(selectedNode.color ?? "#8db4ff");
-        const pulse = 1.18 + Math.sin(time * 0.008) * 0.12;
-        highlightMesh.scale.setScalar(pulse * (dynamicGraphActive ? 16 : 1));
-        if (gestureMode === "idle") {
+      if (voiceHighlightedNode && time >= voiceHighlightUntil) voiceHighlightedNode = null;
+      const highlightedNode = selectedNode ?? voiceHighlightedNode;
+      highlightMesh.visible = Boolean(highlightedNode);
+      if (highlightedNode) {
+        setNodeLocalPosition(highlightMesh.position, highlightedNode);
+        highlightMesh.material.color.set(highlightedNode.color ?? "#8db4ff");
+        const voicePulse = highlightedNode === voiceHighlightedNode
+          ? 1.35 + Math.sin(time * 0.014) * 0.35
+          : 1.18 + Math.sin(time * 0.008) * 0.12;
+        highlightMesh.scale.setScalar(voicePulse * (dynamicGraphActive ? 16 : 1));
+        if (selectedNode && gestureMode === "idle") {
           setXrMessage(
-            selectedNode.isClusterBack || graphHierarchy?.expandedHubId === selectedNode.id
+            highlightedNode.isClusterBack || graphHierarchy?.expandedHubId === highlightedNode.id
               ? "Faça uma pinça para voltar ao grafo principal."
-              : selectedNode.clusterChildren?.length
-                ? `${selectedNode.label}. Faça uma pinça para revelar as notas agrupadas.`
-                : `${selectedNode.label}. Faça uma pinça para abrir a nota.`
+              : highlightedNode.clusterChildren?.length
+                ? `${highlightedNode.label}. Faça uma pinça para revelar as notas agrupadas.`
+                : `${highlightedNode.label}. Faça uma pinça para abrir a nota.`
           );
         }
       }
@@ -6037,6 +6189,8 @@
     }
 
     function endSession() {
+      if (voiceRecognitionActive) voiceRecognition?.stop();
+      voiceHighlightedNode = null;
       hitTestSource?.cancel();
       hitTestSource = null;
       disposeAnchor();
@@ -6072,6 +6226,7 @@
     }
 
     enterButton.addEventListener("click", startSession);
+    voiceSearchButton.addEventListener("click", startVoiceNoteSearch);
     saveBridgeButton.addEventListener("click", saveBridgeConfig);
     dynamicGraphToggle.addEventListener("change", () => {
       localStorage.setItem(

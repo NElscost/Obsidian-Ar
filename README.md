@@ -10,6 +10,7 @@ local Rust bridge, creates an HTTPS tunnel, and displays a QR code for pairing.
 - passthrough or an optional equirectangular 360° panorama;
 - WebXR hit testing and anchors;
 - hand gestures for placement, scale, rotation, selection, and pagination;
+- fuzzy voice search that highlights a matching note in the 3D graph;
 - Markdown, tables, LaTeX, code, images, audio, and video in a 3D note window;
 - spatial HRTF audio, audio/video waveform seeking, and media bookmarks;
 - cached note rendering and preprocessing to reduce frame drops;
@@ -153,6 +154,13 @@ Audio and video attachments share the same seek bar. Point and pinch to jump to
 a position, keep the pinch held while moving to scrub, and release to store a
 bookmark. The preprocessing queue prioritizes notes containing video, fenced
 code blocks, and LaTeX so their first open is less likely to interrupt XR.
+
+During AR, select **Voice** in the lower overlay and say a command such as
+“Find the Carl Sagan note” or “Procure a nota do Carl Sagan”. The viewer removes
+accents and filler words, compares the available speech alternatives, expands a
+grouped hub when needed, and pulses the best matching node for ten seconds.
+Speech recognition depends on the Quest Browser Web Speech implementation and
+microphone permission.
 
 The local note graph is deliberately bounded to 27 neighbors. It uses one
 instanced node mesh, one line geometry, and one text atlas, without starting a

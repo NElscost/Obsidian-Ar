@@ -1319,6 +1319,11 @@ async fn create_media_ticket(
             expires_at: now + MEDIA_TICKET_TTL,
         },
     );
+    println!(
+        "[VIDEO] ticket temporário pronto: {} ({} bytes)",
+        payload.asset_path,
+        metadata.len()
+    );
     Json(json!({
         "url": format!("/media/{ticket}"),
         "expiresIn": MEDIA_TICKET_TTL.as_secs(),
@@ -1346,6 +1351,14 @@ async fn read_media_ticket(
         entry.expires_at = now + MEDIA_TICKET_TTL;
         entry.path.clone()
     };
+    if let Some(range) = headers
+        .get(header::RANGE)
+        .and_then(|value| value.to_str().ok())
+    {
+        println!("[VIDEO] streaming {range}");
+    } else {
+        println!("[VIDEO] streaming completo solicitado");
+    }
     stream_media_file(&path, &headers, "private, no-store").await
 }
 
