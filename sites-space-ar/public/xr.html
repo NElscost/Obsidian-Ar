@@ -1206,6 +1206,14 @@
     arNoteGroup.position.set(0, 0, -0.82);
     arNoteGroup.visible = false;
     camera.add(arNoteGroup);
+    const AR_NOTE_WIDTH = 0.62;
+    const AR_NOTE_HEIGHT = 0.465;
+    const AR_VIDEO_GAP = 0.035;
+    const AR_VIDEO_WIDTH = AR_NOTE_WIDTH;
+    const AR_VIDEO_HEIGHT = AR_NOTE_HEIGHT;
+    const AR_VIDEO_CENTER_X = -(
+      AR_NOTE_WIDTH / 2 + AR_VIDEO_GAP + AR_VIDEO_WIDTH / 2
+    );
     let arNoteTexture = null;
     let arNoteSurface = null;
     let arNoteControls = [];
@@ -2945,6 +2953,11 @@
     }
 
     function tryCreateVideoMediaLayer(video, width = 0.57, height = 0.405) {
+      // Quest currently applies XRMediaBinding in reference-space coordinates
+      // while the note follows the camera. Keep both panels in Three.js space
+      // until the compositor can preserve this parent/child transform reliably.
+      return false;
+      /* istanbul ignore next */
       if (!xrSession || !referenceSpace || typeof XRMediaBinding === "undefined") return false;
       const currentLayers = Array.from(xrSession.renderState?.layers ?? []);
       // Three.js precisa manter sua projection layer; sem ela usamos VideoTexture.
@@ -2996,10 +3009,9 @@
       activeNoteVideoTexture.generateMipmaps = false;
       activeNoteVideoGroup = new THREE.Group();
       activeNoteVideoGroup.name = "note-video-window";
-      // Keep the video clearly outside the note panel, with an 8 cm gap.
-      activeNoteVideoGroup.position.set(-0.69, 0, 0.006);
+      activeNoteVideoGroup.position.set(AR_VIDEO_CENTER_X, 0, 0.006);
       const videoBackdrop = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.60, 0.435),
+        new THREE.PlaneGeometry(AR_VIDEO_WIDTH, AR_VIDEO_HEIGHT),
         new THREE.MeshBasicMaterial({
           color: 0x03060b,
           transparent: true,
@@ -3013,7 +3025,7 @@
       videoBackdrop.raycast = () => {};
       activeNoteVideoBackdrop = videoBackdrop;
       activeNoteVideoSurface = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.57, 0.405),
+        new THREE.PlaneGeometry(AR_VIDEO_WIDTH - 0.03, AR_VIDEO_HEIGHT - 0.03),
         new THREE.MeshBasicMaterial({
           map: activeNoteVideoTexture,
           toneMapped: false,
@@ -3028,10 +3040,10 @@
       const resize = () => {
         if (!activeNoteVideoSurface || !video.videoWidth || !video.videoHeight) return;
         const aspect = video.videoWidth / video.videoHeight;
-        let width = 0.57;
+        let width = AR_VIDEO_WIDTH - 0.03;
         let height = width / aspect;
-        if (height > 0.405) {
-          height = 0.405;
+        if (height > AR_VIDEO_HEIGHT - 0.03) {
+          height = AR_VIDEO_HEIGHT - 0.03;
           width = height * aspect;
         }
         activeNoteVideoSurface.geometry.dispose();
@@ -3488,8 +3500,8 @@
       arNoteTexture.minFilter = THREE.LinearFilter;
       arNoteTexture.generateMipmaps = false;
 
-      const width = 0.62;
-      const height = 0.465;
+      const width = AR_NOTE_WIDTH;
+      const height = AR_NOTE_HEIGHT;
       arNoteSurface = new THREE.Mesh(
         new THREE.PlaneGeometry(width, height),
         new THREE.MeshBasicMaterial({
@@ -3582,6 +3594,8 @@
     let graphIntroPulseStartedAt = null;
     let voiceRecognition = null;
     let voiceRecognitionActive = false;
+    let voiceCaptureEnabled = false;
+    let voiceRestartTimer = null;
     let voiceHighlightedNode = null;
     let voiceHighlightUntil = 0;
     const synapsePulseTime = { value: 0 };
@@ -4525,6 +4539,12 @@
       return best?.score >= 260 ? best : null;
     }
 
+    function isVoiceSearchCommand(spokenText) {
+      return /^(?:procure|buscar|busque|encontre|find|search)\b/i.test(
+        normalizeNoteSearchText(spokenText)
+      );
+    }
+
     function highlightNoteSearchResult(spokenText) {
       const match = findBestNoteMatch(spokenText);
       if (!match) {
@@ -4562,7 +4582,9 @@
           const best = alternatives
             .map((item) => ({ transcript: item.transcript, match: findBestNoteMatch(item.transcript) }))
             .sort((left, right) => (right.match?.score ?? 0) - (left.match?.score ?? 0))[0];
-          highlightNoteSearchResult(best?.transcript ?? "");
+          if (best?.transcript && isVoiceSearchCommand(best.transcript)) {
+            highlightNoteSearchResult(best.transcript);
+          }
         });
         voiceRecognition.addEventListener("error", (event) => {
           setXrMessage(event.error === "not-allowed"
@@ -4573,12 +4595,28 @@
           voiceRecognitionActive = false;
           voiceSearchButton.textContent = "🎙";
           voiceSearchButton.setAttribute("aria-label", "Procurar nota por voz");
+          if (voiceCaptureEnabled && xrSession) {
+            clearTimeout(voiceRestartTimer);
+            voiceRestartTimer = setTimeout(() => {
+              if (voiceCaptureEnabled && xrSession && !voiceRecognitionActive) {
+                beginVoiceRecognition();
+              }
+            }, 650);
+          }
         });
       }
       if (voiceRecognitionActive) {
+        voiceCaptureEnabled = false;
         voiceRecognition.stop();
+        setXrMessage("Microfone pausado. Selecione o ícone para reativar.");
         return;
       }
+      voiceCaptureEnabled = true;
+      beginVoiceRecognition();
+    }
+
+    function beginVoiceRecognition() {
+      if (!voiceRecognition || voiceRecognitionActive) return;
       voiceRecognitionActive = true;
       voiceSearchButton.textContent = "●";
       voiceSearchButton.setAttribute("aria-label", "Ouvindo comando de voz");
@@ -4589,6 +4627,32 @@
         voiceRecognitionActive = false;
         voiceSearchButton.textContent = "🎙";
         voiceSearchButton.setAttribute("aria-label", "Procurar nota por voz");
+      }
+    }
+
+    async function requestVoicePermissionBeforeAr() {
+      const SpeechRecognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+      if (!SpeechRecognition || !navigator.mediaDevices?.getUserMedia) {
+        voiceCaptureEnabled = false;
+        voiceSearchButton.disabled = true;
+        return false;
+      }
+      setStatus("Autorize o microfone para procurar notas durante a sessão AR…");
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true },
+          video: false
+        });
+        for (const track of stream.getTracks()) track.stop();
+        voiceCaptureEnabled = true;
+        voiceSearchButton.disabled = false;
+        return true;
+      } catch (error) {
+        voiceCaptureEnabled = false;
+        voiceSearchButton.disabled = true;
+        console.warn("Permissão do microfone não concedida.", error);
+        setStatus("Microfone não autorizado; a sessão continuará sem busca por voz.");
+        return false;
       }
     }
 
@@ -5069,9 +5133,10 @@
       cancelNoteCapture();
       enterButton.disabled = true;
       try {
+        const voiceAllowed = await requestVoicePermissionBeforeAr();
         xrSession = await navigator.xr.requestSession("immersive-ar", {
           requiredFeatures: ["hit-test"],
-          optionalFeatures: ["anchors", "hand-tracking", "local-floor", "dom-overlay", "layers"],
+          optionalFeatures: ["anchors", "hand-tracking", "local-floor", "dom-overlay"],
           domOverlay: { root: document.body }
         });
 
@@ -5098,6 +5163,7 @@
         xrSession.addEventListener("end", endSession, { once: true });
         document.body.classList.add("session-active");
         xrHud.classList.add("visible");
+        if (voiceAllowed) startVoiceNoteSearch();
         setXrMessage(
           environment360Ready
             ? "Fundo 360° carregado. Procure uma superfície para posicionar o grafo."
@@ -6209,6 +6275,8 @@
     }
 
     function endSession() {
+      voiceCaptureEnabled = false;
+      clearTimeout(voiceRestartTimer);
       if (voiceRecognitionActive) voiceRecognition?.stop();
       voiceHighlightedNode = null;
       hitTestSource?.cancel();

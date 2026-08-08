@@ -191,12 +191,12 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /activeNoteAudio\.preload = isVideo \? "metadata" : "none"/);
   assert.match(html, /async function fetchVaultMediaTicket/);
   assert.match(html, /capabilities\?\.includes\("media-tickets"\)/);
-  assert.match(html, /optionalFeatures: \["anchors", "hand-tracking", "local-floor", "dom-overlay", "layers"\]/);
+  assert.match(html, /optionalFeatures: \["anchors", "hand-tracking", "local-floor", "dom-overlay"\]/);
   assert.match(html, /function tryCreateVideoMediaLayer/);
   assert.match(html, /new XRMediaBinding\(xrSession\)/);
   assert.match(html, /function updateVideoPresentation/);
-  assert.match(html, /activeNoteVideoGroup\.position\.set\(-0\.69, 0, 0\.006\)/);
-  assert.match(html, /new THREE\.PlaneGeometry\(0\.60, 0\.435\)/);
+  assert.match(html, /AR_VIDEO_CENTER_X = -\(/);
+  assert.match(html, /new THREE\.PlaneGeometry\(AR_VIDEO_WIDTH, AR_VIDEO_HEIGHT\)/);
   assert.match(html, /async function recoverVideoWithBlob/);
   assert.match(html, /Streaming indisponível neste Quest/);
   assert.match(html, /createMediaElementSource/);
@@ -235,6 +235,10 @@ test("procura notas por voz e pulsa o resultado no grafo", async () => {
   assert.match(html, /#voice-search/);
   assert.match(html, />🎙<\/button>/);
   assert.match(html, /window\.SpeechRecognition \?\? window\.webkitSpeechRecognition/);
+  assert.match(html, /async function requestVoicePermissionBeforeAr/);
+  assert.match(html, /navigator\.mediaDevices\.getUserMedia/);
+  assert.match(html, /if \(voiceAllowed\) startVoiceNoteSearch\(\)/);
+  assert.match(html, /function isVoiceSearchCommand/);
   assert.match(html, /function findBestNoteMatch/);
   assert.match(html, /function highlightNoteSearchResult/);
   assert.match(html, /ownerById/);
