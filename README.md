@@ -25,6 +25,7 @@ local Rust bridge, creates an HTTPS tunnel, and displays a QR code for pairing.
 - Git;
 - Node.js 22.13 or newer (Node.js 24 LTS recommended);
 - Rust installed through `rustup`;
+- CMake and LLVM/libclang (build-time only, for the local speech engine);
 - `cloudflared` available on `PATH`;
 - FFmpeg, including `ffmpeg` and `ffprobe`, for Quest-compatible conversion of
   AV1/HEVC video attachments;
@@ -41,6 +42,8 @@ Open PowerShell or Windows Terminal as Administrator:
 winget install --id Git.Git -e
 winget install --id OpenJS.NodeJS.LTS -e
 winget install --id Rustlang.Rustup -e
+winget install --id Kitware.CMake -e
+winget install --id LLVM.LLVM -e
 winget install --id Cloudflare.cloudflared -e
 winget install --id Gyan.FFmpeg -e
 ```
@@ -62,7 +65,7 @@ ffprobe -version
 Install [Homebrew](https://brew.sh/) and then run:
 
 ```sh
-brew install git node rustup cloudflared ffmpeg
+brew install git node rustup cmake llvm cloudflared ffmpeg
 rustup-init -y
 ```
 
@@ -76,7 +79,7 @@ For Debian or Ubuntu:
 
 ```sh
 sudo apt update
-sudo apt install -y git curl build-essential ffmpeg
+sudo apt install -y git curl build-essential cmake clang libclang-dev ffmpeg
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ```
 
@@ -157,10 +160,34 @@ code blocks, and LaTeX so their first open is less likely to interrupt XR.
 
 During AR, select **Voice** in the lower overlay and say a command such as
 “Find the Carl Sagan note” or “Procure a nota do Carl Sagan”. The viewer removes
-accents and filler words, compares the available speech alternatives, expands a
-grouped hub when needed, and pulses the best matching node for ten seconds.
-Speech recognition depends on the Quest Browser Web Speech implementation and
-microphone permission.
+accents and filler words, expands a grouped hub when needed, and pulses the best
+matching node for ten seconds.
+
+Quest Browser does not currently expose `SpeechRecognition` consistently, so
+the viewer has a local Rust fallback. It records 4.5-second Opus segments at
+32 kbps, sends them through the authenticated tunnel, and the bridge converts
+them to mono 16 kHz PCM with FFmpeg. `whisper-rs`/whisper.cpp then transcribes
+the segment on the computer using two CPU threads; the model is loaded once and
+requests are serialized, so neither inference nor model memory is placed on the
+Quest's rendering thread.
+
+Download the multilingual tiny model once after cloning:
+
+```powershell
+New-Item -ItemType Directory -Force .models
+Invoke-WebRequest https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin -OutFile .models/ggml-tiny.bin
+```
+
+On macOS or Linux:
+
+```sh
+mkdir -p .models
+curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin -o .models/ggml-tiny.bin
+```
+
+The default path is `.models/ggml-tiny.bin`. To use another model or language,
+set `whisperModelPath` and `whisperLanguage` (for example `pt`, `en`, or
+`auto`) in `note-bridge.config.json`. The model directory is ignored by Git.
 
 The local note graph is deliberately bounded to 27 neighbors. It uses one
 instanced node mesh, one line geometry, and one text atlas, without starting a

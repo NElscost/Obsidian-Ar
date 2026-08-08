@@ -96,6 +96,26 @@ if (-not $needsBuild) {
   }).Count -gt 0
 }
 if ($needsBuild) {
+  if ($env:OS -eq "Windows_NT") {
+    $cmakeCommand = Get-Command cmake -ErrorAction SilentlyContinue
+    if (-not $cmakeCommand) {
+      $bundledCmake = Get-ChildItem "$env:ProgramFiles\Microsoft Visual Studio" -Filter cmake.exe -File -Recurse -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty FullName
+      if ($bundledCmake) {
+        $env:Path = "$(Split-Path -Parent $bundledCmake);$env:Path"
+      } else {
+        throw "CMake não encontrado. Instale com: winget install Kitware.CMake"
+      }
+    }
+    if ([string]::IsNullOrWhiteSpace($env:LIBCLANG_PATH)) {
+      $llvmBin = Join-Path $env:ProgramFiles "LLVM\bin"
+      if (Test-Path -LiteralPath (Join-Path $llvmBin "libclang.dll")) {
+        $env:LIBCLANG_PATH = $llvmBin
+      } else {
+        throw "LLVM/libclang não encontrado. Instale com: winget install LLVM.LLVM"
+      }
+    }
+  }
   Write-Output "Compilando a ponte Axum otimizada..."
   $previousErrorActionPreference = $ErrorActionPreference
   $ErrorActionPreference = "Continue"
@@ -127,6 +147,22 @@ if (
   throw "vaultPath inválido em note-bridge.config.json. Execute .\Scripts\Configurar-NoteBridge.bat."
 }
 $vaultPath = [IO.Path]::GetFullPath($vaultPath)
+$whisperModelPath = ([string]$bridgeConfig.whisperModelPath).Trim()
+if ([string]::IsNullOrWhiteSpace($whisperModelPath)) {
+  $defaultWhisperModel = Join-Path $workspace ".models\ggml-tiny.bin"
+  if (Test-Path -LiteralPath $defaultWhisperModel -PathType Leaf) {
+    $whisperModelPath = $defaultWhisperModel
+  }
+}
+if (-not [string]::IsNullOrWhiteSpace($whisperModelPath)) {
+  if (-not [IO.Path]::IsPathRooted($whisperModelPath)) {
+    $whisperModelPath = Join-Path $workspace $whisperModelPath
+  }
+  $whisperModelPath = [IO.Path]::GetFullPath($whisperModelPath)
+  if (-not (Test-Path -LiteralPath $whisperModelPath -PathType Leaf)) {
+    throw "whisperModelPath não encontrado: $whisperModelPath"
+  }
+}
 $tunnelMode = ([string]$bridgeConfig.tunnelMode).Trim().ToLowerInvariant()
 if ([string]::IsNullOrWhiteSpace($tunnelMode)) { $tunnelMode = "quick" }
 if ($tunnelMode -notin @("quick", "named")) {
@@ -219,6 +255,10 @@ $serverEnvironment = @{
   SPACE_NOTE_TOKEN = $token
   SPACE_VAULT_PATH = $vaultPath
   SPACE_PENDING_OPTIMIZATION_PATH = $pendingOptimizationPath
+  SPACE_WHISPER_LANGUAGE = if ([string]::IsNullOrWhiteSpace([string]$bridgeConfig.whisperLanguage)) { "pt" } else { ([string]$bridgeConfig.whisperLanguage).Trim() }
+}
+if (-not [string]::IsNullOrWhiteSpace($whisperModelPath)) {
+  $serverEnvironment.SPACE_WHISPER_MODEL = $whisperModelPath
 }
 if (Test-Path -LiteralPath $graphPath) {
   $serverEnvironment.SPACE_GRAPH_PATH = $graphPath

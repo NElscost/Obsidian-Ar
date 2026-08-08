@@ -1127,7 +1127,7 @@
           const material = source.clone();
           const isOutline = /outline/i.test(material.name || object.name || "");
           material.transparent = true;
-          material.opacity = isOutline ? 0.42 : 0.09;
+          material.opacity = isOutline ? 0.78 : 0.24;
           material.depthWrite = false;
           material.toneMapped = false;
           material.color?.set(0x000000);
@@ -3015,7 +3015,7 @@
         new THREE.MeshBasicMaterial({
           color: 0x03060b,
           transparent: true,
-          opacity: 0.72,
+          opacity: 0.14,
           depthTest: false,
           toneMapped: false
         })
@@ -3596,6 +3596,11 @@
     let voiceRecognitionActive = false;
     let voiceCaptureEnabled = false;
     let voiceRestartTimer = null;
+    let voiceMediaStream = null;
+    let voiceMediaRecorder = null;
+    let voiceSegmentTimer = null;
+    let voiceBridgeBusy = false;
+    let voiceBridgeSupported = false;
     let voiceHighlightedNode = null;
     let voiceHighlightUntil = 0;
     const synapsePulseTime = { value: 0 };
@@ -4565,10 +4570,103 @@
       setXrMessage(`Nota encontrada: ${match.node.label ?? match.node.id}. O nó piscará por 10 segundos.`);
     }
 
+    function voiceBridgeConfig() {
+      return JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
+    }
+
+    function handleVoiceTranscript(transcript) {
+      const text = String(transcript ?? "").trim();
+      if (text && isVoiceSearchCommand(text)) highlightNoteSearchResult(text);
+    }
+
+    function stopBridgeVoiceCapture(stopStream = false) {
+      clearTimeout(voiceSegmentTimer);
+      voiceSegmentTimer = null;
+      if (voiceMediaRecorder?.state === "recording") voiceMediaRecorder.stop();
+      voiceMediaRecorder = null;
+      if (stopStream && voiceMediaStream) {
+        for (const track of voiceMediaStream.getTracks()) track.stop();
+        voiceMediaStream = null;
+      }
+    }
+
+    async function transcribeVoiceBlob(blob) {
+      const config = voiceBridgeConfig();
+      if (!config?.url || !blob?.size) return;
+      voiceBridgeBusy = true;
+      try {
+        const response = await fetch(`${config.url}/transcribe`, {
+          method: "POST",
+          headers: { ...bridgeRequestHeaders(config), "Content-Type": blob.type || "audio/webm" },
+          body: blob
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error ?? `Transcrição HTTP ${response.status}`);
+        handleVoiceTranscript(result.text);
+      } catch (error) {
+        console.warn("Transcrição local indisponível.", error);
+        setXrMessage(`Não foi possível transcrever: ${describeError(error)}`);
+      } finally {
+        voiceBridgeBusy = false;
+      }
+    }
+
+    function beginBridgeVoiceSegment() {
+      if (!voiceCaptureEnabled || !xrSession || !voiceMediaStream || voiceBridgeBusy ||
+          voiceMediaRecorder?.state === "recording") return;
+      const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
+      const mimeType = candidates.find((type) => MediaRecorder.isTypeSupported?.(type)) ?? "";
+      const chunks = [];
+      try {
+        voiceMediaRecorder = new MediaRecorder(voiceMediaStream, {
+          ...(mimeType ? { mimeType } : {}),
+          audioBitsPerSecond: 32_000
+        });
+      } catch (error) {
+        setXrMessage(`Captura de voz indisponível: ${describeError(error)}`);
+        return;
+      }
+      voiceMediaRecorder.addEventListener("dataavailable", (event) => {
+        if (event.data?.size) chunks.push(event.data);
+      });
+      voiceMediaRecorder.addEventListener("stop", async () => {
+        const recorder = voiceMediaRecorder;
+        voiceMediaRecorder = null;
+        if (chunks.length) {
+          await transcribeVoiceBlob(new Blob(chunks, {
+            type: recorder?.mimeType || mimeType || "audio/webm"
+          }));
+        }
+        if (voiceCaptureEnabled && xrSession) {
+          voiceSegmentTimer = setTimeout(beginBridgeVoiceSegment, 250);
+        }
+      }, { once: true });
+      voiceMediaRecorder.start(250);
+      voiceSearchButton.textContent = "●";
+      voiceSearchButton.setAttribute("aria-label", "Ouvindo comando de voz");
+      voiceSegmentTimer = setTimeout(() => {
+        if (voiceMediaRecorder?.state === "recording") voiceMediaRecorder.stop();
+      }, 4_500);
+    }
+
     function startVoiceNoteSearch() {
       const SpeechRecognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+      if (voiceRecognitionActive || voiceMediaRecorder?.state === "recording") {
+        voiceCaptureEnabled = false;
+        if (voiceRecognitionActive) voiceRecognition?.stop();
+        stopBridgeVoiceCapture(false);
+        voiceSearchButton.textContent = "🎙";
+        setXrMessage("Microfone pausado. Selecione o ícone para reativar.");
+        return;
+      }
+      voiceCaptureEnabled = true;
       if (!SpeechRecognition) {
-        setXrMessage("Busca por voz não disponível neste navegador.");
+        if (!voiceBridgeSupported || !voiceMediaStream) {
+          setXrMessage("Transcrição local não configurada na ponte.");
+          return;
+        }
+        setXrMessage("Diga: “Procure a nota do Carl Sagan”.");
+        beginBridgeVoiceSegment();
         return;
       }
       if (!voiceRecognition) {
@@ -4582,9 +4680,7 @@
           const best = alternatives
             .map((item) => ({ transcript: item.transcript, match: findBestNoteMatch(item.transcript) }))
             .sort((left, right) => (right.match?.score ?? 0) - (left.match?.score ?? 0))[0];
-          if (best?.transcript && isVoiceSearchCommand(best.transcript)) {
-            highlightNoteSearchResult(best.transcript);
-          }
+          handleVoiceTranscript(best?.transcript);
         });
         voiceRecognition.addEventListener("error", (event) => {
           setXrMessage(event.error === "not-allowed"
@@ -4598,20 +4694,11 @@
           if (voiceCaptureEnabled && xrSession) {
             clearTimeout(voiceRestartTimer);
             voiceRestartTimer = setTimeout(() => {
-              if (voiceCaptureEnabled && xrSession && !voiceRecognitionActive) {
-                beginVoiceRecognition();
-              }
+              if (voiceCaptureEnabled && xrSession && !voiceRecognitionActive) beginVoiceRecognition();
             }, 650);
           }
         });
       }
-      if (voiceRecognitionActive) {
-        voiceCaptureEnabled = false;
-        voiceRecognition.stop();
-        setXrMessage("Microfone pausado. Selecione o ícone para reativar.");
-        return;
-      }
-      voiceCaptureEnabled = true;
       beginVoiceRecognition();
     }
 
@@ -4632,18 +4719,38 @@
 
     async function requestVoicePermissionBeforeAr() {
       const SpeechRecognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
-      if (!SpeechRecognition || !navigator.mediaDevices?.getUserMedia) {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        voiceCaptureEnabled = false;
+        voiceSearchButton.disabled = true;
+        return false;
+      }
+      voiceBridgeSupported = false;
+      if (!SpeechRecognition) {
+        try {
+          const config = voiceBridgeConfig();
+          const capabilities = config?.url ? await ensureVideoBridge(config) : null;
+          voiceBridgeSupported = Boolean(
+            window.MediaRecorder && capabilities?.capabilities?.includes("voice-transcribe")
+          );
+        } catch (error) {
+          console.warn("Não foi possível consultar a transcrição da ponte.", error);
+        }
+      }
+      if (!SpeechRecognition && !voiceBridgeSupported) {
         voiceCaptureEnabled = false;
         voiceSearchButton.disabled = true;
         return false;
       }
       setStatus("Autorize o microfone para procurar notas durante a sessão AR…");
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true },
+        voiceMediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
           video: false
         });
-        for (const track of stream.getTracks()) track.stop();
+        if (SpeechRecognition) {
+          for (const track of voiceMediaStream.getTracks()) track.stop();
+          voiceMediaStream = null;
+        }
         voiceCaptureEnabled = true;
         voiceSearchButton.disabled = false;
         return true;
@@ -6278,6 +6385,8 @@
       voiceCaptureEnabled = false;
       clearTimeout(voiceRestartTimer);
       if (voiceRecognitionActive) voiceRecognition?.stop();
+      stopBridgeVoiceCapture(true);
+      voiceBridgeBusy = false;
       voiceHighlightedNode = null;
       hitTestSource?.cancel();
       hitTestSource = null;

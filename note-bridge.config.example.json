@@ -1,5 +1,7 @@
 {
   "vaultPath": "/caminho/absoluto/MeuVault",
+  "whisperModelPath": ".models/ggml-tiny.bin",
+  "whisperLanguage": "pt",
   "tunnelMode": "quick",
   "tunnelUrl": "",
   "tunnelTokenFile": ".cloudflare-tunnel-token"

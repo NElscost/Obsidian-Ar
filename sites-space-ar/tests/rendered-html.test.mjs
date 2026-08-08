@@ -237,6 +237,9 @@ test("procura notas por voz e pulsa o resultado no grafo", async () => {
   assert.match(html, /window\.SpeechRecognition \?\? window\.webkitSpeechRecognition/);
   assert.match(html, /async function requestVoicePermissionBeforeAr/);
   assert.match(html, /navigator\.mediaDevices\.getUserMedia/);
+  assert.match(html, /new MediaRecorder/);
+  assert.match(html, /\/transcribe/);
+  assert.match(html, /voice-transcribe/);
   assert.match(html, /if \(voiceAllowed\) startVoiceNoteSearch\(\)/);
   assert.match(html, /function isVoiceSearchCommand/);
   assert.match(html, /function findBestNoteMatch/);
@@ -272,7 +275,7 @@ test("carrega mãos virtuais do IWSDK sob demanda com fallback Three.js", async 
   assert.match(html, /iwInputManager\.update\(renderer\.xr, delta, time \/ 1000\)/);
   assert.match(html, /XRHandModelFactory/);
   assert.match(html, /function styleVirtualHandMeshes/);
-  assert.match(html, /material\.opacity = isOutline \? 0\.42 : 0\.09/);
+  assert.match(html, /material\.opacity = isOutline \? 0\.78 : 0\.24/);
   assert.match(html, /material\.color\?\.set\(0x000000\)/);
 });
 

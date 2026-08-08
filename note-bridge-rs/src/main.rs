@@ -10,9 +10,9 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use axum::{
-    body::Body,
+    body::{to_bytes, Body},
     extract::{DefaultBodyLimit, Path as AxumPath, State},
-    http::{header, HeaderMap, HeaderValue, Method, StatusCode},
+    http::{header, HeaderMap, HeaderValue, Method, Request, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -29,7 +29,7 @@ use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncSeekExt},
     process::Command,
-    sync::RwLock,
+    sync::{Mutex, RwLock},
 };
 use tokio_util::io::ReaderStream;
 use tower_http::{
@@ -38,6 +38,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 use walkdir::WalkDir;
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 #[derive(Clone)]
 struct AppState {
@@ -51,6 +52,9 @@ struct AppState {
     waveform_cache: Arc<RwLock<HashMap<String, CachedWaveform>>>,
     video_cache: Arc<RwLock<HashMap<String, CachedVideo>>>,
     media_tickets: Arc<RwLock<HashMap<String, MediaTicket>>>,
+    whisper_context: Option<Arc<WhisperContext>>,
+    whisper_language: Arc<str>,
+    transcription_lock: Arc<Mutex<()>>,
     remote_client: reqwest::Client,
 }
 
@@ -89,6 +93,19 @@ struct MediaTicket {
 }
 
 const MEDIA_TICKET_TTL: Duration = Duration::from_secs(30 * 60);
+
+fn bridge_capabilities(state: &AppState) -> Vec<&'static str> {
+    let mut capabilities = vec![
+        "video-transcode",
+        "byte-ranges",
+        "media-tickets",
+        "waveform",
+    ];
+    if state.whisper_context.is_some() {
+        capabilities.push("voice-transcribe");
+    }
+    capabilities
+}
 
 const BRIDGE_API_VERSION: u32 = 2;
 
@@ -589,7 +606,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
                 "ok": true,
                 "notes": notes,
                 "apiVersion": BRIDGE_API_VERSION,
-                "capabilities": ["video-transcode", "byte-ranges", "media-tickets", "waveform"]
+                "capabilities": bridge_capabilities(&state)
             })),
         )
             .into_response(),
@@ -608,10 +625,95 @@ async fn verify(State(state): State<AppState>, headers: HeaderMap) -> Response {
                 "ok": true,
                 "notes": notes,
                 "apiVersion": BRIDGE_API_VERSION,
-                "capabilities": ["video-transcode", "byte-ranges", "media-tickets", "waveform"]
+                "capabilities": bridge_capabilities(&state)
             })),
         )
             .into_response(),
+        Err(err) => error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+const MAX_VOICE_BYTES: usize = 2 * 1024 * 1024;
+
+async fn transcribe_voice(State(state): State<AppState>, request: Request<Body>) -> Response {
+    let (parts, body) = request.into_parts();
+    if !authorized(&parts.headers, &state.token) {
+        return error(StatusCode::UNAUTHORIZED, "Token invalido.");
+    }
+    let Some(context) = state.whisper_context.clone() else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Transcricao local nao configurada.",
+        );
+    };
+    let bytes = match to_bytes(body, MAX_VOICE_BYTES).await {
+        Ok(bytes) if !bytes.is_empty() => bytes,
+        Ok(_) => return error(StatusCode::BAD_REQUEST, "Audio vazio."),
+        Err(_) => return error(StatusCode::PAYLOAD_TOO_LARGE, "Audio excede 2 MB."),
+    };
+    let _guard = state.transcription_lock.lock().await;
+    let language = state.whisper_language.clone();
+    let nonce = rand::random::<u64>();
+    let cache_dir = env::temp_dir().join("obsidian-ar-voice");
+    if let Err(err) = tokio::fs::create_dir_all(&cache_dir).await {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+    }
+    let input_path = cache_dir.join(format!("voice-{nonce:016x}.webm"));
+    let pcm_path = cache_dir.join(format!("voice-{nonce:016x}.f32le"));
+    if let Err(err) = tokio::fs::write(&input_path, bytes).await {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+    }
+    let conversion = Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
+        .arg(&input_path)
+        .args(["-vn", "-ac", "1", "-ar", "16000", "-f", "f32le"])
+        .arg(&pcm_path)
+        .output()
+        .await;
+    let _ = tokio::fs::remove_file(&input_path).await;
+    match conversion {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            let detail = String::from_utf8_lossy(&output.stderr);
+            return error(StatusCode::UNPROCESSABLE_ENTITY, detail.trim().to_string());
+        }
+        Err(err) => return error(StatusCode::SERVICE_UNAVAILABLE, err.to_string()),
+    }
+    let pcm_bytes = match tokio::fs::read(&pcm_path).await {
+        Ok(bytes) => bytes,
+        Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    };
+    let _ = tokio::fs::remove_file(&pcm_path).await;
+    let samples = pcm_bytes
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect::<Vec<_>>();
+    let result = tokio::task::spawn_blocking(move || -> Result<String> {
+        let mut whisper_state = context.create_state()?;
+        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        params.set_language(Some(language.as_ref()));
+        params.set_translate(false);
+        params.set_no_context(true);
+        params.set_single_segment(true);
+        params.set_n_threads(2);
+        params.set_print_special(false);
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
+        whisper_state.full(params, &samples)?;
+        let count = whisper_state.full_n_segments();
+        let mut text = String::new();
+        for index in 0..count {
+            if let Some(segment) = whisper_state.get_segment(index) {
+                text.push_str(segment.to_str()?);
+            }
+        }
+        Ok(text.trim().to_string())
+    })
+    .await;
+    match result {
+        Ok(Ok(text)) => Json(json!({ "text": text })).into_response(),
+        Ok(Err(err)) => error(StatusCode::UNPROCESSABLE_ENTITY, err.to_string()),
         Err(err) => error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     }
 }
@@ -1444,6 +1546,26 @@ async fn main() -> Result<()> {
     let graph = env::var_os("SPACE_GRAPH_PATH")
         .map(PathBuf::from)
         .filter(|path| path.is_file());
+    let whisper_context = match env::var_os("SPACE_WHISPER_MODEL") {
+        Some(path) if !path.is_empty() => {
+            let path = PathBuf::from(path);
+            if !path.is_file() {
+                bail!(
+                    "SPACE_WHISPER_MODEL nao aponta para um arquivo: {}",
+                    path.display()
+                );
+            }
+            println!("[VOICE] carregando modelo local: {}", path.display());
+            Some(Arc::new(
+                WhisperContext::new_with_params(&path, WhisperContextParameters::default())
+                    .context("Nao foi possivel carregar o modelo Whisper")?,
+            ))
+        }
+        _ => None,
+    };
+    let whisper_language: Arc<str> = env::var("SPACE_WHISPER_LANGUAGE")
+        .unwrap_or_else(|_| "pt".to_string())
+        .into();
     let pending = env::var_os("SPACE_PENDING_OPTIMIZATION_PATH").map(PathBuf::from);
     let state = AppState {
         token,
@@ -1456,6 +1578,9 @@ async fn main() -> Result<()> {
         waveform_cache: Default::default(),
         video_cache: Default::default(),
         media_tickets: Default::default(),
+        whisper_context,
+        whisper_language,
+        transcription_lock: Default::default(),
         remote_client: reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::limited(5))
             .user_agent("Obsidian-Ar/1.0")
@@ -1484,7 +1609,8 @@ async fn main() -> Result<()> {
         .route("/media/{ticket}", get(read_media_ticket))
         .route("/waveform", post(read_waveform))
         .route("/remote-image", post(read_remote_image))
-        .layer(DefaultBodyLimit::max(16_384))
+        .route("/transcribe", post(transcribe_voice))
+        .layer(DefaultBodyLimit::max(MAX_VOICE_BYTES))
         .layer(CompressionLayer::new())
         .layer(cors)
         .layer(TraceLayer::new_for_http())
