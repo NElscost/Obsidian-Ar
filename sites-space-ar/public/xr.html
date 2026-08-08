@@ -1206,6 +1206,7 @@
     let activeNoteAudioObjectUrl = null;
     let activeNoteAudioControl = null;
     let activeNoteVideoSurface = null;
+    let activeNoteVideoGroup = null;
     let activeNoteVideoTexture = null;
     let preparedNoteVideo = null;
     let noteVideoPreparation = null;
@@ -1248,6 +1249,7 @@
       activeNoteVideoTexture?.dispose();
       activeNoteVideoTexture = null;
       activeNoteVideoSurface = null;
+      activeNoteVideoGroup = null;
       preparedNoteVideo = null;
       noteVideoPreparation = null;
       noteVideoPreparationError = null;
@@ -2873,6 +2875,22 @@
       activeNoteVideoTexture.minFilter = THREE.LinearFilter;
       activeNoteVideoTexture.magFilter = THREE.LinearFilter;
       activeNoteVideoTexture.generateMipmaps = false;
+      activeNoteVideoGroup = new THREE.Group();
+      activeNoteVideoGroup.name = "note-video-window";
+      activeNoteVideoGroup.position.set(-0.615, 0.015, 0.006);
+      const videoBackdrop = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.57, 0.334),
+        new THREE.MeshBasicMaterial({
+          color: 0x03060b,
+          transparent: true,
+          opacity: 0.72,
+          depthTest: false,
+          toneMapped: false
+        })
+      );
+      videoBackdrop.position.z = -0.003;
+      videoBackdrop.renderOrder = 998;
+      videoBackdrop.raycast = () => {};
       activeNoteVideoSurface = new THREE.Mesh(
         new THREE.PlaneGeometry(0.54, 0.304),
         new THREE.MeshBasicMaterial({
@@ -2881,10 +2899,11 @@
           depthTest: false
         })
       );
-      activeNoteVideoSurface.position.set(0, 0.01, 0.002);
+      activeNoteVideoSurface.position.set(0, 0, 0.002);
       activeNoteVideoSurface.renderOrder = 1000;
       activeNoteVideoSurface.raycast = () => {};
-      arNoteGroup.add(activeNoteVideoSurface);
+      activeNoteVideoGroup.add(videoBackdrop, activeNoteVideoSurface);
+      arNoteGroup.add(activeNoteVideoGroup);
       const resize = () => {
         if (!activeNoteVideoSurface || !video.videoWidth || !video.videoHeight) return;
         const aspect = video.videoWidth / video.videoHeight;
@@ -2896,6 +2915,8 @@
         }
         activeNoteVideoSurface.geometry.dispose();
         activeNoteVideoSurface.geometry = new THREE.PlaneGeometry(width, height);
+        videoBackdrop.geometry.dispose();
+        videoBackdrop.geometry = new THREE.PlaneGeometry(width + 0.03, height + 0.03);
       };
       video.addEventListener("loadedmetadata", resize, { once: true });
     }

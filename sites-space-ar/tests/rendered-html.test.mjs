@@ -174,6 +174,9 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function extractNoteAudioTracks/);
   assert.match(html, /function extractNoteVideoTracks/);
   assert.match(html, /function createArVideoSurface/);
+  assert.match(html, /activeNoteVideoGroup\.name = "note-video-window"/);
+  assert.match(html, /activeNoteVideoGroup\.position\.set\(-0\.615, 0\.015, 0\.006\)/);
+  assert.match(html, /activeNoteVideoGroup\.add\(videoBackdrop, activeNoteVideoSurface\)/);
   assert.match(html, /new THREE\.VideoTexture\(video\)/);
   assert.match(html, /noteVideoTracks\[0\] \?\? noteAudioTracks\[0\]/);
   assert.match(html, /function describeVideoPlaybackError/);
