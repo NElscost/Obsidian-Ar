@@ -1032,9 +1032,13 @@ fn analyze_audio_waveform(path: &Path) -> Result<WaveformResponse> {
         &MetadataOptions::default(),
     )?;
     let mut format = probed.format;
+    // Em contêineres de vídeo, default_track() normalmente escolhe a faixa de
+    // imagem. A forma de onda deve procurar explicitamente uma faixa de áudio.
     let track = format
-        .default_track()
-        .context("O áudio não contém uma faixa decodificável.")?;
+        .tracks()
+        .iter()
+        .find(|track| track.codec_params.sample_rate.is_some())
+        .context("A mídia não contém uma faixa de áudio decodificável.")?;
     let track_id = track.id;
     let sample_rate = track.codec_params.sample_rate.unwrap_or(48_000).max(1);
     let mut decoder = get_codecs().make(&track.codec_params, &DecoderOptions::default())?;

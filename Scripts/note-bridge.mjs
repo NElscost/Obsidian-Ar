@@ -115,13 +115,18 @@ function scanPending(vaultPath) {
         const displayMath = (content.match(/\$\$|\\begin\{|\\\[|\\\(/gu) ?? []).length;
         const inlineMath = (content.match(/(?<!\\)\$(?!\$)[^\r\n$]+(?<!\\)\$/gu) ?? []).length;
         const codeMarkers = (content.match(/^\s*(?:```|~~~)/gmu) ?? []).length;
-        const score = displayMath * 4 + inlineMath + codeMarkers * 2;
+        const codeFences = Math.floor(codeMarkers / 2);
+        const videoReferences = (content.match(
+          /(?:!\[\[[^\]]+\.(?:mp4|m4v|mov|webm|ogv)\]\]|<video\b|\]\([^\r\n)]+\.(?:mp4|m4v|mov|webm|ogv)(?:[?#][^)]*)?\))/giu
+        ) ?? []).length;
+        const score = displayMath * 4 + inlineMath + codeFences * 8 + videoReferences * 12;
         if (score > 0) notes.push({
           path: path.relative(vaultPath, absolute).split(path.sep).join("/"),
           score,
           displayMath,
           inlineMath,
-          codeFences: Math.floor(codeMarkers / 2)
+          codeFences,
+          videoReferences
         });
       }
     }

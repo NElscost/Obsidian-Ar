@@ -194,6 +194,10 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function updateSpatialNoteAudio/);
   assert.match(html, /async function fetchVaultWaveform/);
   assert.match(html, /async function prepareAudioWaveform/);
+  assert.match(html, /const timelineTrack = noteVideoTracks\[0\] \?\? noteAudioTracks\[0\]/);
+  assert.match(html, /function onSelectStart/);
+  assert.match(html, /waveformDragInputSource/);
+  assert.match(html, /Arraste para buscar/);
   assert.match(html, /function updateAudioWaveformProgress/);
   assert.match(html, /audioWaveformCache = new Map/);
   assert.match(html, /AUDIO_BOOKMARK_STORAGE_KEY/);
@@ -237,7 +241,8 @@ test("carrega mãos virtuais do IWSDK sob demanda com fallback Three.js", async 
   assert.match(html, /iwInputManager\.update\(renderer\.xr, delta, time \/ 1000\)/);
   assert.match(html, /XRHandModelFactory/);
   assert.match(html, /function styleVirtualHandMeshes/);
-  assert.match(html, /material\.opacity = isOutline \? 0\.72 : 0\.2/);
+  assert.match(html, /material\.opacity = isOutline \? 0\.42 : 0\.09/);
+  assert.match(html, /material\.color\?\.set\(0x000000\)/);
 });
 
 test("quebra trechos longos em blocos de código sem perder a formatação", async () => {

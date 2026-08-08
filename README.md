@@ -11,7 +11,7 @@ local Rust bridge, creates an HTTPS tunnel, and displays a QR code for pairing.
 - WebXR hit testing and anchors;
 - hand gestures for placement, scale, rotation, selection, and pagination;
 - Markdown, tables, LaTeX, code, images, audio, and video in a 3D note window;
-- spatial HRTF audio, waveform display, and audio bookmarks;
+- spatial HRTF audio, audio/video waveform seeking, and media bookmarks;
 - cached note rendering and preprocessing to reduce frame drops;
 - progress reporting with elapsed and estimated remaining time;
 - grouped hub navigation for vaults with thousands of notes;
@@ -144,6 +144,11 @@ in the operating system's temporary cache. The vault file is never modified.
 Subsequent opens reuse that cached copy. For the lowest startup cost, encode
 attachments as MP4/H.264/AAC or WebM/VP9/Opus and keep individual files below
 256 MB.
+
+Audio and video attachments share the same seek bar. Point and pinch to jump to
+a position, keep the pinch held while moving to scrub, and release to store a
+bookmark. The preprocessing queue prioritizes notes containing video, fenced
+code blocks, and LaTeX so their first open is less likely to interrupt XR.
 
 The local note graph is deliberately bounded to 27 neighbors. It uses one
 instanced node mesh, one line geometry, and one text atlas, without starting a

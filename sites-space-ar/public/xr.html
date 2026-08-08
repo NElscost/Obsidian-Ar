@@ -1107,10 +1107,10 @@
           const material = source.clone();
           const isOutline = /outline/i.test(material.name || object.name || "");
           material.transparent = true;
-          material.opacity = isOutline ? 0.72 : 0.2;
+          material.opacity = isOutline ? 0.42 : 0.09;
           material.depthWrite = false;
           material.toneMapped = false;
-          material.color?.set(isOutline ? 0xb9d8ff : 0x7fafff);
+          material.color?.set(0x000000);
           material.needsUpdate = true;
           return material;
         });
@@ -1229,6 +1229,7 @@
     const AUDIO_BOOKMARK_STORAGE_KEY = "space-ar-audio-bookmarks-v1";
     let noteWindowPinned = false;
     let noteWindowAnchor = null;
+    let waveformDragInputSource = null;
 
     function disposeArNote() {
       audioWaveformGeneration += 1;
@@ -1264,6 +1265,7 @@
       audioWaveformDuration = 0;
       pendingNoteAudioSeek = null;
       audioBookmarkMeshes = [];
+      waveformDragInputSource = null;
       noteAudioTracks = [];
       noteVideoTracks = [];
       arNoteGroup.visible = false;
@@ -2669,7 +2671,7 @@
     }
 
     function audioBookmarkKey() {
-      const source = noteAudioTracks[0]?.source ?? "";
+      const source = (noteVideoTracks[0] ?? noteAudioTracks[0])?.source ?? "";
       return `${arNotePath}\n${source}`;
     }
 
@@ -3191,21 +3193,6 @@
       localNoteGraphGroup = new THREE.Group();
       localNoteGraphGroup.name = "local-note-graph";
       localNoteGraphGroup.position.set(panelWidth / 2 + 0.145, 0, 0.003);
-      const background = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.245, 0.33),
-        new THREE.MeshBasicMaterial({
-          color: 0x07111f,
-          transparent: true,
-          opacity: 0.82,
-          depthTest: false,
-          toneMapped: false
-        })
-      );
-      background.position.z = -0.004;
-      background.renderOrder = 998;
-      background.raycast = () => {};
-      localNoteGraphGroup.add(background);
-
       const visibleNodes = [center, ...neighbours];
       const positions = new Map([[center.id, new THREE.Vector3(0, 0, 0)]]);
       neighbours.forEach((node, index) => {
@@ -3412,9 +3399,8 @@
           -height / 2 + 0.03,
           0x63e6be
         );
-        if (noteAudioTracks.length) {
-          void prepareAudioWaveform(noteAudioTracks[0], path, width, height);
-        }
+        const timelineTrack = noteVideoTracks[0] ?? noteAudioTracks[0];
+        if (timelineTrack) void prepareAudioWaveform(timelineTrack, path, width, height);
         if (noteVideoTracks.length) {
           beginNoteVideoPreparation(noteVideoTracks[0], path);
         }
@@ -4876,6 +4862,8 @@
         });
 
         xrSession.addEventListener("select", onSelect);
+        xrSession.addEventListener("selectstart", onSelectStart);
+        xrSession.addEventListener("selectend", onSelectEnd);
         xrSession.addEventListener("end", endSession, { once: true });
         document.body.classList.add("session-active");
         xrHud.classList.add("visible");
@@ -4931,6 +4919,22 @@
         return;
       }
       if (!isPlaced && latestHitResult) placeAtHit(latestHitResult);
+    }
+
+    function onSelectStart(event) {
+      if (!arNoteGroup.visible) return;
+      const hit = controlFromSelectEvent(event);
+      if (hit?.object?.userData?.noteAction !== "waveform") return;
+      waveformDragInputSource = event.inputSource;
+      const ratio = THREE.MathUtils.clamp(hit.uv?.x ?? 0, 0, 1);
+      seekNoteAudio(ratio * audioWaveformDuration);
+      setXrMessage(`Posição: ${formatAudioTime(ratio * audioWaveformDuration)}. Arraste para buscar.`);
+    }
+
+    function onSelectEnd(event) {
+      if (waveformDragInputSource === event.inputSource) {
+        waveformDragInputSource = null;
+      }
     }
 
     async function placeAtHit(hitResult) {
@@ -5696,6 +5700,15 @@
       }
 
       if (arNoteGroup.visible) {
+        if (
+          waveformDragInputSource &&
+          nearestControl?.userData?.noteAction === "waveform" &&
+          Number.isFinite(nearestControlRatio)
+        ) {
+          seekNoteAudio(
+            THREE.MathUtils.clamp(nearestControlRatio, 0, 1) * audioWaveformDuration
+          );
+        }
         if (nearestControl) {
           lastNoteControlHitAt = time;
           if (pointedNoteControl === nearestControl) {
