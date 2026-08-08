@@ -178,6 +178,9 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /noteVideoTracks\[0\] \?\? noteAudioTracks\[0\]/);
   assert.match(html, /function describeVideoPlaybackError/);
   assert.match(html, /function beginNoteVideoPreparation/);
+  assert.match(html, /async function ensureVideoBridge/);
+  assert.match(html, /capabilities\?\.includes\("video-transcode"\)/);
+  assert.match(html, /Tentando preparar o vídeo novamente/);
   assert.match(html, /Vídeo pronto\. Faça a pinça/);
   assert.match(html, /if \(isVideo && !preparedNoteVideo\)/);
   assert.match(html, /if \(isVideo && !activeNoteVideoSurface\) createArVideoSurface/);
@@ -217,7 +220,20 @@ test("mostra um ego graph instanciado ao lado da nota sem nova simulação", asy
   assert.match(html, /\.slice\(0, 27\)/);
   assert.match(html, /new THREE\.InstancedMesh/);
   assert.match(html, /new THREE\.LineSegments/);
+  assert.match(html, /nodes\.userData\.noteAction = "local-note"/);
+  assert.match(html, /nodes\.setColorAt\(index, new THREE\.Color\(node\.color/);
+  assert.match(html, /const atlas = document\.createElement\("canvas"\)/);
+  assert.match(html, /action === "local-note"/);
+  assert.match(html, /void requestNote\(path\)/);
   assert.match(html, /createLocalNoteGraph\(path, width\)/);
+});
+
+test("carrega mãos virtuais do IWSDK sob demanda com fallback Three.js", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /@iwsdk\/xr-input@0\.4\.2\?external=three/);
+  assert.match(html, /new XRInputManager\(\{ scene, camera \}\)/);
+  assert.match(html, /iwInputManager\.update\(renderer\.xr, delta, time \/ 1000\)/);
+  assert.match(html, /XRHandModelFactory/);
 });
 
 test("quebra trechos longos em blocos de código sem perder a formatação", async () => {

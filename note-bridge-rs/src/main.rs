@@ -48,6 +48,7 @@ struct AppState {
     note_cache: Arc<RwLock<HashMap<String, CachedNote>>>,
     asset_cache: Arc<RwLock<HashMap<String, PathBuf>>>,
     waveform_cache: Arc<RwLock<HashMap<String, CachedWaveform>>>,
+    video_cache: Arc<RwLock<HashMap<String, CachedVideo>>>,
     remote_client: reqwest::Client,
 }
 
@@ -71,6 +72,15 @@ struct CachedWaveform {
     size: u64,
     response: WaveformResponse,
 }
+
+#[derive(Clone)]
+struct CachedVideo {
+    modified: SystemTime,
+    size: u64,
+    compatible_path: PathBuf,
+}
+
+const BRIDGE_API_VERSION: u32 = 2;
 
 fn is_allowed_web_origin(origin: &HeaderValue) -> bool {
     let Ok(origin) = origin.to_str() else {
@@ -563,7 +573,16 @@ async fn note_is_allowed(state: &AppState, path: &str) -> Result<bool> {
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
     match refresh_graph(&state).await {
-        Ok(notes) => (StatusCode::OK, Json(json!({ "ok": true, "notes": notes }))).into_response(),
+        Ok(notes) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "notes": notes,
+                "apiVersion": BRIDGE_API_VERSION,
+                "capabilities": ["video-transcode", "byte-ranges", "waveform"]
+            })),
+        )
+            .into_response(),
         Err(err) => error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     }
 }
@@ -573,7 +592,16 @@ async fn verify(State(state): State<AppState>, headers: HeaderMap) -> Response {
         return error(StatusCode::UNAUTHORIZED, "Token inválido.");
     }
     match refresh_graph(&state).await {
-        Ok(notes) => (StatusCode::OK, Json(json!({ "ok": true, "notes": notes }))).into_response(),
+        Ok(notes) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "notes": notes,
+                "apiVersion": BRIDGE_API_VERSION,
+                "capabilities": ["video-transcode", "byte-ranges", "waveform"]
+            })),
+        )
+            .into_response(),
         Err(err) => error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     }
 }
@@ -733,9 +761,22 @@ fn compatibility_video_candidate(path: &Path) -> bool {
     )
 }
 
-async fn compatible_video_asset(path: &Path) -> Result<PathBuf> {
+async fn compatible_video_asset(state: &AppState, path: &Path) -> Result<PathBuf> {
     if !compatibility_video_candidate(path) {
         return Ok(path.to_path_buf());
+    }
+    let metadata = tokio::fs::metadata(path).await?;
+    let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+    let cache_key = path.to_string_lossy().to_string();
+    if let Some(cached) = state
+        .video_cache
+        .read()
+        .await
+        .get(&cache_key)
+        .filter(|cached| cached.modified == modified && cached.size == metadata.len())
+        .cloned()
+    {
+        return Ok(cached.compatible_path);
     }
     let probe = Command::new("ffprobe")
         .args([
@@ -758,10 +799,17 @@ async fn compatible_video_asset(path: &Path) -> Result<PathBuf> {
         _ => return Ok(path.to_path_buf()),
     };
     if !matches!(codec.as_str(), "av1" | "hevc" | "h265") {
-        return Ok(path.to_path_buf());
+        let compatible_path = path.to_path_buf();
+        state.video_cache.write().await.insert(
+            cache_key,
+            CachedVideo {
+                modified,
+                size: metadata.len(),
+                compatible_path: compatible_path.clone(),
+            },
+        );
+        return Ok(compatible_path);
     }
-
-    let metadata = tokio::fs::metadata(path).await?;
     let mut hasher = DefaultHasher::new();
     path.hash(&mut hasher);
     metadata.len().hash(&mut hasher);
@@ -777,6 +825,14 @@ async fn compatible_video_asset(path: &Path) -> Result<PathBuf> {
         .map(|cached| cached.len() > 0)
         .unwrap_or(false)
     {
+        state.video_cache.write().await.insert(
+            cache_key,
+            CachedVideo {
+                modified,
+                size: metadata.len(),
+                compatible_path: output_path.clone(),
+            },
+        );
         return Ok(output_path);
     }
 
@@ -830,6 +886,14 @@ async fn compatible_video_asset(path: &Path) -> Result<PathBuf> {
                 tokio::fs::rename(&partial_path, &output_path).await?;
             }
             println!("[VIDEO] cache H.264 pronto: {}", output_path.display());
+            state.video_cache.write().await.insert(
+                cache_key,
+                CachedVideo {
+                    modified,
+                    size: metadata.len(),
+                    compatible_path: output_path.clone(),
+                },
+            );
             Ok(output_path)
         }
         Ok(status) => {
@@ -1092,7 +1156,7 @@ async fn read_asset(
     }
     match resolve_asset(&state, &note_path, &payload.asset_path).await {
         Ok(path) => {
-            let path = match compatible_video_asset(&path).await {
+            let path = match compatible_video_asset(&state, &path).await {
                 Ok(path) => path,
                 Err(err) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
             };
@@ -1245,6 +1309,7 @@ async fn main() -> Result<()> {
         note_cache: Default::default(),
         asset_cache: Default::default(),
         waveform_cache: Default::default(),
+        video_cache: Default::default(),
         remote_client: reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::limited(5))
             .user_agent("Obsidian-Ar/1.0")

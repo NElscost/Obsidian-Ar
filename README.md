@@ -125,6 +125,8 @@ Wait for graph processing to complete, then enter AR.
 - point with the palm ray and pinch to open a note;
 - close four fingers and swipe the thumb to change pages;
 - use the 3D controls to pin, navigate, play media, or close the note;
+- select a labeled node in the note's local graph to replace both panels with
+  the corresponding note and its neighborhood;
 - select a hub to expand a large graph, and use **Back to overview** to return.
 
 The simultaneous node budget is configurable from 800 to 1200. Vaults above
@@ -142,6 +144,13 @@ in the operating system's temporary cache. The vault file is never modified.
 Subsequent opens reuse that cached copy. For the lowest startup cost, encode
 attachments as MP4/H.264/AAC or WebM/VP9/Opus and keep individual files below
 256 MB.
+
+The local note graph is deliberately bounded to 27 neighbors. It uses one
+instanced node mesh, one line geometry, and one text atlas, without starting a
+second force simulation. Virtual hands are loaded lazily through IWSDK's XR
+input visual layer; if it is unavailable, the viewer falls back to Three.js hand
+models. Gesture recognition remains independent, so a visual-hand failure does
+not disable selection or microgestures.
 
 ## Permanent tunnels
 
@@ -180,6 +189,10 @@ Restart the AR session after updating this repository so the Rust bridge is
 rebuilt. Confirm that both `ffmpeg` and `ffprobe` are available. The first open
 of an AV1/HEVC attachment may take longer while the H.264 cache is generated;
 the bridge console prints `[VIDEO]` progress messages.
+
+If the media button stays red, another bridge may still own port `8765` with an
+old token or executable. Stop the old session and start AR again from Meta Quest
+Sync. Clicking the red button retries preparation after the bridge is restarted.
 
 ### The bridge does not compile
 

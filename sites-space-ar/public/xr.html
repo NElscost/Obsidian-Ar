@@ -1091,6 +1091,57 @@
     renderer.xr.setReferenceSpaceType("local-floor");
     document.body.prepend(renderer.domElement);
 
+    let iwInputManager = null;
+    let iwInputPromise = null;
+    let virtualHandFrameTime = 0;
+    const fallbackVirtualHands = [];
+
+    async function initializeVirtualHands() {
+      if (iwInputManager || fallbackVirtualHands.length) return;
+      if (iwInputPromise) return iwInputPromise;
+      iwInputPromise = (async () => {
+        try {
+          const { XRInputManager } = await import(
+            "https://esm.sh/@iwsdk/xr-input@0.4.2?external=three"
+          );
+          iwInputManager = new XRInputManager({ scene, camera });
+          scene.add(iwInputManager.xrOrigin);
+          iwInputManager.visualAdapters?.hand?.left?.toggleVisual(true);
+          iwInputManager.visualAdapters?.hand?.right?.toggleVisual(true);
+          console.info("IWSDK XRInputManager ativo para as mãos virtuais.");
+          return;
+        } catch (error) {
+          console.warn("IWSDK visual indisponível; usando mãos Three.js.", error);
+        }
+        try {
+          const { XRHandModelFactory } = await import(
+            "three/addons/webxr/XRHandModelFactory.js"
+          );
+          const factory = new XRHandModelFactory();
+          for (let index = 0; index < 2; index += 1) {
+            const hand = renderer.xr.getHand(index);
+            hand.add(factory.createHandModel(hand, "mesh"));
+            scene.add(hand);
+            fallbackVirtualHands.push(hand);
+          }
+        } catch (error) {
+          console.warn("Não foi possível criar as mãos virtuais de fallback.", error);
+        }
+      })().finally(() => {
+        iwInputPromise = null;
+      });
+      return iwInputPromise;
+    }
+
+    function updateVirtualHands(time) {
+      if (!iwInputManager) return;
+      const delta = virtualHandFrameTime
+        ? Math.min(0.05, Math.max(0, (time - virtualHandFrameTime) / 1000))
+        : 0;
+      virtualHandFrameTime = time;
+      iwInputManager.update(renderer.xr, delta, time / 1000);
+    }
+
     scene.add(new THREE.HemisphereLight(0xffffff, 0x33405f, 2.1));
     const keyLight = new THREE.DirectionalLight(0xffffff, 1.7);
     keyLight.position.set(2, 4, 2);
@@ -1108,6 +1159,7 @@
     let arNoteSurface = null;
     let arNoteControls = [];
     let pointedNoteControl = null;
+    let pointedNoteControlInstanceId = null;
     let pointedNoteControlRatio = null;
     let candidateNoteControl = null;
     let candidateNoteControlSince = 0;
@@ -1129,6 +1181,7 @@
     let noteVideoPreparationError = null;
     let noteVideoPreparationGeneration = 0;
     let localNoteGraphGroup = null;
+    let pointedLocalNotePath = null;
     let spatialAudioContext = null;
     let spatialAudioSource = null;
     let spatialAudioPanner = null;
@@ -1141,6 +1194,7 @@
     let pendingNoteAudioSeek = null;
     let audioBookmarkMeshes = [];
     const audioWaveformCache = new Map();
+    const bridgeCapabilityCache = new Map();
     const AUDIO_BOOKMARK_STORAGE_KEY = "space-ar-audio-bookmarks-v1";
     let noteWindowPinned = false;
     let noteWindowAnchor = null;
@@ -1166,6 +1220,7 @@
       noteVideoPreparation = null;
       noteVideoPreparationError = null;
       localNoteGraphGroup = null;
+      pointedLocalNotePath = null;
       spatialAudioSource?.disconnect();
       spatialAudioPanner?.disconnect();
       spatialAudioSource = null;
@@ -1184,6 +1239,7 @@
       arNoteGroup.traverse((object) => {
         if (!object.isMesh) return;
         object.geometry?.dispose();
+        object.material?.map?.dispose();
         object.material?.dispose();
       });
       arNoteGroup.clear();
@@ -1196,6 +1252,7 @@
       arNotePage = 0;
       arNotePath = "";
       pointedNoteControl = null;
+      pointedNoteControlInstanceId = null;
       pointedNoteControlRatio = null;
       candidateNoteControl = null;
     }
@@ -1570,10 +1627,41 @@
         body: JSON.stringify({ notePath, assetPath })
       });
       if (!response.ok) {
-        const message = await response.text().catch(() => "");
+        const raw = await response.text().catch(() => "");
+        let message = raw;
+        try {
+          message = JSON.parse(raw).error ?? raw;
+        } catch {}
+        if (response.status === 401) {
+          throw new Error("A ponte ativa usa outro token. Encerre a ponte antiga e reinicie o Meta Quest Sync.");
+        }
         throw new Error(message || `Mídia HTTP ${response.status}`);
       }
       return response.blob();
+    }
+
+    async function ensureVideoBridge(config) {
+      const key = config.url;
+      if (!bridgeCapabilityCache.has(key)) {
+        bridgeCapabilityCache.set(key, (async () => {
+          const response = await fetch(`${config.url}/verify`, {
+            headers: bridgeRequestHeaders(config)
+          });
+          const result = await response.json().catch(() => ({}));
+          if (response.status === 401) {
+            throw new Error("A porta local está ocupada por outra ponte. Encerre-a e reinicie o Meta Quest Sync.");
+          }
+          if (!response.ok) throw new Error(result.error ?? `Ponte HTTP ${response.status}`);
+          if (!result.capabilities?.includes("video-transcode")) {
+            throw new Error("Ponte antiga sem suporte de vídeo. Encerre a sessão antiga e inicie novamente pelo plugin.");
+          }
+          return result;
+        })().catch((error) => {
+          bridgeCapabilityCache.delete(key);
+          throw error;
+        }));
+      }
+      return bridgeCapabilityCache.get(key);
     }
 
     async function fetchVaultWaveform(config, notePath, assetPath) {
@@ -2809,6 +2897,7 @@
               throw new Error("Configure a ponte para preparar o vídeo do vault.");
             }
             setXrMessage("Preparando vídeo… a primeira conversão AV1/HEVC pode demorar.");
+            await ensureVideoBridge(config);
             const blob = await fetchVaultAsset(config, notePath, source);
             if (blob.size > 256 * 1024 * 1024) {
               throw new Error("Vídeo maior que 256 MB; use uma versão WebM/MP4 otimizada.");
@@ -2846,7 +2935,11 @@
       const isVideo = track.kind === "video";
       try {
         if (isVideo && !preparedNoteVideo) {
-          if (noteVideoPreparationError) throw noteVideoPreparationError;
+          if (noteVideoPreparationError) {
+            beginNoteVideoPreparation(track, arNotePath);
+            setXrMessage("Tentando preparar o vídeo novamente…");
+            return;
+          }
           setXrMessage("O vídeo ainda está sendo preparado. Aguarde a confirmação e faça a pinça novamente.");
           return;
         }
@@ -2982,6 +3075,14 @@
         setXrMessage(`Marcador selecionado: ${formatAudioTime(seconds)}.`);
         return;
       }
+      if (action === "local-note") {
+        const path = options.path || pointedLocalNotePath;
+        if (path && path !== arNotePath) {
+          setXrMessage(`Abrindo ${path} pelo grafo local…`);
+          void requestNote(path);
+        }
+        return;
+      }
       if (action === "previous" && arNotePage > 0) arNotePage -= 1;
       if (action === "next" && arNotePage < arNotePages.length - 1) arNotePage += 1;
       drawArNotePage();
@@ -3070,6 +3171,9 @@
         toneMapped: false
       });
       const nodes = new THREE.InstancedMesh(localNodeGeometry, localNodeMaterial, visibleNodes.length);
+      nodes.userData.noteAction = "local-note";
+      nodes.userData.localGraphNodes = visibleNodes;
+      nodes.userData.highlightScale = false;
       const matrix = new THREE.Matrix4();
       const scale = new THREE.Vector3();
       for (let index = 0; index < visibleNodes.length; index += 1) {
@@ -3079,13 +3183,78 @@
         scale.setScalar(size);
         matrix.compose(position, new THREE.Quaternion(), scale);
         nodes.setMatrixAt(index, matrix);
-        nodes.setColorAt(index, new THREE.Color(index === 0 ? 0x63e6be : (node.color || 0x75a7ff)));
+        nodes.setColorAt(index, new THREE.Color(node.color || 0x75a7ff));
       }
       nodes.instanceMatrix.needsUpdate = true;
       if (nodes.instanceColor) nodes.instanceColor.needsUpdate = true;
       nodes.renderOrder = 1000;
-      nodes.raycast = () => {};
       localNoteGraphGroup.add(nodes);
+      arNoteControls.push(nodes);
+
+      const atlas = document.createElement("canvas");
+      atlas.width = 1024;
+      atlas.height = 1024;
+      const atlasContext = atlas.getContext("2d");
+      atlasContext.clearRect(0, 0, atlas.width, atlas.height);
+      atlasContext.font = "600 30px system-ui, sans-serif";
+      atlasContext.textAlign = "center";
+      atlasContext.textBaseline = "middle";
+      atlasContext.fillStyle = "#f4f7ff";
+      const columns = 4;
+      const rows = 7;
+      const cellWidth = atlas.width / columns;
+      const cellHeight = atlas.height / rows;
+      const labelPositions = [];
+      const labelUvs = [];
+      for (let index = 0; index < visibleNodes.length; index += 1) {
+        const node = visibleNodes[index];
+        const column = index % columns;
+        const row = Math.floor(index / columns);
+        const rawLabel = String(node.label || node.id || "Nota")
+          .replace(/\.md$/iu, "")
+          .split("/")
+          .pop();
+        const label = rawLabel.length > 22 ? `${rawLabel.slice(0, 21)}…` : rawLabel;
+        atlasContext.fillText(
+          label,
+          column * cellWidth + cellWidth / 2,
+          row * cellHeight + cellHeight / 2,
+          cellWidth - 14
+        );
+        const position = positions.get(node.id);
+        const halfWidth = THREE.MathUtils.clamp(0.0028 * label.length, 0.025, 0.062);
+        const halfHeight = 0.007;
+        const x0 = position.x - halfWidth;
+        const x1 = position.x + halfWidth;
+        const y0 = position.y + 0.012;
+        const y1 = y0 + halfHeight * 2;
+        labelPositions.push(x0, y0, 0.002, x1, y0, 0.002, x1, y1, 0.002);
+        labelPositions.push(x0, y0, 0.002, x1, y1, 0.002, x0, y1, 0.002);
+        const u0 = column / columns;
+        const u1 = (column + 1) / columns;
+        const v0 = 1 - (row + 1) / rows;
+        const v1 = 1 - row / rows;
+        labelUvs.push(u0, v0, u1, v0, u1, v1, u0, v0, u1, v1, u0, v1);
+      }
+      const labelGeometry = new THREE.BufferGeometry();
+      labelGeometry.setAttribute("position", new THREE.Float32BufferAttribute(labelPositions, 3));
+      labelGeometry.setAttribute("uv", new THREE.Float32BufferAttribute(labelUvs, 2));
+      const labelTexture = new THREE.CanvasTexture(atlas);
+      labelTexture.colorSpace = THREE.SRGBColorSpace;
+      labelTexture.minFilter = THREE.LinearFilter;
+      labelTexture.generateMipmaps = false;
+      const labels = new THREE.Mesh(
+        labelGeometry,
+        new THREE.MeshBasicMaterial({
+          map: labelTexture,
+          transparent: true,
+          depthTest: false,
+          toneMapped: false
+        })
+      );
+      labels.renderOrder = 1001;
+      labels.raycast = () => {};
+      localNoteGraphGroup.add(labels);
 
       const linePositions = [];
       for (const [sourceId, targetId] of relevantLinks) {
@@ -4631,6 +4800,7 @@
         });
 
         await renderer.xr.setSession(xrSession);
+        void initializeVirtualHands();
         let environment360Ready = false;
         try {
           environment360Ready = await prepareEnvironment360();
@@ -4692,7 +4862,10 @@
         if (control) {
           activateNoteControl(control.userData.noteAction, event, {
             ratio: hit?.uv?.x ?? pointedNoteControlRatio,
-            seconds: control.userData.bookmarkSeconds
+            seconds: control.userData.bookmarkSeconds,
+            path: control.userData.localGraphNodes?.[
+              hit?.instanceId ?? pointedNoteControlInstanceId
+            ]?.id
           });
           resetGestureState("await-release");
         }
@@ -5319,8 +5492,9 @@
       const scanNodes = arNoteGroup.visible || time - lastNodeRaycastAt >= nodePickInterval;
       if (scanNodes && !arNoteGroup.visible) lastNodeRaycastAt = time;
       let nearest = null;
-      let nearestControl = null;
-      let nearestControlRatio = null;
+        let nearestControl = null;
+        let nearestControlRatio = null;
+        let nearestControlInstanceId = null;
       let handRayIndex = 0;
       for (const inputSource of xrSession.inputSources) {
         if (!inputSource.hand) continue;
@@ -5419,6 +5593,7 @@
           if (controlHit) {
             nearestControl = controlHit.object;
             nearestControlRatio = controlHit.uv?.x ?? null;
+            nearestControlInstanceId = controlHit.instanceId ?? null;
           }
           continue;
         }
@@ -5466,11 +5641,15 @@
           lastNoteControlHitAt = time;
           if (pointedNoteControl === nearestControl) {
             pointedNoteControlRatio = nearestControlRatio;
+            pointedNoteControlInstanceId = nearestControlInstanceId;
+            pointedLocalNotePath = nearestControl.userData.localGraphNodes?.[nearestControlInstanceId]?.id ?? null;
             candidateNoteControl = null;
           } else if (candidateNoteControl === nearestControl) {
             if (time - candidateNoteControlSince >= 70) {
               pointedNoteControl = nearestControl;
               pointedNoteControlRatio = nearestControlRatio;
+              pointedNoteControlInstanceId = nearestControlInstanceId;
+              pointedLocalNotePath = nearestControl.userData.localGraphNodes?.[nearestControlInstanceId]?.id ?? null;
               candidateNoteControl = null;
             }
           } else {
@@ -5480,6 +5659,8 @@
         } else if (time - lastNoteControlHitAt > 420) {
           pointedNoteControl = null;
           pointedNoteControlRatio = null;
+          pointedNoteControlInstanceId = null;
+          pointedLocalNotePath = null;
           candidateNoteControl = null;
         }
         selectedNode = null;
@@ -5488,7 +5669,7 @@
         for (const control of arNoteControls) {
           const active = control === pointedNoteControl;
           control.scale.setScalar(active && control.userData.highlightScale !== false ? 1.35 : 1);
-          control.material.opacity = active ? 1 : 0.82;
+          if (control.material) control.material.opacity = active ? 1 : 0.82;
         }
         if (pointedNoteControl) {
           const action = pointedNoteControl.userData.noteAction;
@@ -5504,6 +5685,8 @@
                   ? "salvar um marcador neste instante"
                   : action === "bookmark"
                     ? `ir para ${formatAudioTime(pointedNoteControl.userData.bookmarkSeconds)}`
+                  : action === "local-note"
+                    ? `abrir ${pointedLocalNotePath || "esta nota"}`
                 : action === "next" ? "avançar" : "voltar";
           setXrMessage(`Faça uma pinça para ${label}.`);
         }
@@ -5667,6 +5850,7 @@
     }
 
     function render(time, frame) {
+      updateVirtualHands(time);
       if (isPlaced) synapsePulseTime.value = time * 0.001;
       if (forceGraph && dynamicGraphTicking) {
         forceGraph.tickFrame();
@@ -5724,6 +5908,7 @@
       noteWindowAnchor = null;
       noteWindowPinned = false;
       xrSession = null;
+      virtualHandFrameTime = 0;
       graphIntroPulseStartedAt = null;
       referenceSpace = null;
       viewerSpace = null;

@@ -155,6 +155,39 @@ async function waitForLog(files, predicate, timeoutMs) {
   return null;
 }
 
+async function waitForOwnedBridge(port, token, timeoutMs = 8_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/verify`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(1_000)
+      });
+      if (response.ok) return true;
+      if (response.status === 401) {
+        throw new Error(
+          `A porta ${port} pertence a outra ponte. Encerre a sessão antiga antes de iniciar uma nova.`
+        );
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("pertence a outra ponte")) throw error;
+    }
+    await sleep(200);
+  }
+  return false;
+}
+
+async function bridgePortIsOccupied(port) {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/health`, {
+      signal: AbortSignal.timeout(800)
+    });
+    return response.status > 0;
+  } catch {
+    return false;
+  }
+}
+
 async function startBridge(port, debug) {
   await stopBridge();
   if (!existsSync(configPath)) throw new Error("note-bridge.config.json não encontrado. Copie e edite note-bridge.config.example.json.");
@@ -165,6 +198,11 @@ async function startBridge(port, debug) {
   }
   if (!commandAvailable("cloudflared")) {
     throw new Error("cloudflared não encontrado. Instale-o e reinicie o Obsidian para atualizar o PATH.");
+  }
+  if (await bridgePortIsOccupied(port)) {
+    throw new Error(
+      `A porta ${port} ainda está ocupada por uma ponte não registrada. Encerre o processo antigo e tente novamente.`
+    );
   }
   buildBridge();
   scanPending(vaultPath);
@@ -180,6 +218,14 @@ async function startBridge(port, debug) {
   const server = spawnLogged(serverPath, [], serverLog, serverError, serverEnv);
   let tunnel;
   try {
+    if (!await waitForOwnedBridge(port, token)) {
+      const details = [serverLog, serverError]
+        .filter(existsSync)
+        .map((file) => readFileSync(file, "utf8").trim())
+        .filter(Boolean)
+        .join("\n");
+      throw new Error(details || `A ponte não respondeu na porta ${port}.`);
+    }
     const mode = String(config.tunnelMode || "quick").toLowerCase();
     if (!["quick", "named"].includes(mode)) throw new Error("tunnelMode deve ser 'quick' ou 'named'.");
     let publishedUrl;
