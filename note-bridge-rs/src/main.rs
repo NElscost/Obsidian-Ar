@@ -2,12 +2,13 @@ use std::io::SeekFrom;
 use std::{
     collections::{HashMap, HashSet},
     env, fs,
+    hash::{DefaultHasher, Hash, Hasher},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Instant, SystemTime},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use axum::{
     body::Body,
     extract::{DefaultBodyLimit, State},
@@ -26,6 +27,7 @@ use symphonia::default::{get_codecs, get_probe};
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncSeekExt},
+    process::Command,
     sync::RwLock,
 };
 use tokio_util::io::ReaderStream;
@@ -490,6 +492,9 @@ mod tests {
         assert!(asset_extension_allowed(Path::new("captura.webm")));
         assert!(!asset_extension_allowed(Path::new("script.exe")));
         assert!(!asset_extension_allowed(Path::new("nota.md")));
+        assert!(compatibility_video_candidate(Path::new("video.mp4")));
+        assert!(compatibility_video_candidate(Path::new("video.mov")));
+        assert!(!compatibility_video_candidate(Path::new("video.webm")));
     }
 
     #[test]
@@ -716,6 +721,126 @@ fn asset_extension_allowed(path: &Path) -> bool {
                 | "webp"
         )
     )
+}
+
+fn compatibility_video_candidate(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase())
+            .as_deref(),
+        Some("m4v" | "mov" | "mp4")
+    )
+}
+
+async fn compatible_video_asset(path: &Path) -> Result<PathBuf> {
+    if !compatibility_video_candidate(path) {
+        return Ok(path.to_path_buf());
+    }
+    let probe = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=codec_name",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(path)
+        .output()
+        .await;
+    let codec = match probe {
+        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .to_ascii_lowercase(),
+        _ => return Ok(path.to_path_buf()),
+    };
+    if !matches!(codec.as_str(), "av1" | "hevc" | "h265") {
+        return Ok(path.to_path_buf());
+    }
+
+    let metadata = tokio::fs::metadata(path).await?;
+    let mut hasher = DefaultHasher::new();
+    path.hash(&mut hasher);
+    metadata.len().hash(&mut hasher);
+    metadata
+        .modified()
+        .unwrap_or(SystemTime::UNIX_EPOCH)
+        .hash(&mut hasher);
+    let cache_dir = env::temp_dir().join("obsidian-ar-video-cache");
+    tokio::fs::create_dir_all(&cache_dir).await?;
+    let output_path = cache_dir.join(format!("{:016x}.mp4", hasher.finish()));
+    if tokio::fs::metadata(&output_path)
+        .await
+        .map(|cached| cached.len() > 0)
+        .unwrap_or(false)
+    {
+        return Ok(output_path);
+    }
+
+    let partial_path = output_path.with_extension(format!(
+        "partial-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    println!(
+        "[VIDEO] convertendo codec {codec} para H.264: {}",
+        path.display()
+    );
+    let status = Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
+        .arg(path)
+        .args([
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "23",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",
+            "-f",
+            "mp4",
+        ])
+        .arg(&partial_path)
+        .status()
+        .await;
+    match status {
+        Ok(status) if status.success() => {
+            if tokio::fs::rename(&partial_path, &output_path)
+                .await
+                .is_err()
+            {
+                let _ = tokio::fs::remove_file(&output_path).await;
+                tokio::fs::rename(&partial_path, &output_path).await?;
+            }
+            println!("[VIDEO] cache H.264 pronto: {}", output_path.display());
+            Ok(output_path)
+        }
+        Ok(status) => {
+            let _ = tokio::fs::remove_file(&partial_path).await;
+            bail!("FFmpeg não conseguiu converter o vídeo ({status}).")
+        }
+        Err(err) => {
+            let _ = tokio::fs::remove_file(&partial_path).await;
+            bail!("Este vídeo usa {codec}; instale FFmpeg para convertê-lo para H.264: {err}")
+        }
+    }
 }
 
 fn parse_byte_range(value: Option<&HeaderValue>, total: u64) -> Result<Option<(u64, u64)>, ()> {
@@ -966,58 +1091,64 @@ async fn read_asset(
         _ => return error(StatusCode::NOT_FOUND, "Nota não permitida."),
     }
     match resolve_asset(&state, &note_path, &payload.asset_path).await {
-        Ok(path) => match File::open(&path).await {
-            Ok(mut file) => {
-                let content_length = file.metadata().await.ok().map(|metadata| metadata.len());
-                let range = match content_length {
-                    Some(total) => match parse_byte_range(headers.get(header::RANGE), total) {
-                        Ok(range) => range,
-                        Err(()) => {
-                            return Response::builder()
-                                .status(StatusCode::RANGE_NOT_SATISFIABLE)
-                                .header(header::CONTENT_RANGE, format!("bytes */{total}"))
-                                .body(Body::empty())
-                                .unwrap();
+        Ok(path) => {
+            let path = match compatible_video_asset(&path).await {
+                Ok(path) => path,
+                Err(err) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
+            };
+            match File::open(&path).await {
+                Ok(mut file) => {
+                    let content_length = file.metadata().await.ok().map(|metadata| metadata.len());
+                    let range = match content_length {
+                        Some(total) => match parse_byte_range(headers.get(header::RANGE), total) {
+                            Ok(range) => range,
+                            Err(()) => {
+                                return Response::builder()
+                                    .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                                    .header(header::CONTENT_RANGE, format!("bytes */{total}"))
+                                    .body(Body::empty())
+                                    .unwrap();
+                            }
+                        },
+                        None => None,
+                    };
+                    let (status, body_length) = if let Some((start, end)) = range {
+                        if let Err(err) = file.seek(SeekFrom::Start(start)).await {
+                            return error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
                         }
-                    },
-                    None => None,
-                };
-                let (status, body_length) = if let Some((start, end)) = range {
-                    if let Err(err) = file.seek(SeekFrom::Start(start)).await {
-                        return error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+                        (StatusCode::PARTIAL_CONTENT, Some(end - start + 1))
+                    } else {
+                        (StatusCode::OK, content_length)
+                    };
+                    let mut response = Response::builder()
+                        .status(status)
+                        .header(
+                            header::CONTENT_TYPE,
+                            mime_guess::from_path(&path)
+                                .first_or_octet_stream()
+                                .as_ref(),
+                        )
+                        .header(header::CACHE_CONTROL, "private, max-age=300")
+                        .header(header::ACCEPT_RANGES, "bytes");
+                    if let (Some((start, end)), Some(total)) = (range, content_length) {
+                        response = response.header(
+                            header::CONTENT_RANGE,
+                            format!("bytes {start}-{end}/{total}"),
+                        );
                     }
-                    (StatusCode::PARTIAL_CONTENT, Some(end - start + 1))
-                } else {
-                    (StatusCode::OK, content_length)
-                };
-                let mut response = Response::builder()
-                    .status(status)
-                    .header(
-                        header::CONTENT_TYPE,
-                        mime_guess::from_path(&path)
-                            .first_or_octet_stream()
-                            .as_ref(),
-                    )
-                    .header(header::CACHE_CONTROL, "private, max-age=300")
-                    .header(header::ACCEPT_RANGES, "bytes");
-                if let (Some((start, end)), Some(total)) = (range, content_length) {
-                    response = response.header(
-                        header::CONTENT_RANGE,
-                        format!("bytes {start}-{end}/{total}"),
-                    );
+                    if let Some(length) = body_length {
+                        response = response.header(header::CONTENT_LENGTH, length);
+                    }
+                    let stream = if let Some(length) = body_length {
+                        ReaderStream::new(file.take(length))
+                    } else {
+                        ReaderStream::new(file.take(u64::MAX))
+                    };
+                    response.body(Body::from_stream(stream)).unwrap()
                 }
-                if let Some(length) = body_length {
-                    response = response.header(header::CONTENT_LENGTH, length);
-                }
-                let stream = if let Some(length) = body_length {
-                    ReaderStream::new(file.take(length))
-                } else {
-                    ReaderStream::new(file.take(u64::MAX))
-                };
-                response.body(Body::from_stream(stream)).unwrap()
+                Err(err) => error(StatusCode::NOT_FOUND, err.to_string()),
             }
-            Err(err) => error(StatusCode::NOT_FOUND, err.to_string()),
-        },
+        }
         Err(err) => error(StatusCode::NOT_FOUND, err.to_string()),
     }
 }

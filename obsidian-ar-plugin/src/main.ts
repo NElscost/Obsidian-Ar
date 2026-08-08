@@ -14,6 +14,7 @@ import {
 import { exportVaultGraph } from "./graph-exporter";
 import { createPairingUrl } from "./pairing";
 import { ActiveSession, SessionManager } from "./session-manager";
+import { tr } from "./i18n";
 
 interface ObsidianArSettings {
   projectRoot: string;
@@ -58,10 +59,10 @@ class PairingModal extends Modal {
   }
 
   onOpen(): void {
-    this.titleEl.setText("Meta Quest Sync pronto");
+    this.titleEl.setText(tr("Meta Quest Sync pronto", "Meta Quest Sync ready"));
     this.contentEl.addClass("obsidian-ar-pairing");
     this.contentEl.createEl("p", {
-      text: "Abra a câmera ou o navegador do Quest e leia o QR Code. A URL e o token ficam no fragmento e são removidos da barra após o pareamento."
+      text: tr("Abra a câmera ou o navegador do Quest e leia o QR Code. A URL e o token ficam no fragmento e são removidos da barra após o pareamento.", "Open the Quest camera or browser and scan the QR code. The URL and token are stored in the fragment and removed from the address bar after pairing.")
     });
     const canvas = this.contentEl.createEl("canvas");
     void QRCode.toCanvas(canvas, this.pairingUrl, {
@@ -69,15 +70,15 @@ class PairingModal extends Modal {
       margin: 1,
       errorCorrectionLevel: "M"
     }).catch((error: unknown) => {
-      console.error("Meta Quest Sync não conseguiu desenhar o QR Code.", error);
+      console.error(tr("Meta Quest Sync não conseguiu desenhar o QR Code.", "Meta Quest Sync could not render the QR code."), error);
       canvas.replaceWith(this.contentEl.createEl("p", {
         cls: "obsidian-ar-status",
-        text: "Não foi possível desenhar o QR Code. Use o botão Copiar link abaixo."
+        text: tr("Não foi possível desenhar o QR Code. Use o botão Copiar link abaixo.", "The QR code could not be rendered. Use the Copy link button below.")
       }));
     });
     this.contentEl.createEl("p", {
       cls: "obsidian-ar-status",
-      text: `Ponte ativa em ${this.session.url}`
+      text: tr(`Ponte ativa em ${this.session.url}`, `Bridge active at ${this.session.url}`)
     });
     const text = this.contentEl.createEl("textarea", {
       cls: "obsidian-ar-pairing-url"
@@ -85,18 +86,18 @@ class PairingModal extends Modal {
     text.value = this.pairingUrl;
     text.readOnly = true;
     const actions = this.contentEl.createDiv({ cls: "obsidian-ar-actions" });
-    const copy = actions.createEl("button", { text: "Copiar link" });
+    const copy = actions.createEl("button", { text: tr("Copiar link", "Copy link") });
     copy.addEventListener("click", () => {
       void navigator.clipboard.writeText(this.pairingUrl).then(
-        () => new Notice("Link de pareamento copiado."),
+        () => new Notice(tr("Link de pareamento copiado.", "Pairing link copied.")),
         () => {
           text.focus();
           text.select();
-          new Notice("Selecione e copie o link exibido.");
+          new Notice(tr("Selecione e copie o link exibido.", "Select and copy the displayed link."));
         }
       );
     });
-    const open = actions.createEl("button", { text: "Abrir visualizador" });
+    const open = actions.createEl("button", { text: tr("Abrir visualizador", "Open viewer") });
     open.addEventListener("click", () => window.open(this.pairingUrl, "_blank", "noopener"));
   }
 
@@ -110,22 +111,22 @@ export default class ObsidianArPlugin extends Plugin {
   private readonly sessionManager = new SessionManager();
   private activeSession: ActiveSession | null = null;
   private startPromise: Promise<boolean> | null = null;
-  sessionStatus = "Nenhuma sessão iniciada.";
+  sessionStatus = tr("Nenhuma sessão iniciada.", "No session started.");
   private exportGraphDebounced = debounce(() => {
     if (this.settings.autoExport) void this.exportGraph(false);
   }, 1500, true);
 
   async onload(): Promise<void> {
     await this.loadSettings();
-    this.addRibbonIcon("glasses", "Iniciar Meta Quest Sync", () => void this.startAr());
+    this.addRibbonIcon("glasses", tr("Iniciar Meta Quest Sync", "Start Meta Quest Sync"), () => void this.startAr());
     this.addCommand({
       id: "start-ar-session",
-      name: "Iniciar sessão AR",
+      name: tr("Iniciar sessão AR", "Start AR session"),
       callback: () => void this.startAr()
     });
     this.addCommand({
       id: "show-ar-pairing",
-      name: "Mostrar QR Code da sessão AR",
+      name: tr("Mostrar QR Code da sessão AR", "Show AR session QR code"),
       checkCallback: (checking) => {
         if (!this.activeSession) return false;
         if (!checking) this.showPairing();
@@ -134,12 +135,12 @@ export default class ObsidianArPlugin extends Plugin {
     });
     this.addCommand({
       id: "export-ar-graph",
-      name: "Atualizar snapshot do grafo",
+      name: tr("Atualizar snapshot do grafo", "Refresh graph snapshot"),
       callback: () => void this.exportGraph(true)
     });
     this.addCommand({
       id: "stop-ar-session",
-      name: "Encerrar sessão AR",
+      name: tr("Encerrar sessão AR", "Stop AR session"),
       callback: () => void this.stopAr()
     });
     this.addSettingTab(new ObsidianArSettingTab(this.app, this));
@@ -156,7 +157,7 @@ export default class ObsidianArPlugin extends Plugin {
   private vaultPath(): string {
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof FileSystemAdapter)) {
-      throw new Error("Meta Quest Sync requer um vault local no aplicativo desktop.");
+      throw new Error(tr("Meta Quest Sync requer um vault local no aplicativo desktop.", "Meta Quest Sync requires a local vault in the desktop app."));
     }
     return adapter.getBasePath();
   }
@@ -164,7 +165,7 @@ export default class ObsidianArPlugin extends Plugin {
   async exportGraph(showNotice: boolean): Promise<void> {
     const root = this.settings.projectRoot.trim();
     if (!root) {
-      if (showNotice) new Notice("Configure a pasta do projeto Meta Quest Sync.");
+      if (showNotice) new Notice(tr("Configure a pasta do projeto Meta Quest Sync.", "Configure the Meta Quest Sync project folder."));
       return;
     }
     const graph = exportVaultGraph(
@@ -173,7 +174,7 @@ export default class ObsidianArPlugin extends Plugin {
       listSetting(this.settings.excludedTags)
     );
     await fs.writeFile(path.join(root, "graph.json"), `${JSON.stringify(graph)}\n`, "utf8");
-    if (showNotice) new Notice(`Grafo atualizado: ${graph.nodes.length} notas.`);
+    if (showNotice) new Notice(tr(`Grafo atualizado: ${graph.nodes.length} notas.`, `Graph updated: ${graph.nodes.length} notes.`));
   }
 
   private setSessionStatus(message: string, report?: (message: string) => void): void {
@@ -184,38 +185,38 @@ export default class ObsidianArPlugin extends Plugin {
   async startAr(report?: (message: string) => void): Promise<boolean> {
     if (this.activeSession) {
       this.showPairing();
-      this.setSessionStatus("Sessão ativa. QR Code aberto novamente.", report);
+      this.setSessionStatus(tr("Sessão ativa. QR Code aberto novamente.", "Session active. QR code opened again."), report);
       return true;
     }
     if (this.startPromise) {
-      this.setSessionStatus("A sessão já está sendo iniciada…", report);
+      this.setSessionStatus(tr("A sessão já está sendo iniciada…", "The session is already starting…"), report);
       return this.startPromise;
     }
     const root = this.settings.projectRoot.trim();
     if (!root) {
-      new Notice("Abra Configurações → Meta Quest Sync e informe a pasta do projeto.");
-      this.setSessionStatus("Informe a pasta do projeto antes de iniciar.", report);
+      new Notice(tr("Abra Configurações → Meta Quest Sync e informe a pasta do projeto.", "Open Settings → Meta Quest Sync and select the project folder."));
+      this.setSessionStatus(tr("Informe a pasta do projeto antes de iniciar.", "Select the project folder before starting."), report);
       return false;
     }
     this.startPromise = (async () => {
       try {
-        this.setSessionStatus("Exportando o grafo do vault…", report);
-        new Notice("Meta Quest Sync: preparando grafo, ponte e túnel…", 8000);
+        this.setSessionStatus(tr("Exportando o grafo do vault…", "Exporting the vault graph…"), report);
+        new Notice(tr("Meta Quest Sync: preparando grafo, ponte e túnel…", "Meta Quest Sync: preparing graph, bridge and tunnel…"), 8000);
         await this.exportGraph(false);
-        this.setSessionStatus("Salvando a configuração segura da ponte…", report);
+        this.setSessionStatus(tr("Salvando a configuração segura da ponte…", "Saving the secure bridge configuration…"), report);
         await this.sessionManager.configure(this.settings, this.vaultPath());
         this.activeSession = await this.sessionManager.start(
           this.settings,
           (message) => this.setSessionStatus(message, report)
         );
         this.showPairing();
-        this.setSessionStatus("Sessão pronta para parear com o Quest.", report);
-        new Notice("Meta Quest Sync pronto para parear com o Quest.");
+        this.setSessionStatus(tr("Sessão pronta para parear com o Quest.", "Session ready to pair with the Quest."), report);
+        new Notice(tr("Meta Quest Sync pronto para parear com o Quest.", "Meta Quest Sync is ready to pair with the Quest."));
         return true;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error("Meta Quest Sync não iniciou.", error);
-        this.setSessionStatus(`Falha: ${message}`, report);
+        console.error(tr("Meta Quest Sync não iniciou.", "Meta Quest Sync failed to start."), error);
+        this.setSessionStatus(tr(`Falha: ${message}`, `Failure: ${message}`), report);
         new Notice(`Meta Quest Sync: ${message}`, 12000);
         return false;
       } finally {
@@ -231,10 +232,10 @@ export default class ObsidianArPlugin extends Plugin {
     try {
       await this.sessionManager.stop(this.settings);
       this.activeSession = null;
-      this.sessionStatus = "Sessão encerrada.";
-      new Notice("Sessão Meta Quest Sync encerrada.");
+      this.sessionStatus = tr("Sessão encerrada.", "Session stopped.");
+      new Notice(tr("Sessão Meta Quest Sync encerrada.", "Meta Quest Sync session stopped."));
     } catch (error) {
-      new Notice(`Não foi possível encerrar: ${String(error)}`, 10000);
+      new Notice(tr(`Não foi possível encerrar: ${String(error)}`, `Could not stop the session: ${String(error)}`), 10000);
     }
   }
 
@@ -253,7 +254,7 @@ export default class ObsidianArPlugin extends Plugin {
       settings?.close();
       window.setTimeout(() => modal.open(), 120);
     } catch (error) {
-      new Notice(`Pareamento inválido: ${String(error)}`);
+      new Notice(tr(`Pareamento inválido: ${String(error)}`, `Invalid pairing: ${String(error)}`));
     }
   }
 
@@ -274,10 +275,9 @@ class ObsidianArSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Meta Quest Sync" });
     new Setting(containerEl)
-      .setName("Pasta do projeto")
-      .setDesc("Pasta absoluta do clone Obsidian-Ar que contém Scripts e note-bridge-rs.")
+      .setName(tr("Pasta do projeto", "Project folder"))
+      .setDesc(tr("Pasta absoluta do clone Obsidian-Ar que contém Scripts e note-bridge-rs.", "Absolute path to the Obsidian-Ar clone containing Scripts and note-bridge-rs."))
       .addText((text) => text
         .setPlaceholder("C:\\Projetos\\Obsidian-Ar")
         .setValue(this.plugin.settings.projectRoot)
@@ -286,28 +286,26 @@ class ObsidianArSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
     new Setting(containerEl)
-      .setName("Visualizador HTTPS")
-      .setDesc("Site WebXR que será aberto pelo QR Code.")
+      .setName(tr("Visualizador HTTPS", "HTTPS viewer"))
+      .setDesc(tr("Site WebXR que será aberto pelo QR Code.", "WebXR site opened by the QR code."))
       .addText((text) => text
         .setValue(this.plugin.settings.viewerUrl)
         .onChange(async (value) => {
           this.plugin.settings.viewerUrl = value.trim();
           await this.plugin.saveSettings();
         }));
-    if (process.platform !== "win32") {
-      new Setting(containerEl)
-        .setName("Executável Node.js")
-        .setDesc("Use 'node' ou um caminho absoluto, por exemplo /opt/homebrew/bin/node.")
-        .addText((text) => text
-          .setValue(this.plugin.settings.nodeExecutable)
-          .onChange(async (value) => {
-            this.plugin.settings.nodeExecutable = value.trim() || "node";
-            await this.plugin.saveSettings();
-          }));
-    }
     new Setting(containerEl)
-      .setName("Porta local")
-      .setDesc("Porta usada pela ponte Axum.")
+      .setName(tr("Executável Node.js", "Node.js executable"))
+      .setDesc(tr("Use 'node' ou um caminho absoluto. No macOS, tente /opt/homebrew/bin/node.", "Use 'node' or an absolute path. On macOS, try /opt/homebrew/bin/node."))
+      .addText((text) => text
+        .setValue(this.plugin.settings.nodeExecutable)
+        .onChange(async (value) => {
+          this.plugin.settings.nodeExecutable = value.trim() || "node";
+          await this.plugin.saveSettings();
+        }));
+    new Setting(containerEl)
+      .setName(tr("Porta local", "Local port"))
+      .setDesc(tr("Porta usada pela ponte Axum.", "Port used by the Axum bridge."))
       .addText((text) => text
         .setValue(String(this.plugin.settings.port))
         .onChange(async (value) => {
@@ -316,8 +314,8 @@ class ObsidianArSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
     new Setting(containerEl)
-      .setName("Tipo de túnel")
-      .setDesc("Quick Tunnel é temporário; Named Tunnel é indicado para uso recorrente.")
+      .setName(tr("Tipo de túnel", "Tunnel type"))
+      .setDesc(tr("Quick Tunnel é temporário; Named Tunnel é indicado para uso recorrente.", "Quick Tunnel is temporary; Named Tunnel is recommended for recurring use."))
       .addDropdown((dropdown) => dropdown
         .addOption("quick", "Cloudflare Quick Tunnel")
         .addOption("named", "Cloudflare Named Tunnel")
@@ -329,52 +327,52 @@ class ObsidianArSettingTab extends PluginSettingTab {
         }));
     if (this.plugin.settings.tunnelMode === "named") {
       new Setting(containerEl)
-        .setName("URL do Named Tunnel")
+        .setName(tr("URL do Named Tunnel", "Named Tunnel URL"))
         .addText((text) => text.setValue(this.plugin.settings.tunnelUrl).onChange(async (value) => {
           this.plugin.settings.tunnelUrl = value.trim();
           await this.plugin.saveSettings();
         }));
       new Setting(containerEl)
-        .setName("Arquivo do token do túnel")
+        .setName(tr("Arquivo do token do túnel", "Tunnel token file"))
         .addText((text) => text.setValue(this.plugin.settings.tunnelTokenFile).onChange(async (value) => {
           this.plugin.settings.tunnelTokenFile = value.trim();
           await this.plugin.saveSettings();
         }));
     }
     new Setting(containerEl)
-      .setName("Pastas excluídas")
-      .setDesc("Uma pasta por linha ou separada por vírgulas.")
+      .setName(tr("Pastas excluídas", "Excluded folders"))
+      .setDesc(tr("Uma pasta por linha ou separada por vírgulas.", "One folder per line or separated by commas."))
       .addTextArea((text) => text.setValue(this.plugin.settings.excludedFolders).onChange(async (value) => {
         this.plugin.settings.excludedFolders = value;
         await this.plugin.saveSettings();
       }));
     new Setting(containerEl)
-      .setName("Tags excluídas")
-      .setDesc("Inclua #. Uma tag por linha ou separada por vírgulas.")
+      .setName(tr("Tags excluídas", "Excluded tags"))
+      .setDesc(tr("Inclua #. Uma tag por linha ou separada por vírgulas.", "Include #. Enter one tag per line or separate them with commas."))
       .addTextArea((text) => text.setValue(this.plugin.settings.excludedTags).onChange(async (value) => {
         this.plugin.settings.excludedTags = value;
         await this.plugin.saveSettings();
       }));
     new Setting(containerEl)
-      .setName("Atualizar grafo automaticamente")
-      .setDesc("Reexporta o snapshot após alterações no vault, com debounce.")
+      .setName(tr("Atualizar grafo automaticamente", "Update graph automatically"))
+      .setDesc(tr("Reexporta o snapshot após alterações no vault, com debounce.", "Re-exports the snapshot after vault changes, with debounce."))
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.autoExport).onChange(async (value) => {
         this.plugin.settings.autoExport = value;
         await this.plugin.saveSettings();
       }));
     const sessionSetting = new Setting(containerEl)
-      .setName("Sessão AR")
+      .setName(tr("Sessão AR", "AR session"))
       .setDesc(this.plugin.sessionStatus);
     sessionSetting
-      .addButton((button) => button.setCta().setButtonText("Iniciar AR").onClick(async () => {
-        button.setDisabled(true).setButtonText("Iniciando…");
+      .addButton((button) => button.setCta().setButtonText(tr("Iniciar AR", "Start AR")).onClick(async () => {
+        button.setDisabled(true).setButtonText(tr("Iniciando…", "Starting…"));
         try {
           await this.plugin.startAr((message) => sessionSetting.setDesc(message));
         } finally {
-          button.setDisabled(false).setButtonText("Iniciar AR");
+          button.setDisabled(false).setButtonText(tr("Iniciar AR", "Start AR"));
         }
       }))
-      .addButton((button) => button.setWarning().setButtonText("Encerrar").onClick(() => {
+      .addButton((button) => button.setWarning().setButtonText(tr("Encerrar", "Stop")).onClick(() => {
         void this.plugin.stopAr();
       }));
   }

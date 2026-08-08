@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { tr } from "./i18n";
 
 export interface SessionSettings {
   projectRoot: string;
@@ -68,28 +69,16 @@ export class SessionManager {
     settings: SessionSettings,
     reportStatus: SessionStatusReporter = () => undefined
   ): Promise<ActiveSession> {
-    const windows = process.platform === "win32";
-    const script = windows
-      ? path.join(settings.projectRoot, "Scripts", "Start-ObsidianNoteBridge.ps1")
-      : path.join(settings.projectRoot, "Scripts", "note-bridge.mjs");
-    if (!(await exists(script))) throw new Error(`${path.basename(script)} não foi encontrado.`);
+    const script = path.join(settings.projectRoot, "Scripts", "note-bridge.mjs");
+    if (!(await exists(script))) throw new Error(tr(`${path.basename(script)} não foi encontrado.`, `${path.basename(script)} was not found.`));
     const statePath = path.join(settings.projectRoot, ".note-bridge-processes.json");
     const tokenPath = path.join(settings.projectRoot, ".note-bridge-token");
     const launchTime = Date.now();
     let diagnostics = "";
     let launchError: Error | null = null;
-    reportStatus("Iniciando a ponte Axum e o túnel HTTPS…");
-    const command = windows ? "powershell.exe" : (settings.nodeExecutable?.trim() || "node");
-    const commandArgs = windows ? [
-        "-NoLogo",
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        script,
-        "-Port",
-        String(settings.port)
-      ] : [script, "start", "--port", String(settings.port)];
+    reportStatus(tr("Iniciando a ponte Axum e o túnel HTTPS…", "Starting the Axum bridge and HTTPS tunnel…"));
+    const command = settings.nodeExecutable?.trim() || "node";
+    const commandArgs = [script, "start", "--port", String(settings.port)];
     this.child = spawn(
       command,
       commandArgs,
@@ -115,42 +104,37 @@ export class SessionManager {
             const state = parseProcessState(await fs.readFile(statePath, "utf8"));
             const token = (await fs.readFile(tokenPath, "utf8")).trim();
             if (state.url?.startsWith("https://") && token.length >= 32) {
-              reportStatus("Sessão pronta. Abrindo o QR Code…");
+              reportStatus(tr("Sessão pronta. Abrindo o QR Code…", "Session ready. Opening the QR code…"));
               return { ...state, token };
             }
           }
         } catch {
-          // PowerShell may still be replacing the JSON; retry on the next poll.
+          // The launcher may still be replacing the JSON; retry on the next poll.
         }
       }
       if (this.child.exitCode !== null) {
-        throw new Error(safeDiagnostics(diagnostics) || `A ponte terminou com código ${this.child.exitCode}.`);
+        throw new Error(safeDiagnostics(diagnostics) || tr(`A ponte terminou com código ${this.child.exitCode}.`, `The bridge exited with code ${this.child.exitCode}.`));
       }
       const elapsed = Date.now() - startedAt;
       const progressStep = Math.floor(elapsed / 5000);
       if (progressStep !== lastProgressStep) {
         lastProgressStep = progressStep;
         reportStatus(elapsed < 12_000
-          ? "A ponte iniciou; aguardando a URL pública do Cloudflare…"
-          : `Verificando a URL HTTPS… ${Math.floor(elapsed / 1000)} s`);
+          ? tr("A ponte iniciou; aguardando a URL pública do Cloudflare…", "The bridge started; waiting for the public Cloudflare URL…")
+          : tr(`Verificando a URL HTTPS… ${Math.floor(elapsed / 1000)} s`, `Checking the HTTPS URL… ${Math.floor(elapsed / 1000)} s`));
       }
       await delay(500);
     }
-    throw new Error(`A ponte não ficou pronta em 95 segundos. ${safeDiagnostics(diagnostics)}`);
+    throw new Error(tr(`A ponte não ficou pronta em 95 segundos. ${safeDiagnostics(diagnostics)}`, `The bridge was not ready within 95 seconds. ${safeDiagnostics(diagnostics)}`));
   }
 
   async stop(settings: SessionSettings): Promise<void> {
     const projectRoot = settings.projectRoot;
-    const windows = process.platform === "win32";
-    const script = windows
-      ? path.join(projectRoot, "Scripts", "Stop-ObsidianNoteBridge.ps1")
-      : path.join(projectRoot, "Scripts", "note-bridge.mjs");
-    if (!(await exists(script))) throw new Error(`${path.basename(script)} não foi encontrado.`);
+    const script = path.join(projectRoot, "Scripts", "note-bridge.mjs");
+    if (!(await exists(script))) throw new Error(tr(`${path.basename(script)} não foi encontrado.`, `${path.basename(script)} was not found.`));
     await new Promise<void>((resolve, reject) => {
-      const command = windows ? "powershell.exe" : (settings.nodeExecutable?.trim() || "node");
-      const commandArgs = windows
-        ? ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script]
-        : [script, "stop"];
+      const command = settings.nodeExecutable?.trim() || "node";
+      const commandArgs = [script, "stop"];
       const child = spawn(
         command,
         commandArgs,
@@ -163,7 +147,7 @@ export class SessionManager {
       child.on("error", reject);
       child.on("close", (code) => {
         if (code === 0) resolve();
-        else reject(new Error(errorText.trim() || `Falha ao encerrar a ponte (${code}).`));
+        else reject(new Error(errorText.trim() || tr(`Falha ao encerrar a ponte (${code}).`, `Failed to stop the bridge (${code}).`)));
       });
     });
     this.child = null;

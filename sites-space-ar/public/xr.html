@@ -2765,6 +2765,17 @@
       video.addEventListener("loadedmetadata", resize, { once: true });
     }
 
+    function describeVideoPlaybackError(video, error) {
+      const mediaCode = video?.error?.code;
+      if (mediaCode === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED || error?.name === "NotSupportedError") {
+        return "Formato ou codec de vídeo não suportado pelo Quest Browser. Prefira MP4 com H.264 + AAC ou WebM com VP9 + Opus.";
+      }
+      if (mediaCode === MediaError.MEDIA_ERR_DECODE) {
+        return "O Quest não conseguiu decodificar este vídeo. AV1 pode não funcionar em todos os modelos; prefira H.264.";
+      }
+      return describeError(error || video?.error || "falha desconhecida");
+    }
+
     async function toggleNoteAudio() {
       const track = noteVideoTracks[0] ?? noteAudioTracks[0];
       if (!track) return;
@@ -2799,6 +2810,11 @@
           activeNoteAudio.volume = 1;
           if (isVideo) createArVideoSurface(activeNoteAudio);
           const spatial = connectSpatialNoteAudio(activeNoteAudio, spatialContext);
+          if (isVideo) {
+            activeNoteAudio.addEventListener("error", () => {
+              setXrMessage(`Falha no vídeo: ${describeVideoPlaybackError(activeNoteAudio)}`);
+            });
+          }
           activeNoteAudio.addEventListener("ended", () => {
             updateAudioControlColor();
             setXrMessage(`${isVideo ? "Vídeo" : "Áudio"} concluído: ${track.label}.`);
@@ -2824,7 +2840,9 @@
         updateAudioControlColor();
       } catch (error) {
         console.warn("Não foi possível reproduzir a mídia.", error);
-        setXrMessage(`Falha na mídia: ${describeError(error)}`);
+        setXrMessage(
+          `Falha na mídia: ${isVideo ? describeVideoPlaybackError(activeNoteAudio, error) : describeError(error)}`
+        );
       }
     }
 
@@ -3250,6 +3268,7 @@
 
     let graphProgressStartedAt = 0;
     let graphProgressInitialEstimateMs = 0;
+    let graphProgressHideTimer = 0;
 
     function formatProgressDuration(milliseconds) {
       const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
@@ -3260,6 +3279,8 @@
     }
 
     function startGraphProgress(nodeCount = 0, linkCount = 0) {
+      clearTimeout(graphProgressHideTimer);
+      graphProgressHideTimer = 0;
       graphProgressStartedAt = performance.now();
       const huge = nodeCount >= HUGE_GRAPH_NODE_THRESHOLD;
       graphProgressInitialEstimateMs = huge
@@ -3287,6 +3308,11 @@
 
     function finishGraphProgress(stage = "Concluído") {
       updateGraphProgress(100, stage);
+      clearTimeout(graphProgressHideTimer);
+      graphProgressHideTimer = window.setTimeout(() => {
+        graphProgress.hidden = true;
+        graphProgressHideTimer = 0;
+      }, 1400);
     }
 
     function setXrMessage(message) {

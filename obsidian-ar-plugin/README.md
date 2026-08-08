@@ -1,70 +1,97 @@
 # Meta Quest Sync
 
-Plugin desktop que reduz o fluxo do Meta Quest Sync a uma ação dentro do Obsidian.
+Meta Quest Sync connects an Obsidian desktop vault to the **Obsidian AR**
+WebXR experience on Meta Quest. From Obsidian, it exports the vault graph,
+starts the local bridge and HTTPS tunnel, and displays a QR code for pairing.
 
-## O que ele automatiza
+The WebXR viewer, Rust bridge and cross-platform orchestration live in the
+[Obsidian-Ar project](https://github.com/NElscost/Obsidian-Ar). This repository
+contains only the Obsidian community plugin and its release artifacts.
 
-- lê notas e links pela API oficial do Obsidian;
-- aplica exclusões por pasta e tag;
-- atualiza `graph.json` após alterações no vault;
-- configura o caminho do vault sem Obsidian CLI;
-- inicia e encerra a ponte Rust/Axum e o Cloudflare Tunnel;
-- cria um QR Code que leva URL e token ao Quest;
-- não persiste o token nas configurações do plugin.
+## Requirements
 
-O token fica no fragmento `#obsidian-ar=`. O visualizador processa e remove esse
-fragmento no início do carregamento, antes dos módulos 3D, e guarda a credencial
-somente em `sessionStorage`.
+- Obsidian desktop;
+- Git, Node.js 22.13+ and Rust/Cargo;
+- `cloudflared` available on `PATH`;
+- FFmpeg (`ffmpeg` and `ffprobe`) for AV1/HEVC video compatibility;
+- a local clone of [NElscost/Obsidian-Ar](https://github.com/NElscost/Obsidian-Ar);
+- Meta Quest with an up-to-date WebXR browser and hand tracking.
 
-## Instalação para desenvolvimento
+The recommended direct-graph mode does not require Blender, Obsidian CLI or the
+3D Graph New plugin.
 
-Na raiz do projeto:
+The plugin uses the same Node.js bridge launcher on Windows, Linux, and macOS.
+If a GUI-launched Obsidian cannot find Node.js, set an absolute path in
+**Settings → Meta Quest Sync → Node.js executable**. The companion project
+README lists package commands for each operating system.
+
+## Usage
+
+1. Install and enable **Meta Quest Sync** in Obsidian.
+2. Clone the companion project:
+
+   ```sh
+   git clone https://github.com/NElscost/Obsidian-Ar.git
+   ```
+
+3. Open **Settings → Meta Quest Sync** and select the absolute path of that
+   clone.
+4. Keep the default HTTPS viewer and choose **Cloudflare Quick Tunnel** for a
+   temporary session.
+5. Select **Start AR**, then open the generated QR code on the Quest.
+
+The plugin creates the graph snapshot, compiles the Rust bridge when needed,
+starts the bridge and tunnel, and places the session credentials inside the URL
+fragment. The token is not persisted by the plugin.
+
+## Self-hosting
+
+The default setup uses the hosted WebXR viewer and a local Rust backend exposed
+through Cloudflare Tunnel. Both endpoints are configurable:
+
+- you can host the WebXR viewer on any HTTPS server and set its address in
+  **Settings → Meta Quest Sync → HTTPS viewer**;
+- you can self-host the backend and point the plugin at your own URL;
+- for a persistent backend address, configure a Cloudflare Named Tunnel in the
+  companion project and select it in the plugin settings.
+
+The viewer and backend may use different domains. The backend still requires
+the session token and only accepts compatible HTTPS origins.
+
+## Commands
+
+- Start AR session;
+- Show session QR code;
+- Refresh graph snapshot;
+- Stop AR session.
+
+## Privacy and network access
+
+Meta Quest Sync reads note paths and links through the Obsidian API to generate
+the graph. It starts local `cargo`, bridge and `cloudflared` processes through
+the companion project. The bridge exposes requested note content and media to
+the paired Quest through an HTTPS Cloudflare Tunnel.
+
+Anyone holding both the temporary bridge URL and session token can access the
+allowed endpoints while the session is active. Keep them private and stop the
+session when finished. The plugin has no telemetry, advertising, payment flow
+or account system.
+
+See the [main project documentation](https://github.com/NElscost/Obsidian-Ar)
+for tunnel configuration, platform notes, WebXR gestures, troubleshooting and
+the optional glTF pipeline.
+
+## Development
 
 ```sh
-npm install --prefix ./obsidian-ar-plugin
-npm run build --prefix ./obsidian-ar-plugin
-node ./Scripts/install-obsidian-plugin.mjs --vault "/caminho/absoluto/do/vault"
+npm ci
+npm test
+npm run build
 ```
 
-Depois, habilite **Meta Quest Sync** em **Configurações → Plugins da comunidade**.
-Informe a pasta absoluta do clone em **Configurações → Meta Quest Sync** e pressione
-**Iniciar AR**.
+The GitHub release tag must exactly match `manifest.json` and include
+`main.js`, `manifest.json` and `styles.css`.
 
-## Dependências atuais
+## License
 
-O orquestrador funciona em Windows, Linux e macOS. O computador precisa de:
-
-- Rust/Cargo para a primeira compilação da ponte;
-- `cloudflared` instalado;
-- Node.js somente para compilar ou desenvolver o plugin;
-- um visualizador WebXR publicado em HTTPS.
-
-No Windows o plugin preserva a automação PowerShell existente. Em Linux e
-macOS ele usa `Scripts/note-bridge.mjs`, compartilhado pelos dois sistemas.
-Se o Obsidian não herdar o `PATH` do terminal, configure **Executável Node.js**
-com um caminho absoluto, como `/opt/homebrew/bin/node` no macOS Apple Silicon.
-Instalações sandboxed do Obsidian, como alguns pacotes Flatpak, podem impedir o
-plugin de executar `node`, `cargo` ou `cloudflared`; nesse caso, instale o
-Obsidian fora do sandbox ou inicie a ponte pelo terminal.
-
-Uma distribuição futura pode anexar a ponte Rust pré-compilada à release do
-plugin e eliminar a dependência de Cargo para usuários finais. Blender não é
-necessário no modo de grafo direto.
-
-Tags no formato `plugin-v*` executam o workflow de release e publicam
-`meta-quest-sync.zip`, `main.js`, `manifest.json` e `styles.css`, permitindo
-instalação manual ou futura integração com BRAT. A ponte Rust ainda não faz
-parte desse pacote inicial.
-
-## Comandos
-
-- **Meta Quest Sync: Iniciar sessão AR**;
-- **Meta Quest Sync: Mostrar QR Code da sessão AR**;
-- **Meta Quest Sync: Atualizar snapshot do grafo**;
-- **Meta Quest Sync: Encerrar sessão AR**.
-
-## Dados locais
-
-O snapshot `graph.json` permanece ignorado pelo Git. As configurações normais do
-plugin ficam em `.obsidian/plugins/meta-quest-sync/data.json`; o token da sessão não
-é salvo nesse arquivo.
+[MIT](LICENSE)

@@ -4647,15 +4647,22 @@ ${source.path}`;
   return { generatedAt: (/* @__PURE__ */ new Date()).toISOString(), nodes, links };
 }
 
+// src/i18n.ts
+var language = typeof navigator === "undefined" ? "en" : navigator.language;
+var isPortuguese = language.toLocaleLowerCase().startsWith("pt");
+function tr(portuguese, english) {
+  return isPortuguese ? portuguese : english;
+}
+
 // src/pairing.ts
 function base64UrlEncode(value) {
   return Buffer.from(value, "utf8").toString("base64").replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 }
 function createPairingUrl(viewerUrl, bridgeUrl, token) {
   const viewer = new URL(viewerUrl);
-  if (viewer.protocol !== "https:") throw new Error("O visualizador precisa usar HTTPS.");
+  if (viewer.protocol !== "https:") throw new Error(tr("O visualizador precisa usar HTTPS.", "The viewer must use HTTPS."));
   const bridge = new URL(bridgeUrl);
-  if (bridge.protocol !== "https:") throw new Error("A ponte precisa usar HTTPS.");
+  if (bridge.protocol !== "https:") throw new Error(tr("A ponte precisa usar HTTPS.", "The bridge must use HTTPS."));
   const payload = {
     url: bridge.origin,
     token,
@@ -4700,26 +4707,16 @@ var SessionManager = class {
 `, "utf8");
   }
   async start(settings, reportStatus = () => void 0) {
-    const windows = process.platform === "win32";
-    const script = windows ? import_node_path.default.join(settings.projectRoot, "Scripts", "Start-ObsidianNoteBridge.ps1") : import_node_path.default.join(settings.projectRoot, "Scripts", "note-bridge.mjs");
-    if (!await exists(script)) throw new Error(`${import_node_path.default.basename(script)} n\xE3o foi encontrado.`);
+    const script = import_node_path.default.join(settings.projectRoot, "Scripts", "note-bridge.mjs");
+    if (!await exists(script)) throw new Error(tr(`${import_node_path.default.basename(script)} n\xE3o foi encontrado.`, `${import_node_path.default.basename(script)} was not found.`));
     const statePath = import_node_path.default.join(settings.projectRoot, ".note-bridge-processes.json");
     const tokenPath = import_node_path.default.join(settings.projectRoot, ".note-bridge-token");
     const launchTime = Date.now();
     let diagnostics = "";
     let launchError = null;
-    reportStatus("Iniciando a ponte Axum e o t\xFAnel HTTPS\u2026");
-    const command = windows ? "powershell.exe" : settings.nodeExecutable?.trim() || "node";
-    const commandArgs = windows ? [
-      "-NoLogo",
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-File",
-      script,
-      "-Port",
-      String(settings.port)
-    ] : [script, "start", "--port", String(settings.port)];
+    reportStatus(tr("Iniciando a ponte Axum e o t\xFAnel HTTPS\u2026", "Starting the Axum bridge and HTTPS tunnel\u2026"));
+    const command = settings.nodeExecutable?.trim() || "node";
+    const commandArgs = [script, "start", "--port", String(settings.port)];
     this.child = (0, import_node_child_process.spawn)(
       command,
       commandArgs,
@@ -4745,7 +4742,7 @@ var SessionManager = class {
             const state = parseProcessState(await import_node_fs.promises.readFile(statePath, "utf8"));
             const token = (await import_node_fs.promises.readFile(tokenPath, "utf8")).trim();
             if (state.url?.startsWith("https://") && token.length >= 32) {
-              reportStatus("Sess\xE3o pronta. Abrindo o QR Code\u2026");
+              reportStatus(tr("Sess\xE3o pronta. Abrindo o QR Code\u2026", "Session ready. Opening the QR code\u2026"));
               return { ...state, token };
             }
           }
@@ -4753,26 +4750,25 @@ var SessionManager = class {
         }
       }
       if (this.child.exitCode !== null) {
-        throw new Error(safeDiagnostics(diagnostics) || `A ponte terminou com c\xF3digo ${this.child.exitCode}.`);
+        throw new Error(safeDiagnostics(diagnostics) || tr(`A ponte terminou com c\xF3digo ${this.child.exitCode}.`, `The bridge exited with code ${this.child.exitCode}.`));
       }
       const elapsed = Date.now() - startedAt;
       const progressStep = Math.floor(elapsed / 5e3);
       if (progressStep !== lastProgressStep) {
         lastProgressStep = progressStep;
-        reportStatus(elapsed < 12e3 ? "A ponte iniciou; aguardando a URL p\xFAblica do Cloudflare\u2026" : `Verificando a URL HTTPS\u2026 ${Math.floor(elapsed / 1e3)} s`);
+        reportStatus(elapsed < 12e3 ? tr("A ponte iniciou; aguardando a URL p\xFAblica do Cloudflare\u2026", "The bridge started; waiting for the public Cloudflare URL\u2026") : tr(`Verificando a URL HTTPS\u2026 ${Math.floor(elapsed / 1e3)} s`, `Checking the HTTPS URL\u2026 ${Math.floor(elapsed / 1e3)} s`));
       }
       await delay(500);
     }
-    throw new Error(`A ponte n\xE3o ficou pronta em 95 segundos. ${safeDiagnostics(diagnostics)}`);
+    throw new Error(tr(`A ponte n\xE3o ficou pronta em 95 segundos. ${safeDiagnostics(diagnostics)}`, `The bridge was not ready within 95 seconds. ${safeDiagnostics(diagnostics)}`));
   }
   async stop(settings) {
     const projectRoot = settings.projectRoot;
-    const windows = process.platform === "win32";
-    const script = windows ? import_node_path.default.join(projectRoot, "Scripts", "Stop-ObsidianNoteBridge.ps1") : import_node_path.default.join(projectRoot, "Scripts", "note-bridge.mjs");
-    if (!await exists(script)) throw new Error(`${import_node_path.default.basename(script)} n\xE3o foi encontrado.`);
+    const script = import_node_path.default.join(projectRoot, "Scripts", "note-bridge.mjs");
+    if (!await exists(script)) throw new Error(tr(`${import_node_path.default.basename(script)} n\xE3o foi encontrado.`, `${import_node_path.default.basename(script)} was not found.`));
     await new Promise((resolve, reject) => {
-      const command = windows ? "powershell.exe" : settings.nodeExecutable?.trim() || "node";
-      const commandArgs = windows ? ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script] : [script, "stop"];
+      const command = settings.nodeExecutable?.trim() || "node";
+      const commandArgs = [script, "stop"];
       const child = (0, import_node_child_process.spawn)(
         command,
         commandArgs,
@@ -4785,7 +4781,7 @@ var SessionManager = class {
       child.on("error", reject);
       child.on("close", (code) => {
         if (code === 0) resolve();
-        else reject(new Error(errorText.trim() || `Falha ao encerrar a ponte (${code}).`));
+        else reject(new Error(errorText.trim() || tr(`Falha ao encerrar a ponte (${code}).`, `Failed to stop the bridge (${code}).`)));
       });
     });
     this.child = null;
@@ -4815,10 +4811,10 @@ var PairingModal = class extends import_obsidian2.Modal {
     this.session = session;
   }
   onOpen() {
-    this.titleEl.setText("Meta Quest Sync pronto");
+    this.titleEl.setText(tr("Meta Quest Sync pronto", "Meta Quest Sync ready"));
     this.contentEl.addClass("obsidian-ar-pairing");
     this.contentEl.createEl("p", {
-      text: "Abra a c\xE2mera ou o navegador do Quest e leia o QR Code. A URL e o token ficam no fragmento e s\xE3o removidos da barra ap\xF3s o pareamento."
+      text: tr("Abra a c\xE2mera ou o navegador do Quest e leia o QR Code. A URL e o token ficam no fragmento e s\xE3o removidos da barra ap\xF3s o pareamento.", "Open the Quest camera or browser and scan the QR code. The URL and token are stored in the fragment and removed from the address bar after pairing.")
     });
     const canvas = this.contentEl.createEl("canvas");
     void import_qrcode.default.toCanvas(canvas, this.pairingUrl, {
@@ -4826,15 +4822,15 @@ var PairingModal = class extends import_obsidian2.Modal {
       margin: 1,
       errorCorrectionLevel: "M"
     }).catch((error) => {
-      console.error("Meta Quest Sync n\xE3o conseguiu desenhar o QR Code.", error);
+      console.error(tr("Meta Quest Sync n\xE3o conseguiu desenhar o QR Code.", "Meta Quest Sync could not render the QR code."), error);
       canvas.replaceWith(this.contentEl.createEl("p", {
         cls: "obsidian-ar-status",
-        text: "N\xE3o foi poss\xEDvel desenhar o QR Code. Use o bot\xE3o Copiar link abaixo."
+        text: tr("N\xE3o foi poss\xEDvel desenhar o QR Code. Use o bot\xE3o Copiar link abaixo.", "The QR code could not be rendered. Use the Copy link button below.")
       }));
     });
     this.contentEl.createEl("p", {
       cls: "obsidian-ar-status",
-      text: `Ponte ativa em ${this.session.url}`
+      text: tr(`Ponte ativa em ${this.session.url}`, `Bridge active at ${this.session.url}`)
     });
     const text = this.contentEl.createEl("textarea", {
       cls: "obsidian-ar-pairing-url"
@@ -4842,18 +4838,18 @@ var PairingModal = class extends import_obsidian2.Modal {
     text.value = this.pairingUrl;
     text.readOnly = true;
     const actions = this.contentEl.createDiv({ cls: "obsidian-ar-actions" });
-    const copy = actions.createEl("button", { text: "Copiar link" });
+    const copy = actions.createEl("button", { text: tr("Copiar link", "Copy link") });
     copy.addEventListener("click", () => {
       void navigator.clipboard.writeText(this.pairingUrl).then(
-        () => new import_obsidian2.Notice("Link de pareamento copiado."),
+        () => new import_obsidian2.Notice(tr("Link de pareamento copiado.", "Pairing link copied.")),
         () => {
           text.focus();
           text.select();
-          new import_obsidian2.Notice("Selecione e copie o link exibido.");
+          new import_obsidian2.Notice(tr("Selecione e copie o link exibido.", "Select and copy the displayed link."));
         }
       );
     });
-    const open = actions.createEl("button", { text: "Abrir visualizador" });
+    const open = actions.createEl("button", { text: tr("Abrir visualizador", "Open viewer") });
     open.addEventListener("click", () => window.open(this.pairingUrl, "_blank", "noopener"));
   }
   onClose() {
@@ -4865,21 +4861,21 @@ var ObsidianArPlugin = class extends import_obsidian2.Plugin {
   sessionManager = new SessionManager();
   activeSession = null;
   startPromise = null;
-  sessionStatus = "Nenhuma sess\xE3o iniciada.";
+  sessionStatus = tr("Nenhuma sess\xE3o iniciada.", "No session started.");
   exportGraphDebounced = (0, import_obsidian2.debounce)(() => {
     if (this.settings.autoExport) void this.exportGraph(false);
   }, 1500, true);
   async onload() {
     await this.loadSettings();
-    this.addRibbonIcon("glasses", "Iniciar Meta Quest Sync", () => void this.startAr());
+    this.addRibbonIcon("glasses", tr("Iniciar Meta Quest Sync", "Start Meta Quest Sync"), () => void this.startAr());
     this.addCommand({
       id: "start-ar-session",
-      name: "Iniciar sess\xE3o AR",
+      name: tr("Iniciar sess\xE3o AR", "Start AR session"),
       callback: () => void this.startAr()
     });
     this.addCommand({
       id: "show-ar-pairing",
-      name: "Mostrar QR Code da sess\xE3o AR",
+      name: tr("Mostrar QR Code da sess\xE3o AR", "Show AR session QR code"),
       checkCallback: (checking) => {
         if (!this.activeSession) return false;
         if (!checking) this.showPairing();
@@ -4888,12 +4884,12 @@ var ObsidianArPlugin = class extends import_obsidian2.Plugin {
     });
     this.addCommand({
       id: "export-ar-graph",
-      name: "Atualizar snapshot do grafo",
+      name: tr("Atualizar snapshot do grafo", "Refresh graph snapshot"),
       callback: () => void this.exportGraph(true)
     });
     this.addCommand({
       id: "stop-ar-session",
-      name: "Encerrar sess\xE3o AR",
+      name: tr("Encerrar sess\xE3o AR", "Stop AR session"),
       callback: () => void this.stopAr()
     });
     this.addSettingTab(new ObsidianArSettingTab(this.app, this));
@@ -4908,14 +4904,14 @@ var ObsidianArPlugin = class extends import_obsidian2.Plugin {
   vaultPath() {
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof import_obsidian2.FileSystemAdapter)) {
-      throw new Error("Meta Quest Sync requer um vault local no aplicativo desktop.");
+      throw new Error(tr("Meta Quest Sync requer um vault local no aplicativo desktop.", "Meta Quest Sync requires a local vault in the desktop app."));
     }
     return adapter.getBasePath();
   }
   async exportGraph(showNotice) {
     const root = this.settings.projectRoot.trim();
     if (!root) {
-      if (showNotice) new import_obsidian2.Notice("Configure a pasta do projeto Meta Quest Sync.");
+      if (showNotice) new import_obsidian2.Notice(tr("Configure a pasta do projeto Meta Quest Sync.", "Configure the Meta Quest Sync project folder."));
       return;
     }
     const graph = exportVaultGraph(
@@ -4925,7 +4921,7 @@ var ObsidianArPlugin = class extends import_obsidian2.Plugin {
     );
     await import_node_fs2.promises.writeFile(import_node_path2.default.join(root, "graph.json"), `${JSON.stringify(graph)}
 `, "utf8");
-    if (showNotice) new import_obsidian2.Notice(`Grafo atualizado: ${graph.nodes.length} notas.`);
+    if (showNotice) new import_obsidian2.Notice(tr(`Grafo atualizado: ${graph.nodes.length} notas.`, `Graph updated: ${graph.nodes.length} notes.`));
   }
   setSessionStatus(message, report) {
     this.sessionStatus = message;
@@ -4934,38 +4930,38 @@ var ObsidianArPlugin = class extends import_obsidian2.Plugin {
   async startAr(report) {
     if (this.activeSession) {
       this.showPairing();
-      this.setSessionStatus("Sess\xE3o ativa. QR Code aberto novamente.", report);
+      this.setSessionStatus(tr("Sess\xE3o ativa. QR Code aberto novamente.", "Session active. QR code opened again."), report);
       return true;
     }
     if (this.startPromise) {
-      this.setSessionStatus("A sess\xE3o j\xE1 est\xE1 sendo iniciada\u2026", report);
+      this.setSessionStatus(tr("A sess\xE3o j\xE1 est\xE1 sendo iniciada\u2026", "The session is already starting\u2026"), report);
       return this.startPromise;
     }
     const root = this.settings.projectRoot.trim();
     if (!root) {
-      new import_obsidian2.Notice("Abra Configura\xE7\xF5es \u2192 Meta Quest Sync e informe a pasta do projeto.");
-      this.setSessionStatus("Informe a pasta do projeto antes de iniciar.", report);
+      new import_obsidian2.Notice(tr("Abra Configura\xE7\xF5es \u2192 Meta Quest Sync e informe a pasta do projeto.", "Open Settings \u2192 Meta Quest Sync and select the project folder."));
+      this.setSessionStatus(tr("Informe a pasta do projeto antes de iniciar.", "Select the project folder before starting."), report);
       return false;
     }
     this.startPromise = (async () => {
       try {
-        this.setSessionStatus("Exportando o grafo do vault\u2026", report);
-        new import_obsidian2.Notice("Meta Quest Sync: preparando grafo, ponte e t\xFAnel\u2026", 8e3);
+        this.setSessionStatus(tr("Exportando o grafo do vault\u2026", "Exporting the vault graph\u2026"), report);
+        new import_obsidian2.Notice(tr("Meta Quest Sync: preparando grafo, ponte e t\xFAnel\u2026", "Meta Quest Sync: preparing graph, bridge and tunnel\u2026"), 8e3);
         await this.exportGraph(false);
-        this.setSessionStatus("Salvando a configura\xE7\xE3o segura da ponte\u2026", report);
+        this.setSessionStatus(tr("Salvando a configura\xE7\xE3o segura da ponte\u2026", "Saving the secure bridge configuration\u2026"), report);
         await this.sessionManager.configure(this.settings, this.vaultPath());
         this.activeSession = await this.sessionManager.start(
           this.settings,
           (message) => this.setSessionStatus(message, report)
         );
         this.showPairing();
-        this.setSessionStatus("Sess\xE3o pronta para parear com o Quest.", report);
-        new import_obsidian2.Notice("Meta Quest Sync pronto para parear com o Quest.");
+        this.setSessionStatus(tr("Sess\xE3o pronta para parear com o Quest.", "Session ready to pair with the Quest."), report);
+        new import_obsidian2.Notice(tr("Meta Quest Sync pronto para parear com o Quest.", "Meta Quest Sync is ready to pair with the Quest."));
         return true;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error("Meta Quest Sync n\xE3o iniciou.", error);
-        this.setSessionStatus(`Falha: ${message}`, report);
+        console.error(tr("Meta Quest Sync n\xE3o iniciou.", "Meta Quest Sync failed to start."), error);
+        this.setSessionStatus(tr(`Falha: ${message}`, `Failure: ${message}`), report);
         new import_obsidian2.Notice(`Meta Quest Sync: ${message}`, 12e3);
         return false;
       } finally {
@@ -4980,10 +4976,10 @@ var ObsidianArPlugin = class extends import_obsidian2.Plugin {
     try {
       await this.sessionManager.stop(this.settings);
       this.activeSession = null;
-      this.sessionStatus = "Sess\xE3o encerrada.";
-      new import_obsidian2.Notice("Sess\xE3o Meta Quest Sync encerrada.");
+      this.sessionStatus = tr("Sess\xE3o encerrada.", "Session stopped.");
+      new import_obsidian2.Notice(tr("Sess\xE3o Meta Quest Sync encerrada.", "Meta Quest Sync session stopped."));
     } catch (error) {
-      new import_obsidian2.Notice(`N\xE3o foi poss\xEDvel encerrar: ${String(error)}`, 1e4);
+      new import_obsidian2.Notice(tr(`N\xE3o foi poss\xEDvel encerrar: ${String(error)}`, `Could not stop the session: ${String(error)}`), 1e4);
     }
   }
   showPairing() {
@@ -4999,7 +4995,7 @@ var ObsidianArPlugin = class extends import_obsidian2.Plugin {
       settings?.close();
       window.setTimeout(() => modal.open(), 120);
     } catch (error) {
-      new import_obsidian2.Notice(`Pareamento inv\xE1lido: ${String(error)}`);
+      new import_obsidian2.Notice(tr(`Pareamento inv\xE1lido: ${String(error)}`, `Invalid pairing: ${String(error)}`));
     }
   }
   async loadSettings() {
@@ -5017,62 +5013,59 @@ var ObsidianArSettingTab = class extends import_obsidian2.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Meta Quest Sync" });
-    new import_obsidian2.Setting(containerEl).setName("Pasta do projeto").setDesc("Pasta absoluta do clone Obsidian-Ar que cont\xE9m Scripts e note-bridge-rs.").addText((text) => text.setPlaceholder("C:\\Projetos\\Obsidian-Ar").setValue(this.plugin.settings.projectRoot).onChange(async (value) => {
+    new import_obsidian2.Setting(containerEl).setName(tr("Pasta do projeto", "Project folder")).setDesc(tr("Pasta absoluta do clone Obsidian-Ar que cont\xE9m Scripts e note-bridge-rs.", "Absolute path to the Obsidian-Ar clone containing Scripts and note-bridge-rs.")).addText((text) => text.setPlaceholder("C:\\Projetos\\Obsidian-Ar").setValue(this.plugin.settings.projectRoot).onChange(async (value) => {
       this.plugin.settings.projectRoot = value.trim();
       await this.plugin.saveSettings();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Visualizador HTTPS").setDesc("Site WebXR que ser\xE1 aberto pelo QR Code.").addText((text) => text.setValue(this.plugin.settings.viewerUrl).onChange(async (value) => {
+    new import_obsidian2.Setting(containerEl).setName(tr("Visualizador HTTPS", "HTTPS viewer")).setDesc(tr("Site WebXR que ser\xE1 aberto pelo QR Code.", "WebXR site opened by the QR code.")).addText((text) => text.setValue(this.plugin.settings.viewerUrl).onChange(async (value) => {
       this.plugin.settings.viewerUrl = value.trim();
       await this.plugin.saveSettings();
     }));
-    if (process.platform !== "win32") {
-      new import_obsidian2.Setting(containerEl).setName("Execut\xE1vel Node.js").setDesc("Use 'node' ou um caminho absoluto, por exemplo /opt/homebrew/bin/node.").addText((text) => text.setValue(this.plugin.settings.nodeExecutable).onChange(async (value) => {
-        this.plugin.settings.nodeExecutable = value.trim() || "node";
-        await this.plugin.saveSettings();
-      }));
-    }
-    new import_obsidian2.Setting(containerEl).setName("Porta local").setDesc("Porta usada pela ponte Axum.").addText((text) => text.setValue(String(this.plugin.settings.port)).onChange(async (value) => {
+    new import_obsidian2.Setting(containerEl).setName(tr("Execut\xE1vel Node.js", "Node.js executable")).setDesc(tr("Use 'node' ou um caminho absoluto. No macOS, tente /opt/homebrew/bin/node.", "Use 'node' or an absolute path. On macOS, try /opt/homebrew/bin/node.")).addText((text) => text.setValue(this.plugin.settings.nodeExecutable).onChange(async (value) => {
+      this.plugin.settings.nodeExecutable = value.trim() || "node";
+      await this.plugin.saveSettings();
+    }));
+    new import_obsidian2.Setting(containerEl).setName(tr("Porta local", "Local port")).setDesc(tr("Porta usada pela ponte Axum.", "Port used by the Axum bridge.")).addText((text) => text.setValue(String(this.plugin.settings.port)).onChange(async (value) => {
       const port = Number.parseInt(value, 10);
       if (port >= 1024 && port <= 65535) this.plugin.settings.port = port;
       await this.plugin.saveSettings();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Tipo de t\xFAnel").setDesc("Quick Tunnel \xE9 tempor\xE1rio; Named Tunnel \xE9 indicado para uso recorrente.").addDropdown((dropdown) => dropdown.addOption("quick", "Cloudflare Quick Tunnel").addOption("named", "Cloudflare Named Tunnel").setValue(this.plugin.settings.tunnelMode).onChange(async (value) => {
+    new import_obsidian2.Setting(containerEl).setName(tr("Tipo de t\xFAnel", "Tunnel type")).setDesc(tr("Quick Tunnel \xE9 tempor\xE1rio; Named Tunnel \xE9 indicado para uso recorrente.", "Quick Tunnel is temporary; Named Tunnel is recommended for recurring use.")).addDropdown((dropdown) => dropdown.addOption("quick", "Cloudflare Quick Tunnel").addOption("named", "Cloudflare Named Tunnel").setValue(this.plugin.settings.tunnelMode).onChange(async (value) => {
       this.plugin.settings.tunnelMode = value;
       await this.plugin.saveSettings();
       this.display();
     }));
     if (this.plugin.settings.tunnelMode === "named") {
-      new import_obsidian2.Setting(containerEl).setName("URL do Named Tunnel").addText((text) => text.setValue(this.plugin.settings.tunnelUrl).onChange(async (value) => {
+      new import_obsidian2.Setting(containerEl).setName(tr("URL do Named Tunnel", "Named Tunnel URL")).addText((text) => text.setValue(this.plugin.settings.tunnelUrl).onChange(async (value) => {
         this.plugin.settings.tunnelUrl = value.trim();
         await this.plugin.saveSettings();
       }));
-      new import_obsidian2.Setting(containerEl).setName("Arquivo do token do t\xFAnel").addText((text) => text.setValue(this.plugin.settings.tunnelTokenFile).onChange(async (value) => {
+      new import_obsidian2.Setting(containerEl).setName(tr("Arquivo do token do t\xFAnel", "Tunnel token file")).addText((text) => text.setValue(this.plugin.settings.tunnelTokenFile).onChange(async (value) => {
         this.plugin.settings.tunnelTokenFile = value.trim();
         await this.plugin.saveSettings();
       }));
     }
-    new import_obsidian2.Setting(containerEl).setName("Pastas exclu\xEDdas").setDesc("Uma pasta por linha ou separada por v\xEDrgulas.").addTextArea((text) => text.setValue(this.plugin.settings.excludedFolders).onChange(async (value) => {
+    new import_obsidian2.Setting(containerEl).setName(tr("Pastas exclu\xEDdas", "Excluded folders")).setDesc(tr("Uma pasta por linha ou separada por v\xEDrgulas.", "One folder per line or separated by commas.")).addTextArea((text) => text.setValue(this.plugin.settings.excludedFolders).onChange(async (value) => {
       this.plugin.settings.excludedFolders = value;
       await this.plugin.saveSettings();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Tags exclu\xEDdas").setDesc("Inclua #. Uma tag por linha ou separada por v\xEDrgulas.").addTextArea((text) => text.setValue(this.plugin.settings.excludedTags).onChange(async (value) => {
+    new import_obsidian2.Setting(containerEl).setName(tr("Tags exclu\xEDdas", "Excluded tags")).setDesc(tr("Inclua #. Uma tag por linha ou separada por v\xEDrgulas.", "Include #. Enter one tag per line or separate them with commas.")).addTextArea((text) => text.setValue(this.plugin.settings.excludedTags).onChange(async (value) => {
       this.plugin.settings.excludedTags = value;
       await this.plugin.saveSettings();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Atualizar grafo automaticamente").setDesc("Reexporta o snapshot ap\xF3s altera\xE7\xF5es no vault, com debounce.").addToggle((toggle) => toggle.setValue(this.plugin.settings.autoExport).onChange(async (value) => {
+    new import_obsidian2.Setting(containerEl).setName(tr("Atualizar grafo automaticamente", "Update graph automatically")).setDesc(tr("Reexporta o snapshot ap\xF3s altera\xE7\xF5es no vault, com debounce.", "Re-exports the snapshot after vault changes, with debounce.")).addToggle((toggle) => toggle.setValue(this.plugin.settings.autoExport).onChange(async (value) => {
       this.plugin.settings.autoExport = value;
       await this.plugin.saveSettings();
     }));
-    const sessionSetting = new import_obsidian2.Setting(containerEl).setName("Sess\xE3o AR").setDesc(this.plugin.sessionStatus);
-    sessionSetting.addButton((button) => button.setCta().setButtonText("Iniciar AR").onClick(async () => {
-      button.setDisabled(true).setButtonText("Iniciando\u2026");
+    const sessionSetting = new import_obsidian2.Setting(containerEl).setName(tr("Sess\xE3o AR", "AR session")).setDesc(this.plugin.sessionStatus);
+    sessionSetting.addButton((button) => button.setCta().setButtonText(tr("Iniciar AR", "Start AR")).onClick(async () => {
+      button.setDisabled(true).setButtonText(tr("Iniciando\u2026", "Starting\u2026"));
       try {
         await this.plugin.startAr((message) => sessionSetting.setDesc(message));
       } finally {
-        button.setDisabled(false).setButtonText("Iniciar AR");
+        button.setDisabled(false).setButtonText(tr("Iniciar AR", "Start AR"));
       }
-    })).addButton((button) => button.setWarning().setButtonText("Encerrar").onClick(() => {
+    })).addButton((button) => button.setWarning().setButtonText(tr("Encerrar", "Stop")).onClick(() => {
       void this.plugin.stopAr();
     }));
   }

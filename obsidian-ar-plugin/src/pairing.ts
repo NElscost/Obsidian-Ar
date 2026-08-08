@@ -18,9 +18,9 @@ export function createPairingUrl(
   token: string
 ): string {
   const viewer = new URL(viewerUrl);
-  if (viewer.protocol !== "https:") throw new Error("O visualizador precisa usar HTTPS.");
+  if (viewer.protocol !== "https:") throw new Error(tr("O visualizador precisa usar HTTPS.", "The viewer must use HTTPS."));
   const bridge = new URL(bridgeUrl);
-  if (bridge.protocol !== "https:") throw new Error("A ponte precisa usar HTTPS.");
+  if (bridge.protocol !== "https:") throw new Error(tr("A ponte precisa usar HTTPS.", "The bridge must use HTTPS."));
   const payload: PairingPayload = {
     url: bridge.origin,
     token,
@@ -29,3 +29,4 @@ export function createPairingUrl(
   viewer.hash = `obsidian-ar=${base64UrlEncode(JSON.stringify(payload))}`;
   return viewer.toString();
 }
+import { tr } from "./i18n";

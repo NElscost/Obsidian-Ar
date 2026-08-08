@@ -176,6 +176,8 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function createArVideoSurface/);
   assert.match(html, /new THREE\.VideoTexture\(video\)/);
   assert.match(html, /noteVideoTracks\[0\] \?\? noteAudioTracks\[0\]/);
+  assert.match(html, /function describeVideoPlaybackError/);
+  assert.match(html, /MP4 com H\.264 \+ AAC/);
   assert.match(html, /async function toggleNoteAudio/);
   assert.match(html, /activeNoteAudio\.preload = "none"/);
   assert.match(html, /createMediaElementSource/);
@@ -244,6 +246,8 @@ test("exibe progresso com estimativa e tempo restante durante o grafo", async ()
   assert.match(html, /function updateGraphProgress/);
   assert.match(html, /Decorrido.*restante/);
   assert.match(html, /finishGraphProgress/);
+  assert.match(html, /graphProgress\.hidden = true/);
+  assert.match(html, /graphProgressHideTimer = window\.setTimeout/);
 });
 
 test("ativa orçamento de renderização para vaults com mais de dez mil nós", async () => {

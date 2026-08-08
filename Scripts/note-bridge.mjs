@@ -2,6 +2,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -16,6 +17,29 @@ const rustProject = path.join(workspace, "note-bridge-rs");
 const executable = process.platform === "win32" ? "obsidian-note-bridge.exe" : "obsidian-note-bridge";
 const serverPath = path.join(rustProject, "target", "release", executable);
 const logDir = path.join(workspace, "note-bridge-logs");
+
+function extendExecutablePath() {
+  const home = homedir();
+  const candidates = process.platform === "win32"
+    ? [
+        path.join(home, ".cargo", "bin"),
+        path.join(process.env.ProgramFiles ?? "C:\\Program Files", "Cloudflare", "Cloudflared"),
+        path.join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "cloudflared")
+      ]
+    : [
+        path.join(home, ".cargo", "bin"),
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/opt/local/bin",
+        "/home/linuxbrew/.linuxbrew/bin"
+      ];
+  const current = String(process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
+  process.env.PATH = [...new Set([...current, ...candidates.filter(existsSync)])].join(path.delimiter);
+}
+
+extendExecutablePath();
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const cleanJson = (value) => value.replace(/^\uFEFF/u, "");
@@ -139,7 +163,9 @@ async function startBridge(port, debug) {
   if (!path.isAbsolute(String(config.vaultPath ?? "")) || !existsSync(vaultPath) || !statSync(vaultPath).isDirectory()) {
     throw new Error("vaultPath precisa ser um diretório absoluto existente em note-bridge.config.json.");
   }
-  if (!commandAvailable("cloudflared")) throw new Error("cloudflared não encontrado no PATH.");
+  if (!commandAvailable("cloudflared")) {
+    throw new Error("cloudflared não encontrado. Instale-o e reinicie o Obsidian para atualizar o PATH.");
+  }
   buildBridge();
   scanPending(vaultPath);
   mkdirSync(logDir, { recursive: true });
