@@ -1094,7 +1094,30 @@
     let iwInputManager = null;
     let iwInputPromise = null;
     let virtualHandFrameTime = 0;
+    let virtualHandStyleCheckAt = 0;
     const fallbackVirtualHands = [];
+
+    function styleVirtualHandMeshes(root) {
+      root?.traverse((object) => {
+        if (!object.isMesh || object.userData.spaceArHandStyled) return;
+        object.userData.spaceArHandStyled = true;
+        const materialWasArray = Array.isArray(object.material);
+        const materials = materialWasArray ? object.material : [object.material];
+        const styledMaterials = materials.map((source) => {
+          const material = source.clone();
+          const isOutline = /outline/i.test(material.name || object.name || "");
+          material.transparent = true;
+          material.opacity = isOutline ? 0.72 : 0.2;
+          material.depthWrite = false;
+          material.toneMapped = false;
+          material.color?.set(isOutline ? 0xb9d8ff : 0x7fafff);
+          material.needsUpdate = true;
+          return material;
+        });
+        object.material = materialWasArray ? styledMaterials : styledMaterials[0];
+        object.renderOrder = 1200;
+      });
+    }
 
     async function initializeVirtualHands() {
       if (iwInputManager || fallbackVirtualHands.length) return;
@@ -1108,6 +1131,7 @@
           scene.add(iwInputManager.xrOrigin);
           iwInputManager.visualAdapters?.hand?.left?.toggleVisual(true);
           iwInputManager.visualAdapters?.hand?.right?.toggleVisual(true);
+          styleVirtualHandMeshes(iwInputManager.xrOrigin);
           console.info("IWSDK XRInputManager ativo para as mãos virtuais.");
           return;
         } catch (error) {
@@ -1123,6 +1147,7 @@
             hand.add(factory.createHandModel(hand, "mesh"));
             scene.add(hand);
             fallbackVirtualHands.push(hand);
+            styleVirtualHandMeshes(hand);
           }
         } catch (error) {
           console.warn("Não foi possível criar as mãos virtuais de fallback.", error);
@@ -1134,12 +1159,18 @@
     }
 
     function updateVirtualHands(time) {
-      if (!iwInputManager) return;
-      const delta = virtualHandFrameTime
-        ? Math.min(0.05, Math.max(0, (time - virtualHandFrameTime) / 1000))
-        : 0;
-      virtualHandFrameTime = time;
-      iwInputManager.update(renderer.xr, delta, time / 1000);
+      if (iwInputManager) {
+        const delta = virtualHandFrameTime
+          ? Math.min(0.05, Math.max(0, (time - virtualHandFrameTime) / 1000))
+          : 0;
+        virtualHandFrameTime = time;
+        iwInputManager.update(renderer.xr, delta, time / 1000);
+      }
+      if (time >= virtualHandStyleCheckAt) {
+        if (iwInputManager) styleVirtualHandMeshes(iwInputManager.xrOrigin);
+        for (const hand of fallbackVirtualHands) styleVirtualHandMeshes(hand);
+        virtualHandStyleCheckAt = time + 500;
+      }
     }
 
     scene.add(new THREE.HemisphereLight(0xffffff, 0x33405f, 2.1));
@@ -2809,6 +2840,8 @@
     const audioListenerForward = new THREE.Vector3();
     const audioListenerUp = new THREE.Vector3();
     const audioSourcePosition = new THREE.Vector3();
+    const localGraphParentQuaternion = new THREE.Quaternion();
+    const localGraphCameraQuaternion = new THREE.Quaternion();
     function updateSpatialNoteAudio() {
       if (!spatialAudioContext || !spatialAudioPanner || !activeNoteAudio) return;
       const xrCamera = renderer.xr.isPresenting ? renderer.xr.getCamera(camera) : camera;
@@ -2832,6 +2865,17 @@
       setAudioParam(spatialAudioPanner.positionX, audioSourcePosition.x, now);
       setAudioParam(spatialAudioPanner.positionY, audioSourcePosition.y, now);
       setAudioParam(spatialAudioPanner.positionZ, audioSourcePosition.z, now);
+    }
+
+    function updateLocalGraphFacingCamera() {
+      if (!localNoteGraphGroup?.visible) return;
+      const xrCamera = renderer.xr.isPresenting ? renderer.xr.getCamera(camera) : camera;
+      arNoteGroup.getWorldQuaternion(localGraphParentQuaternion);
+      xrCamera.getWorldQuaternion(localGraphCameraQuaternion);
+      localNoteGraphGroup.quaternion
+        .copy(localGraphParentQuaternion)
+        .invert()
+        .multiply(localGraphCameraQuaternion);
     }
 
     function createArVideoSurface(video) {
@@ -3095,6 +3139,20 @@
         : String(endpoint ?? "");
     }
 
+    function localGraphNodeColor(node) {
+      if (node?.color) return node.color;
+      const palette = [
+        "#78a9ff", "#7bdcb5", "#d9a7ff", "#ff9f9f", "#ffd166", "#64d8ff",
+        "#b8e986", "#ffb86b", "#8be9fd", "#bd93f9", "#50fa7b", "#ff79c6"
+      ];
+      const folder = String(node?.id ?? "").replaceAll("\\", "/").split("/")[0];
+      let hash = 2166136261;
+      for (let index = 0; index < folder.length; index += 1) {
+        hash = Math.imul(hash ^ folder.charCodeAt(index), 16777619) >>> 0;
+      }
+      return palette[hash % palette.length];
+    }
+
     function createLocalNoteGraph(notePath, panelWidth) {
       const data = graphHierarchy?.fullData ?? graphData;
       if (!data?.nodes?.length || !data?.links?.length || !notePath) return;
@@ -3166,6 +3224,7 @@
 
       const localNodeGeometry = new THREE.SphereGeometry(0.009, 8, 6);
       const localNodeMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
         vertexColors: true,
         depthTest: false,
         toneMapped: false
@@ -3183,7 +3242,7 @@
         scale.setScalar(size);
         matrix.compose(position, new THREE.Quaternion(), scale);
         nodes.setMatrixAt(index, matrix);
-        nodes.setColorAt(index, new THREE.Color(node.color || 0x75a7ff));
+        nodes.setColorAt(index, new THREE.Color(localGraphNodeColor(node)));
       }
       nodes.instanceMatrix.needsUpdate = true;
       if (nodes.instanceColor) nodes.instanceColor.needsUpdate = true;
@@ -5862,6 +5921,7 @@
           environment360Mesh.position.copy(environment360Position);
         }
         updatePlacement(frame);
+        updateLocalGraphFacingCamera();
         updateSpatialNoteAudio();
         updateAudioWaveformProgress();
         const graphIntroPulseActive = updateGraphIntroPulse(time);
@@ -5909,6 +5969,7 @@
       noteWindowPinned = false;
       xrSession = null;
       virtualHandFrameTime = 0;
+      virtualHandStyleCheckAt = 0;
       graphIntroPulseStartedAt = null;
       referenceSpace = null;
       viewerSpace = null;

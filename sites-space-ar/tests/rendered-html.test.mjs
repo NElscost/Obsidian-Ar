@@ -221,7 +221,9 @@ test("mostra um ego graph instanciado ao lado da nota sem nova simulação", asy
   assert.match(html, /new THREE\.InstancedMesh/);
   assert.match(html, /new THREE\.LineSegments/);
   assert.match(html, /nodes\.userData\.noteAction = "local-note"/);
-  assert.match(html, /nodes\.setColorAt\(index, new THREE\.Color\(node\.color/);
+  assert.match(html, /nodes\.setColorAt\(index, new THREE\.Color\(localGraphNodeColor\(node\)\)\)/);
+  assert.match(html, /function localGraphNodeColor/);
+  assert.match(html, /function updateLocalGraphFacingCamera/);
   assert.match(html, /const atlas = document\.createElement\("canvas"\)/);
   assert.match(html, /action === "local-note"/);
   assert.match(html, /void requestNote\(path\)/);
@@ -234,6 +236,8 @@ test("carrega mãos virtuais do IWSDK sob demanda com fallback Three.js", async 
   assert.match(html, /new XRInputManager\(\{ scene, camera \}\)/);
   assert.match(html, /iwInputManager\.update\(renderer\.xr, delta, time \/ 1000\)/);
   assert.match(html, /XRHandModelFactory/);
+  assert.match(html, /function styleVirtualHandMeshes/);
+  assert.match(html, /material\.opacity = isOutline \? 0\.72 : 0\.2/);
 });
 
 test("quebra trechos longos em blocos de código sem perder a formatação", async () => {
