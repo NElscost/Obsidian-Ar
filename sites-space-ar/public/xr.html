@@ -1208,6 +1208,10 @@
     let activeNoteVideoSurface = null;
     let activeNoteVideoGroup = null;
     let activeNoteVideoTexture = null;
+    let activeNoteVideoLayer = null;
+    let activeNoteVideoLayerSession = null;
+    let activeNoteVideoBackdrop = null;
+    let videoSurfaceVisibilityCheckedAt = 0;
     let preparedNoteVideo = null;
     let noteVideoPreparation = null;
     let noteVideoPreparationError = null;
@@ -1246,9 +1250,11 @@
       activeNoteAudio = null;
       activeNoteAudioObjectUrl = null;
       activeNoteAudioControl = null;
+      disposeVideoMediaLayer();
       activeNoteVideoTexture?.dispose();
       activeNoteVideoTexture = null;
       activeNoteVideoSurface = null;
+      activeNoteVideoBackdrop = null;
       activeNoteVideoGroup = null;
       preparedNoteVideo = null;
       noteVideoPreparation = null;
@@ -1673,6 +1679,22 @@
         throw new Error(message || `Mídia HTTP ${response.status}`);
       }
       return response.blob();
+    }
+
+    async function fetchVaultMediaTicket(config, notePath, assetPath) {
+      const response = await fetch(`${config.url}/media-ticket`, {
+        method: "POST",
+        headers: bridgeRequestHeaders(config, true),
+        body: JSON.stringify({ notePath, assetPath })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result.error ?? `Ticket de vídeo HTTP ${response.status}`);
+      }
+      return {
+        ...result,
+        source: new URL(result.url, `${config.url}/`).href
+      };
     }
 
     async function ensureVideoBridge(config) {
@@ -2844,6 +2866,11 @@
     const audioListenerForward = new THREE.Vector3();
     const audioListenerUp = new THREE.Vector3();
     const audioSourcePosition = new THREE.Vector3();
+    const videoLayerWorldPosition = new THREE.Vector3();
+    const videoLayerWorldQuaternion = new THREE.Quaternion();
+    const videoVisibilityFrustum = new THREE.Frustum();
+    const videoVisibilityMatrix = new THREE.Matrix4();
+    const videoVisibilitySphere = new THREE.Sphere(new THREE.Vector3(), 0.4);
     function updateSpatialNoteAudio() {
       if (!spatialAudioContext || !spatialAudioPanner || !activeNoteAudio) return;
       const xrCamera = renderer.xr.isPresenting ? renderer.xr.getCamera(camera) : camera;
@@ -2869,6 +2896,76 @@
       setAudioParam(spatialAudioPanner.positionZ, audioSourcePosition.z, now);
     }
 
+    function disposeVideoMediaLayer() {
+      const layer = activeNoteVideoLayer;
+      const session = activeNoteVideoLayerSession;
+      activeNoteVideoLayer = null;
+      activeNoteVideoLayerSession = null;
+      if (!layer) return;
+      try {
+        const layers = Array.from(session?.renderState?.layers ?? []).filter((item) => item !== layer);
+        if (session?.visibilityState !== "hidden" && layers.length) {
+          session.updateRenderState({ layers });
+        }
+      } catch (error) {
+        console.debug("Não foi possível remover a WebXR Media Layer.", error);
+      }
+      try { layer.destroy?.(); } catch {}
+    }
+
+    function videoLayerTransform() {
+      activeNoteVideoGroup.getWorldPosition(videoLayerWorldPosition);
+      activeNoteVideoGroup.getWorldQuaternion(videoLayerWorldQuaternion);
+      return new XRRigidTransform(
+        { x: videoLayerWorldPosition.x, y: videoLayerWorldPosition.y, z: videoLayerWorldPosition.z },
+        { x: videoLayerWorldQuaternion.x, y: videoLayerWorldQuaternion.y, z: videoLayerWorldQuaternion.z, w: videoLayerWorldQuaternion.w }
+      );
+    }
+
+    function tryCreateVideoMediaLayer(video, width = 0.54, height = 0.304) {
+      if (!xrSession || !referenceSpace || typeof XRMediaBinding === "undefined") return false;
+      const currentLayers = Array.from(xrSession.renderState?.layers ?? []);
+      // Three.js precisa manter sua projection layer; sem ela usamos VideoTexture.
+      if (!currentLayers.length) return false;
+      try {
+        const binding = new XRMediaBinding(xrSession);
+        const layer = binding.createQuadLayer(video, {
+          space: referenceSpace,
+          transform: videoLayerTransform(),
+          width,
+          height,
+          layout: "mono"
+        });
+        xrSession.updateRenderState({ layers: [...currentLayers, layer] });
+        activeNoteVideoLayer = layer;
+        activeNoteVideoLayerSession = xrSession;
+        activeNoteVideoSurface.visible = false;
+        return true;
+      } catch (error) {
+        console.debug("WebXR Media Layers indisponível; usando VideoTexture.", error);
+        return false;
+      }
+    }
+
+    function updateVideoPresentation(time) {
+      if (!activeNoteVideoGroup || !activeNoteVideoSurface) return;
+      if (activeNoteVideoLayer) {
+        if (time - videoSurfaceVisibilityCheckedAt > 33) {
+          try { activeNoteVideoLayer.transform = videoLayerTransform(); } catch {}
+          videoSurfaceVisibilityCheckedAt = time;
+        }
+        activeNoteVideoSurface.visible = false;
+        return;
+      }
+      if (time - videoSurfaceVisibilityCheckedAt < 200) return;
+      const xrCamera = renderer.xr.isPresenting ? renderer.xr.getCamera(camera) : camera;
+      videoVisibilityMatrix.multiplyMatrices(xrCamera.projectionMatrix, xrCamera.matrixWorldInverse);
+      videoVisibilityFrustum.setFromProjectionMatrix(videoVisibilityMatrix);
+      activeNoteVideoGroup.getWorldPosition(videoVisibilitySphere.center);
+      activeNoteVideoSurface.visible = videoVisibilityFrustum.intersectsSphere(videoVisibilitySphere);
+      videoSurfaceVisibilityCheckedAt = time;
+    }
+
     function createArVideoSurface(video) {
       activeNoteVideoTexture = new THREE.VideoTexture(video);
       activeNoteVideoTexture.colorSpace = THREE.SRGBColorSpace;
@@ -2891,6 +2988,7 @@
       videoBackdrop.position.z = -0.003;
       videoBackdrop.renderOrder = 998;
       videoBackdrop.raycast = () => {};
+      activeNoteVideoBackdrop = videoBackdrop;
       activeNoteVideoSurface = new THREE.Mesh(
         new THREE.PlaneGeometry(0.54, 0.304),
         new THREE.MeshBasicMaterial({
@@ -2917,8 +3015,15 @@
         activeNoteVideoSurface.geometry = new THREE.PlaneGeometry(width, height);
         videoBackdrop.geometry.dispose();
         videoBackdrop.geometry = new THREE.PlaneGeometry(width + 0.03, height + 0.03);
+        if (activeNoteVideoLayer) {
+          try {
+            activeNoteVideoLayer.width = width;
+            activeNoteVideoLayer.height = height;
+          } catch {}
+        }
       };
       video.addEventListener("loadedmetadata", resize, { once: true });
+      tryCreateVideoMediaLayer(video);
     }
 
     function describeVideoPlaybackError(video, error) {
@@ -2951,19 +3056,26 @@
               throw new Error("Configure a ponte para preparar o vídeo do vault.");
             }
             setXrMessage("Preparando vídeo… a primeira conversão AV1/HEVC pode demorar.");
-            await ensureVideoBridge(config);
-            const blob = await fetchVaultAsset(config, notePath, source);
-            if (blob.size > 256 * 1024 * 1024) {
-              throw new Error("Vídeo maior que 256 MB; use uma versão WebM/MP4 otimizada.");
+            const bridge = await ensureVideoBridge(config);
+            const canUseTicket = bridge.capabilities?.includes("media-tickets")
+              && !(config.accessClientId && config.accessClientSecret);
+            if (canUseTicket) {
+              const ticket = await fetchVaultMediaTicket(config, notePath, source);
+              source = ticket.source;
+            } else {
+              const blob = await fetchVaultAsset(config, notePath, source);
+              if (blob.size > 256 * 1024 * 1024) {
+                throw new Error("Vídeo maior que 256 MB; use uma versão WebM/MP4 otimizada.");
+              }
+              objectUrl = URL.createObjectURL(blob);
+              source = objectUrl;
             }
-            objectUrl = URL.createObjectURL(blob);
-            source = objectUrl;
           }
           if (generation !== noteVideoPreparationGeneration) {
             if (objectUrl) URL.revokeObjectURL(objectUrl);
             return;
           }
-          preparedNoteVideo = { source, objectUrl, track };
+          preparedNoteVideo = { source, objectUrl, track, streaming: isNetworkSource(source) };
           if (activeNoteAudioControl) {
             activeNoteAudioControl.material.color.setHex(0x63e6be);
           }
@@ -3025,7 +3137,7 @@
             activeNoteAudio.setAttribute("playsinline", "");
           }
           if (isNetworkSource(source)) activeNoteAudio.crossOrigin = "anonymous";
-          activeNoteAudio.preload = "none";
+          activeNoteAudio.preload = isVideo ? "metadata" : "none";
           activeNoteAudio.src = source;
           activeNoteAudio.volume = 1;
           const spatial = connectSpatialNoteAudio(activeNoteAudio, spatialContext);
@@ -4791,7 +4903,7 @@
       try {
         xrSession = await navigator.xr.requestSession("immersive-ar", {
           requiredFeatures: ["hit-test"],
-          optionalFeatures: ["anchors", "hand-tracking", "local-floor", "dom-overlay"],
+          optionalFeatures: ["anchors", "hand-tracking", "local-floor", "dom-overlay", "layers"],
           domOverlay: { root: document.body }
         });
 
@@ -5886,6 +5998,7 @@
         }
         updatePlacement(frame);
         updateSpatialNoteAudio();
+        updateVideoPresentation(time);
         updateAudioWaveformProgress();
         const graphIntroPulseActive = updateGraphIntroPulse(time);
         if (!graphIntroPulseActive) {

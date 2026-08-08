@@ -189,7 +189,13 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /if \(isVideo && !activeNoteVideoSurface\) createArVideoSurface/);
   assert.match(html, /MP4 com H\.264 \+ AAC/);
   assert.match(html, /async function toggleNoteAudio/);
-  assert.match(html, /activeNoteAudio\.preload = "none"/);
+  assert.match(html, /activeNoteAudio\.preload = isVideo \? "metadata" : "none"/);
+  assert.match(html, /async function fetchVaultMediaTicket/);
+  assert.match(html, /capabilities\?\.includes\("media-tickets"\)/);
+  assert.match(html, /optionalFeatures: \["anchors", "hand-tracking", "local-floor", "dom-overlay", "layers"\]/);
+  assert.match(html, /function tryCreateVideoMediaLayer/);
+  assert.match(html, /new XRMediaBinding\(xrSession\)/);
+  assert.match(html, /function updateVideoPresentation/);
   assert.match(html, /createMediaElementSource/);
   assert.match(html, /async function ensureSpatialAudioContext/);
   assert.match(html, /spatialAudioContext\.state === "running"/);

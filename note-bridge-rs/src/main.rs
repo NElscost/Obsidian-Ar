@@ -5,18 +5,19 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
     path::{Path, PathBuf},
     sync::Arc,
-    time::{Instant, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
 use anyhow::{bail, Context, Result};
 use axum::{
     body::Body,
-    extract::{DefaultBodyLimit, State},
+    extract::{DefaultBodyLimit, Path as AxumPath, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use symphonia::core::{
@@ -49,6 +50,7 @@ struct AppState {
     asset_cache: Arc<RwLock<HashMap<String, PathBuf>>>,
     waveform_cache: Arc<RwLock<HashMap<String, CachedWaveform>>>,
     video_cache: Arc<RwLock<HashMap<String, CachedVideo>>>,
+    media_tickets: Arc<RwLock<HashMap<String, MediaTicket>>>,
     remote_client: reqwest::Client,
 }
 
@@ -79,6 +81,14 @@ struct CachedVideo {
     size: u64,
     compatible_path: PathBuf,
 }
+
+#[derive(Clone)]
+struct MediaTicket {
+    path: PathBuf,
+    expires_at: Instant,
+}
+
+const MEDIA_TICKET_TTL: Duration = Duration::from_secs(30 * 60);
 
 const BRIDGE_API_VERSION: u32 = 2;
 
@@ -579,7 +589,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
                 "ok": true,
                 "notes": notes,
                 "apiVersion": BRIDGE_API_VERSION,
-                "capabilities": ["video-transcode", "byte-ranges", "waveform"]
+                "capabilities": ["video-transcode", "byte-ranges", "media-tickets", "waveform"]
             })),
         )
             .into_response(),
@@ -598,7 +608,7 @@ async fn verify(State(state): State<AppState>, headers: HeaderMap) -> Response {
                 "ok": true,
                 "notes": notes,
                 "apiVersion": BRIDGE_API_VERSION,
-                "capabilities": ["video-transcode", "byte-ranges", "waveform"]
+                "capabilities": ["video-transcode", "byte-ranges", "media-tickets", "waveform"]
             })),
         )
             .into_response(),
@@ -785,20 +795,43 @@ async fn compatible_video_asset(state: &AppState, path: &Path) -> Result<PathBuf
             "-select_streams",
             "v:0",
             "-show_entries",
-            "stream=codec_name",
+            "stream=codec_name,width,height,bit_rate",
             "-of",
-            "default=noprint_wrappers=1:nokey=1",
+            "json",
         ])
         .arg(path)
         .output()
         .await;
-    let codec = match probe {
-        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .to_ascii_lowercase(),
+    let stream = match probe {
+        Ok(output) if output.status.success() => serde_json::from_slice::<Value>(&output.stdout)
+            .ok()
+            .and_then(|value| {
+                value["streams"]
+                    .as_array()
+                    .and_then(|streams| streams.first())
+                    .cloned()
+            }),
         _ => return Ok(path.to_path_buf()),
     };
-    if !matches!(codec.as_str(), "av1" | "hevc" | "h265") {
+    let Some(stream) = stream else {
+        return Ok(path.to_path_buf());
+    };
+    let codec = stream["codec_name"]
+        .as_str()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let width = stream["width"].as_u64().unwrap_or_default();
+    let height = stream["height"].as_u64().unwrap_or_default();
+    let bitrate = stream["bit_rate"]
+        .as_str()
+        .and_then(|value| value.parse::<u64>().ok())
+        .or_else(|| stream["bit_rate"].as_u64())
+        .unwrap_or_default();
+    let needs_quest_profile = matches!(codec.as_str(), "av1" | "hevc" | "h265")
+        || width > 1280
+        || height > 720
+        || bitrate > 4_000_000;
+    if !needs_quest_profile {
         let compatible_path = path.to_path_buf();
         state.video_cache.write().await.insert(
             cache_key,
@@ -817,6 +850,7 @@ async fn compatible_video_asset(state: &AppState, path: &Path) -> Result<PathBuf
         .modified()
         .unwrap_or(SystemTime::UNIX_EPOCH)
         .hash(&mut hasher);
+    "quest-stream-v2".hash(&mut hasher);
     let cache_dir = env::temp_dir().join("obsidian-ar-video-cache");
     tokio::fs::create_dir_all(&cache_dir).await?;
     let output_path = cache_dir.join(format!("{:016x}.mp4", hasher.finish()));
@@ -845,8 +879,8 @@ async fn compatible_video_asset(state: &AppState, path: &Path) -> Result<PathBuf
             .as_nanos()
     ));
     println!(
-        "[VIDEO] convertendo codec {codec} para H.264: {}",
-        path.display()
+        "[VIDEO] gerando perfil Quest H.264 (máx. 1280x720 / 3,5 Mbps) de {codec} {width}x{height}: {}",
+        path.display(),
     );
     let status = Command::new("ffmpeg")
         .args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
@@ -861,13 +895,25 @@ async fn compatible_video_asset(state: &AppState, path: &Path) -> Result<PathBuf
             "-preset",
             "veryfast",
             "-crf",
-            "23",
+            "24",
+            "-vf",
+            "scale=w='min(1280,iw)':h='min(720,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
+            "-maxrate",
+            "3500k",
+            "-bufsize",
+            "7000k",
+            "-g",
+            "60",
+            "-keyint_min",
+            "30",
+            "-sc_threshold",
+            "0",
             "-pix_fmt",
             "yuv420p",
             "-c:a",
             "aac",
             "-b:a",
-            "128k",
+            "96k",
             "-movflags",
             "+faststart",
             "-f",
@@ -1164,61 +1210,143 @@ async fn read_asset(
                 Ok(path) => path,
                 Err(err) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
             };
-            match File::open(&path).await {
-                Ok(mut file) => {
-                    let content_length = file.metadata().await.ok().map(|metadata| metadata.len());
-                    let range = match content_length {
-                        Some(total) => match parse_byte_range(headers.get(header::RANGE), total) {
-                            Ok(range) => range,
-                            Err(()) => {
-                                return Response::builder()
-                                    .status(StatusCode::RANGE_NOT_SATISFIABLE)
-                                    .header(header::CONTENT_RANGE, format!("bytes */{total}"))
-                                    .body(Body::empty())
-                                    .unwrap();
-                            }
-                        },
-                        None => None,
-                    };
-                    let (status, body_length) = if let Some((start, end)) = range {
-                        if let Err(err) = file.seek(SeekFrom::Start(start)).await {
-                            return error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
-                        }
-                        (StatusCode::PARTIAL_CONTENT, Some(end - start + 1))
-                    } else {
-                        (StatusCode::OK, content_length)
-                    };
-                    let mut response = Response::builder()
-                        .status(status)
-                        .header(
-                            header::CONTENT_TYPE,
-                            mime_guess::from_path(&path)
-                                .first_or_octet_stream()
-                                .as_ref(),
-                        )
-                        .header(header::CACHE_CONTROL, "private, max-age=300")
-                        .header(header::ACCEPT_RANGES, "bytes");
-                    if let (Some((start, end)), Some(total)) = (range, content_length) {
-                        response = response.header(
-                            header::CONTENT_RANGE,
-                            format!("bytes {start}-{end}/{total}"),
-                        );
-                    }
-                    if let Some(length) = body_length {
-                        response = response.header(header::CONTENT_LENGTH, length);
-                    }
-                    let stream = if let Some(length) = body_length {
-                        ReaderStream::new(file.take(length))
-                    } else {
-                        ReaderStream::new(file.take(u64::MAX))
-                    };
-                    response.body(Body::from_stream(stream)).unwrap()
-                }
-                Err(err) => error(StatusCode::NOT_FOUND, err.to_string()),
-            }
+            stream_media_file(&path, &headers, "private, max-age=300").await
         }
         Err(err) => error(StatusCode::NOT_FOUND, err.to_string()),
     }
+}
+
+async fn stream_media_file(path: &Path, headers: &HeaderMap, cache_control: &str) -> Response {
+    let mut file = match File::open(path).await {
+        Ok(file) => file,
+        Err(err) => return error(StatusCode::NOT_FOUND, err.to_string()),
+    };
+    let content_length = file.metadata().await.ok().map(|metadata| metadata.len());
+    let range = match content_length {
+        Some(total) => match parse_byte_range(headers.get(header::RANGE), total) {
+            Ok(range) => range,
+            Err(()) => {
+                return Response::builder()
+                    .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                    .header(header::CONTENT_RANGE, format!("bytes */{total}"))
+                    .body(Body::empty())
+                    .unwrap();
+            }
+        },
+        None => None,
+    };
+    let (status, body_length) = if let Some((start, end)) = range {
+        if let Err(err) = file.seek(SeekFrom::Start(start)).await {
+            return error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+        }
+        (StatusCode::PARTIAL_CONTENT, Some(end - start + 1))
+    } else {
+        (StatusCode::OK, content_length)
+    };
+    let mut response = Response::builder()
+        .status(status)
+        .header(
+            header::CONTENT_TYPE,
+            mime_guess::from_path(path).first_or_octet_stream().as_ref(),
+        )
+        .header(header::CACHE_CONTROL, cache_control)
+        .header(header::ACCEPT_RANGES, "bytes");
+    if let (Some((start, end)), Some(total)) = (range, content_length) {
+        response = response.header(
+            header::CONTENT_RANGE,
+            format!("bytes {start}-{end}/{total}"),
+        );
+    }
+    if let Some(length) = body_length {
+        response = response.header(header::CONTENT_LENGTH, length);
+    }
+    let stream = ReaderStream::new(file.take(body_length.unwrap_or(u64::MAX)));
+    response.body(Body::from_stream(stream)).unwrap()
+}
+
+async fn create_media_ticket(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<AssetRequest>,
+) -> Response {
+    if !authorized(&headers, &state.token) {
+        return error(StatusCode::UNAUTHORIZED, "Token inválido.");
+    }
+    let note_path = normalize_note_path(&payload.note_path);
+    if !matches!(note_is_allowed(&state, &note_path).await, Ok(true)) {
+        return error(StatusCode::NOT_FOUND, "Nota não permitida.");
+    }
+    let path = match resolve_asset(&state, &note_path, &payload.asset_path).await {
+        Ok(path) if compatibility_video_candidate(&path) => path,
+        Ok(_) => {
+            return error(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "O ticket é exclusivo para vídeo.",
+            )
+        }
+        Err(err) => return error(StatusCode::NOT_FOUND, err.to_string()),
+    };
+    let path = match compatible_video_asset(&state, &path).await {
+        Ok(path) => path,
+        Err(err) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
+    };
+    let metadata = match tokio::fs::metadata(&path).await {
+        Ok(metadata) => metadata,
+        Err(err) => return error(StatusCode::NOT_FOUND, err.to_string()),
+    };
+    let mut random = [0u8; 32];
+    rand::rng().fill_bytes(&mut random);
+    let ticket = random
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let now = Instant::now();
+    let mut tickets = state.media_tickets.write().await;
+    tickets.retain(|_, entry| entry.expires_at > now);
+    if tickets.len() >= 64 {
+        if let Some(oldest) = tickets
+            .iter()
+            .min_by_key(|(_, entry)| entry.expires_at)
+            .map(|(key, _)| key.clone())
+        {
+            tickets.remove(&oldest);
+        }
+    }
+    tickets.insert(
+        ticket.clone(),
+        MediaTicket {
+            path: path.clone(),
+            expires_at: now + MEDIA_TICKET_TTL,
+        },
+    );
+    Json(json!({
+        "url": format!("/media/{ticket}"),
+        "expiresIn": MEDIA_TICKET_TTL.as_secs(),
+        "contentType": mime_guess::from_path(&path).first_or_octet_stream().as_ref(),
+        "size": metadata.len()
+    }))
+    .into_response()
+}
+
+async fn read_media_ticket(
+    State(state): State<AppState>,
+    AxumPath(ticket): AxumPath<String>,
+    headers: HeaderMap,
+) -> Response {
+    let now = Instant::now();
+    let path = {
+        let mut tickets = state.media_tickets.write().await;
+        tickets.retain(|_, entry| entry.expires_at > now);
+        let Some(entry) = tickets.get_mut(&ticket) else {
+            return error(
+                StatusCode::NOT_FOUND,
+                "Ticket de mídia inválido ou expirado.",
+            );
+        };
+        entry.expires_at = now + MEDIA_TICKET_TTL;
+        entry.path.clone()
+    };
+    stream_media_file(&path, &headers, "private, no-store").await
 }
 
 fn wikimedia_image_url_allowed(url: &reqwest::Url) -> bool {
@@ -1314,6 +1442,7 @@ async fn main() -> Result<()> {
         asset_cache: Default::default(),
         waveform_cache: Default::default(),
         video_cache: Default::default(),
+        media_tickets: Default::default(),
         remote_client: reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::limited(5))
             .user_agent("Obsidian-Ar/1.0")
@@ -1338,6 +1467,8 @@ async fn main() -> Result<()> {
         .route("/pending-optimization", get(pending_optimization))
         .route("/note", post(read_note))
         .route("/asset", post(read_asset))
+        .route("/media-ticket", post(create_media_ticket))
+        .route("/media/{ticket}", get(read_media_ticket))
         .route("/waveform", post(read_waveform))
         .route("/remote-image", post(read_remote_image))
         .layer(DefaultBodyLimit::max(16_384))

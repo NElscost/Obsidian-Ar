@@ -135,15 +135,19 @@ that budget are grouped into expandable hubs to preserve Quest performance.
 ## Media support
 
 Audio is connected to a Web Audio `PannerNode` using the HRTF model, so its
-position follows the anchored 3D note window. Video frames use one GPU-backed
-`THREE.VideoTexture`; opening a video does not rebuild the graph.
+position follows the anchored 3D note window. Video is streamed with HTTP byte
+ranges through a short-lived, random media ticket, avoiding a full in-memory
+Blob on the Quest. When WebXR Media Layers are available, the browser compositor
+receives the video directly; otherwise the viewer uses one GPU-backed
+`THREE.VideoTexture` and stops drawing that texture while it is outside the
+field of view. Opening a video never rebuilds the graph.
 
 Quest browser support differs by headset generation. When an MP4/MOV attachment
-uses AV1 or HEVC, the Rust bridge invokes FFmpeg once to create an H.264/AAC copy
-in the operating system's temporary cache. The vault file is never modified.
-Subsequent opens reuse that cached copy. For the lowest startup cost, encode
-attachments as MP4/H.264/AAC or WebM/VP9/Opus and keep individual files below
-256 MB.
+uses AV1/HEVC, exceeds 1280×720, or has an unusually high bitrate, the Rust
+bridge invokes FFmpeg once to create a Quest profile (H.264/AAC, at most 720p
+and about 3.5 Mbps) in the operating system's temporary cache. The vault file is
+never modified and subsequent opens reuse the cached copy. For the lowest
+startup cost, encode attachments as MP4/H.264/AAC or WebM/VP9/Opus.
 
 Audio and video attachments share the same seek bar. Point and pinch to jump to
 a position, keep the pinch held while moving to scrub, and release to store a
