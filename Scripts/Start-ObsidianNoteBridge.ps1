@@ -149,7 +149,7 @@ if (
 $vaultPath = [IO.Path]::GetFullPath($vaultPath)
 $whisperModelPath = ([string]$bridgeConfig.whisperModelPath).Trim()
 if ([string]::IsNullOrWhiteSpace($whisperModelPath)) {
-  $defaultWhisperModel = Join-Path $workspace ".models\ggml-tiny.bin"
+  $defaultWhisperModel = Join-Path $workspace ".models\ggml-base-q5_1.bin"
   if (Test-Path -LiteralPath $defaultWhisperModel -PathType Leaf) {
     $whisperModelPath = $defaultWhisperModel
   }

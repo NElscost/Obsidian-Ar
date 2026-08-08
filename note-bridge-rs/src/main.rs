@@ -633,6 +633,28 @@ async fn verify(State(state): State<AppState>, headers: HeaderMap) -> Response {
     }
 }
 
+fn whisper_prompt(notes: &HashSet<String>) -> String {
+    let mut labels = notes
+        .iter()
+        .filter_map(|note| Path::new(note).file_stem()?.to_str())
+        .map(str::trim)
+        .filter(|label| !label.is_empty())
+        .collect::<Vec<_>>();
+    labels.sort_unstable_by_key(|label| label.to_lowercase());
+    labels.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+    let mut prompt = String::from(
+        "Comando de busca em português. Procure, busque ou encontre uma nota. Títulos: ",
+    );
+    for label in labels {
+        if prompt.len() + label.len() + 2 > 6_000 {
+            break;
+        }
+        prompt.push_str(label);
+        prompt.push_str(", ");
+    }
+    prompt
+}
+
 const MAX_VOICE_BYTES: usize = 2 * 1024 * 1024;
 
 async fn transcribe_voice(State(state): State<AppState>, request: Request<Body>) -> Response {
@@ -655,6 +677,10 @@ async fn transcribe_voice(State(state): State<AppState>, request: Request<Body>)
     let started = Instant::now();
     let _guard = state.transcription_lock.lock().await;
     let language = state.whisper_language.clone();
+    let prompt = {
+        let graph = state.graph_cache.read().await;
+        whisper_prompt(&graph.notes)
+    };
     let nonce = rand::random::<u64>();
     let cache_dir = env::temp_dir().join("obsidian-ar-voice");
     if let Err(err) = tokio::fs::create_dir_all(&cache_dir).await {
@@ -710,7 +736,12 @@ async fn transcribe_voice(State(state): State<AppState>, request: Request<Body>)
         params.set_translate(false);
         params.set_no_context(true);
         params.set_single_segment(true);
-        params.set_n_threads(2);
+        params.set_initial_prompt(&prompt);
+        let threads = std::thread::available_parallelism()
+            .map(|count| count.get())
+            .unwrap_or(4)
+            .clamp(2, 6) as i32;
+        params.set_n_threads(threads);
         params.set_print_special(false);
         params.set_print_progress(false);
         params.set_print_realtime(false);

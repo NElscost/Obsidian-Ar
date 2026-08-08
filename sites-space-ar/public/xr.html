@@ -4516,39 +4516,81 @@
         .toLowerCase();
     }
 
+    const VOICE_COMMAND_WORDS = ["procure", "procurar", "busque", "buscar", "encontre", "encontrar", "search", "find"];
+    const VOICE_FILLER_WORDS = new Set(["a", "o", "as", "os", "uma", "um", "de", "da", "do", "das", "dos", "por", "para", "pela", "pelo", "pelas", "pelos", "nota", "note", "arquivo", "file", "chamada", "chamado", "called", "named", "com", "nome"]);
+
+    function editDistance(left, right) {
+      if (left === right) return 0;
+      if (!left.length) return right.length;
+      if (!right.length) return left.length;
+      let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+      for (let leftIndex = 0; leftIndex < left.length; leftIndex += 1) {
+        const current = [leftIndex + 1];
+        for (let rightIndex = 0; rightIndex < right.length; rightIndex += 1) {
+          current.push(Math.min(current[rightIndex] + 1, previous[rightIndex + 1] + 1, previous[rightIndex] + (left[leftIndex] === right[rightIndex] ? 0 : 1)));
+        }
+        previous = current;
+      }
+      return previous[right.length];
+    }
+
+    function isVoiceCommandWord(word) {
+      return VOICE_COMMAND_WORDS.some((command) => editDistance(word, command) <= (Math.max(command.length, word.length) >= 7 ? 2 : 1));
+    }
+
+    function voiceQueryCandidates(spokenText) {
+      const words = normalizeNoteSearchText(spokenText).split(/\s+/).filter(Boolean);
+      const meaningful = words.filter((word, index) => !(index === 0 && isVoiceCommandWord(word)) && !VOICE_FILLER_WORDS.has(word));
+      const candidates = new Set();
+      for (let size = 1; size <= Math.min(4, meaningful.length); size += 1) {
+        for (let start = 0; start + size <= meaningful.length; start += 1) candidates.add(meaningful.slice(start, start + size).join(" "));
+      }
+      return [...candidates].sort((left, right) => right.length - left.length);
+    }
+
+    function fuzzyTextScore(query, title) {
+      if (!query || !title) return 0;
+      if (query === title) return 1200;
+      if (title.includes(query)) return 900 - Math.max(0, title.length - query.length) * 2;
+      if (query.includes(title)) return 820 - Math.max(0, query.length - title.length) * 2;
+      const queryCompact = query.replaceAll(" ", "");
+      const titleCompact = title.replaceAll(" ", "");
+      const longest = Math.max(queryCompact.length, titleCompact.length);
+      if (!longest) return 0;
+      const similarity = 1 - editDistance(queryCompact, titleCompact) / longest;
+      const lengthRatio = Math.min(queryCompact.length, titleCompact.length) / longest;
+      return similarity * 800 * (0.72 + lengthRatio * 0.28);
+    }
+
     function noteSearchScore(node, query) {
-      const title = normalizeNoteSearchText(node.label ?? node.id);
-      const path = normalizeNoteSearchText(node.id);
-      if (!title || !query) return 0;
-      if (title === query) return 1000;
-      if (title.startsWith(query)) return 820 - Math.abs(title.length - query.length);
-      if (title.includes(query)) return 700 - Math.abs(title.length - query.length);
-      const tokens = query.split(/\s+/).filter((token) => token.length > 1);
-      const titleTokens = new Set(`${title} ${path}`.split(/\s+/));
-      const matched = tokens.filter((token) =>
-        [...titleTokens].some((candidate) => candidate === token || candidate.startsWith(token))
-      ).length;
-      return tokens.length ? (matched / tokens.length) * 600 - Math.abs(title.length - query.length) : 0;
+      const label = normalizeNoteSearchText(node?.label ?? "");
+      const id = normalizeNoteSearchText(node?.id ?? "");
+      const idStem = id.split(" ").at(-1) ?? id;
+      return Math.max(fuzzyTextScore(query, label), fuzzyTextScore(query, id) * 0.94, fuzzyTextScore(query, idStem) * 0.98);
     }
 
     function findBestNoteMatch(spokenText) {
-      const query = normalizeNoteSearchText(spokenText)
-        .replace(/^(?:procure|buscar|busque|encontre|find|search|seach)(?: por)?(?: a| o)?(?: nota| note)?(?: do| da| de| sobre| called| about)?\s+/, "")
-        .trim();
-      const data = graphHierarchy?.fullData ?? graphData;
-      if (!query || !data?.nodes?.length) return null;
-      let best = null;
-      for (const node of data.nodes) {
-        const score = noteSearchScore(node, query);
-        if (!best || score > best.score) best = { node, score, query };
+      const sourceData = graphHierarchy?.fullData ?? graphData;
+      if (!sourceData?.nodes?.length) return null;
+      const candidates = voiceQueryCandidates(spokenText);
+      if (!candidates.length) return null;
+      const ranked = [];
+      for (const node of sourceData.nodes) {
+        let score = 0;
+        for (const query of candidates) score = Math.max(score, noteSearchScore(node, query));
+        ranked.push({ node, score });
       }
-      return best?.score >= 260 ? best : null;
+      ranked.sort((left, right) => right.score - left.score);
+      const best = ranked[0];
+      const second = ranked[1];
+      if (!best || best.score < 330) return null;
+      if (second && best.score < 900 && best.score - second.score < 18) return null;
+      return best;
     }
 
     function isVoiceSearchCommand(spokenText) {
-      return /^(?:procure|buscar|busque|encontre|find|search|seach)\b/i.test(
-        normalizeNoteSearchText(spokenText)
-      );
+      const words = normalizeNoteSearchText(spokenText).split(/\s+/).filter(Boolean);
+      return Boolean(words.length && (isVoiceCommandWord(words[0]) || words.includes("nota") || words.includes("note")));
     }
 
     function highlightNoteSearchResult(spokenText) {

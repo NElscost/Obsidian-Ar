@@ -202,7 +202,7 @@ async function startBridge(port, debug) {
   if (!path.isAbsolute(String(config.vaultPath ?? "")) || !existsSync(vaultPath) || !statSync(vaultPath).isDirectory()) {
     throw new Error("vaultPath precisa ser um diretório absoluto existente em note-bridge.config.json.");
   }
-  const defaultWhisperModel = path.join(workspace, ".models", "ggml-tiny.bin");
+  const defaultWhisperModel = path.join(workspace, ".models", "ggml-base-q5_1.bin");
   const whisperModelSetting = String(
     config.whisperModelPath ?? (existsSync(defaultWhisperModel) ? defaultWhisperModel : "")
   ).trim();

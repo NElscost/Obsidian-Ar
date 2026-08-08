@@ -171,21 +171,21 @@ the segment on the computer using two CPU threads; the model is loaded once and
 requests are serialized, so neither inference nor model memory is placed on the
 Quest's rendering thread.
 
-Download the multilingual tiny model once after cloning:
+Download the multilingual quantized base model (~57 MiB) once after cloning:
 
 ```powershell
 New-Item -ItemType Directory -Force .models
-Invoke-WebRequest https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin -OutFile .models/ggml-tiny.bin
+Invoke-WebRequest https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin -OutFile .models/ggml-base-q5_1.bin
 ```
 
 On macOS or Linux:
 
 ```sh
 mkdir -p .models
-curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin -o .models/ggml-tiny.bin
+curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin -o .models/ggml-base-q5_1.bin
 ```
 
-The default path is `.models/ggml-tiny.bin`. To use another model or language,
+The default path is `.models/ggml-base-q5_1.bin`. To use another model or language,
 set `whisperModelPath` and `whisperLanguage` (for example `pt`, `en`, or
 `auto`) in `note-bridge.config.json`. The model directory is ignored by Git.
 While listening, the bridge console reports every received audio segment, the

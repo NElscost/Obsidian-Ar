@@ -1,6 +1,6 @@
 {
   "vaultPath": "/caminho/absoluto/MeuVault",
-  "whisperModelPath": ".models/ggml-tiny.bin",
+  "whisperModelPath": ".models/ggml-base-q5_1.bin",
   "whisperLanguage": "pt",
   "tunnelMode": "quick",
   "tunnelUrl": "",
