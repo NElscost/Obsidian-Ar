@@ -2838,7 +2838,9 @@
       context.fillRect(0, 0, 1024, 92);
       context.fillStyle = "#f7f9fc";
       context.font = "bold 29px system-ui, sans-serif";
-      context.fillText(arNoteTitle.slice(0, 42), 52, 58);
+      context.textAlign = "center";
+      context.fillText(arNoteTitle.slice(0, 42), 512, 58, 820);
+      context.textAlign = "start";
       let y = 132;
       const currentPage = arNotePages[arNotePage];
       const renderedCanvas =
@@ -3467,7 +3469,7 @@
         new THREE.PlaneGeometry(0.024, 0.024),
         new THREE.MeshBasicMaterial({
           map: noteControlIconTexture("close", false),
-          color: 0x05070a,
+          color: 0x000000,
           transparent: true,
           depthTest: false,
           toneMapped: false

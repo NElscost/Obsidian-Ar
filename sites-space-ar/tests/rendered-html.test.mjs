@@ -182,7 +182,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /activeMediaMatches/);
   assert.match(html, /pendingPreparedVideoAutoplayKey/);
   assert.match(html, /queueMicrotask\(\(\) => void toggleNoteAudio\(track\)\)/);
-  assert.match(html, /videoCloseIcon[\s\S]*?color: 0x05070a/);
+  assert.match(html, /videoCloseIcon[\s\S]*?color: 0x000000/);
   assert.match(html, /preparedNoteVideo\?\.notePath === arNotePath/);
   assert.match(html, /track\.kind === "video" \|\| track\.kind === "youtube"/);
   assert.match(html, /activateNoteMediaAtUv/);
@@ -191,7 +191,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /action\.startsWith\("media-track:"\)/);
   assert.match(html, /control\.position\.set\([\s\S]*?0\.07/);
   assert.match(html, /videoArcAngle = THREE\.MathUtils\.degToRad\(14\)/);
-  assert.match(html, /color: 0x05070a/);
+  assert.match(html, /color: 0x000000/);
   assert.match(html, /videoClose[\s\S]*?color: 0xff6b6b/);
   assert.match(html, /activeNoteVideoGroup\.name = "note-video-window"/);
   assert.match(html, /activeNoteVideoGroup\.add\(videoBackdrop, activeNoteVideoSurface, videoClose\)/);
@@ -468,6 +468,7 @@ test("renderiza callouts do Obsidian e mostra a contagem de palavras", async () 
   assert.match(html, /CALLOUT_ALIASES/);
   assert.match(html, /let arNoteWordCount = 0/);
   assert.match(html, /wordsLabel/);
+  assert.match(html, /fillText\(arNoteTitle\.slice\(0, 42\), 512, 58, 820\)/);
 });
 
 test("oferece ambilight e YouTube no overlay WebXR", async () => {
