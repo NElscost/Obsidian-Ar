@@ -242,18 +242,15 @@ Set an absolute **Node.js executable** path in the plugin. Common values are
 ## Development
 
 ```sh
-npm ci --prefix ./obsidian-ar-plugin
-npm test --prefix ./obsidian-ar-plugin
-npm run build --prefix ./obsidian-ar-plugin
-
 npm ci --prefix ./sites-space-ar
 npm test --prefix ./sites-space-ar
 
 cargo test --manifest-path ./note-bridge-rs/Cargo.toml
 ```
 
-The Obsidian plugin lives in `obsidian-ar-plugin`, the Axum bridge in
-`note-bridge-rs`, and the WebXR viewer in `sites-space-ar`.
+The Axum bridge lives in `note-bridge-rs` and the WebXR viewer in
+`sites-space-ar`. Meta Quest Sync is maintained separately at
+[github.com/NElscost/meta-quest-sync](https://github.com/NElscost/meta-quest-sync).
 
 ## Optional glTF mode
 
