@@ -2815,7 +2815,7 @@
         control.position.set(
           ((hotspot.x1 + hotspot.x2) / 2 - 0.5) * AR_NOTE_WIDTH,
           ((hotspot.y1 + hotspot.y2) / 2 - 0.5) * AR_NOTE_HEIGHT,
-          0.026
+          0.07
         );
         control.userData.noteAction = `media-track:${encodeURIComponent(hotspot.source)}`;
         control.userData.highlightScale = false;
@@ -3405,7 +3405,15 @@
       activeNoteVideoTexture.generateMipmaps = false;
       activeNoteVideoGroup = new THREE.Group();
       activeNoteVideoGroup.name = "note-video-window";
-      activeNoteVideoGroup.position.set(AR_VIDEO_CENTER_X, 0, 0.006);
+      // Side-by-side panels share one concave viewing arc, like virtual monitors.
+      const videoArcAngle = THREE.MathUtils.degToRad(14);
+      const videoArcRadius = Math.abs(AR_VIDEO_CENTER_X) / Math.sin(videoArcAngle);
+      activeNoteVideoGroup.position.set(
+        AR_VIDEO_CENTER_X,
+        0,
+        videoArcRadius * (1 - Math.cos(videoArcAngle))
+      );
+      activeNoteVideoGroup.rotation.y = videoArcAngle;
       const videoBackdrop = new THREE.Mesh(
         curvedPanelGeometry(AR_VIDEO_WIDTH + 0.045, AR_VIDEO_HEIGHT + 0.045, 0.024),
         new THREE.ShaderMaterial({
@@ -3456,6 +3464,7 @@
         new THREE.PlaneGeometry(0.024, 0.024),
         new THREE.MeshBasicMaterial({
           map: noteControlIconTexture("close", false),
+          color: 0x05070a,
           transparent: true,
           depthTest: false,
           toneMapped: false
