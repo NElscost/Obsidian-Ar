@@ -415,7 +415,10 @@ test("mantém a busca digitada dentro da sessão WebXR", async () => {
   assert.match(html, /arNoteGroup\.scale\.setScalar\(0\.78\)/);
   assert.match(html, /"search-pin"/);
   assert.match(html, /IW_HAND_OUTLINE_WIDTH = 1/);
-  assert.match(html, /outlineMaterial\.uniforms\.outlineColor/);
+  assert.match(html, /outlineMaterial\.uniforms\.outlineColor\.value\.set\(0xffffff\)/);
+  assert.match(html, /function styleIwSdkHandFill/);
+  assert.match(html, /color: 0x000000/);
+  assert.match(html, /opacity: 0\.24/);
   assert.ok(html.includes('renderPass: "*Silhouette*"'));
   assert.match(html, /function updateArSearchSuggestions/);
   assert.ok(html.includes('"search-result:" + encodeURIComponent'));

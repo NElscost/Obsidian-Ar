@@ -1179,6 +1179,7 @@
     let virtualHandStyleCheckAt = 0;
     const IW_HAND_OUTLINE_WIDTH = 1;
     const fallbackVirtualHands = [];
+    let iwStencilMaterial = null;
 
     function styleVirtualHandMeshes(root) {
       const meshes = [];
@@ -1227,6 +1228,29 @@
       }
     }
 
+    function styleIwSdkHandFill(root) {
+      if (!root || !iwStencilMaterial) return;
+      root.traverse((object) => {
+        if (!object.isMesh || object.userData.spaceArIwHandFill) return;
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        if (!materials.includes(iwStencilMaterial)) return;
+        object.userData.spaceArIwHandFill = true;
+        const fill = new THREE.MeshBasicMaterial({
+          color: 0x000000,
+          transparent: true,
+          opacity: 0.24,
+          depthTest: true,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+          toneMapped: false
+        });
+        object.material = Array.isArray(object.material)
+          ? materials.map((material) => material === iwStencilMaterial ? fill : material)
+          : fill;
+        object.renderOrder = 1198;
+      });
+    }
+
     async function initializeVirtualHands() {
       if (iwInputManager || fallbackVirtualHands.length) return;
       if (iwInputPromise) return iwInputPromise;
@@ -1235,7 +1259,8 @@
           const { XRInputManager, outlineMaterial, stencilMaterial } = await import(
             "https://esm.sh/@iwsdk/xr-input@0.4.2?external=three"
           );
-          outlineMaterial.uniforms.outlineColor.value.set(0x000000);
+          outlineMaterial.uniforms.outlineColor.value.set(0xffffff);
+          iwStencilMaterial = stencilMaterial;
           stencilMaterial.uniforms.outlineThickness.value = 0.0012 * IW_HAND_OUTLINE_WIDTH;
           iwInputManager = new XRInputManager({ scene, camera });
           scene.add(iwInputManager.xrOrigin);
@@ -1243,7 +1268,7 @@
           iwInputManager.visualAdapters?.hand?.right?.toggleVisual(true);
           for (const adapter of [iwInputManager.visualAdapters?.hand?.left, iwInputManager.visualAdapters?.hand?.right]) {
             if (!adapter) continue;
-            adapter.outlineOptions = { enabled: true, color: { r: 0, g: 0, b: 0, a: 1 }, width: IW_HAND_OUTLINE_WIDTH, renderPass: "*Silhouette*" };
+            adapter.outlineOptions = { enabled: true, color: { r: 1, g: 1, b: 1, a: 0.78 }, width: IW_HAND_OUTLINE_WIDTH, renderPass: "*Silhouette*" };
           }
           console.info("IWSDK XRInputManager ativo para as mãos virtuais.");
           return;
@@ -1278,6 +1303,7 @@
           : 0;
         virtualHandFrameTime = time;
         iwInputManager.update(renderer.xr, delta, time / 1000);
+        if (time >= virtualHandStyleCheckAt) styleIwSdkHandFill(iwInputManager.xrOrigin);
       }
       if (time >= virtualHandStyleCheckAt) {
         for (const hand of fallbackVirtualHands) styleVirtualHandMeshes(hand);
