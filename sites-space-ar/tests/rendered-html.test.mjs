@@ -249,7 +249,9 @@ test("procura notas por voz e pulsa o resultado no grafo", async () => {
   assert.match(html, /function findBestNoteMatch/);
   assert.match(html, /function highlightNoteSearchResult/);
   assert.match(html, /const spokenTitle = words\.slice\(start\)\.join/);
-  assert.match(html, /exactMatches\.length === 1/);
+  assert.match(html, /function findNoteMatches/);
+  assert.match(html, /options\.typed === true && best\.score >= 600/);
+  assert.match(html, /noteSearchSuggestionText/);
   assert.match(html, /id="xr-search-input"/);
   assert.match(html, /function registerDoubleThumbTap/);
   assert.match(html, /tapThumb:\s*4/);
@@ -431,6 +433,12 @@ test("mantém a busca digitada dentro da sessão WebXR", async () => {
   assert.match(html, /thumbTapGestureStates/);
   assert.match(html, /function keyboardTexture/);
   assert.match(html, /function addArSearchKey/);
+  assert.match(html, /aspect: width \/ 0\.052/);
+  assert.match(html, /arNoteGroup\.scale\.setScalar\(0\.78\)/);
+  assert.match(html, /"search-pin"/);
+  assert.match(html, /IW_HAND_OUTLINE_WIDTH = 1/);
+  assert.match(html, /outlineMaterial\.uniforms\.outlineColor/);
+  assert.match(html, /renderPass: "\*Outline\*"/);
   assert.match(html, /arNoteControls\.push\(key\)/);
   assert.match(html, /Busca 3D aberta/);
   assert.match(html, /function searchResultGraphData/);

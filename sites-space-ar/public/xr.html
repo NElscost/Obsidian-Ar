@@ -1175,6 +1175,7 @@
     let iwInputPromise = null;
     let virtualHandFrameTime = 0;
     let virtualHandStyleCheckAt = 0;
+    const IW_HAND_OUTLINE_WIDTH = 1;
     const fallbackVirtualHands = [];
 
     function styleVirtualHandMeshes(root) {
@@ -1229,14 +1230,19 @@
       if (iwInputPromise) return iwInputPromise;
       iwInputPromise = (async () => {
         try {
-          const { XRInputManager } = await import(
+          const { XRInputManager, outlineMaterial, stencilMaterial } = await import(
             "https://esm.sh/@iwsdk/xr-input@0.4.2?external=three"
           );
+          outlineMaterial.uniforms.outlineColor.value.set(0xffffff);
+          stencilMaterial.uniforms.outlineThickness.value = 0.0012 * IW_HAND_OUTLINE_WIDTH;
           iwInputManager = new XRInputManager({ scene, camera });
           scene.add(iwInputManager.xrOrigin);
           iwInputManager.visualAdapters?.hand?.left?.toggleVisual(true);
           iwInputManager.visualAdapters?.hand?.right?.toggleVisual(true);
-          styleVirtualHandMeshes(iwInputManager.xrOrigin);
+          for (const adapter of [iwInputManager.visualAdapters?.hand?.left, iwInputManager.visualAdapters?.hand?.right]) {
+            if (!adapter) continue;
+            adapter.outlineOptions = { enabled: true, color: { r: 1, g: 1, b: 1, a: 1 }, width: IW_HAND_OUTLINE_WIDTH, renderPass: "*Outline*" };
+          }
           console.info("IWSDK XRInputManager ativo para as mãos virtuais.");
           return;
         } catch (error) {
@@ -1272,7 +1278,6 @@
         iwInputManager.update(renderer.xr, delta, time / 1000);
       }
       if (time >= virtualHandStyleCheckAt) {
-        if (iwInputManager) styleVirtualHandMeshes(iwInputManager.xrOrigin);
         for (const hand of fallbackVirtualHands) styleVirtualHandMeshes(hand);
         virtualHandStyleCheckAt = time + 500;
       }
@@ -1402,6 +1407,7 @@
         object.material?.dispose();
       });
       arNoteGroup.clear();
+      arNoteGroup.scale.setScalar(1);
       arNoteTexture?.dispose();
       arNoteSurface = null;
       arNoteControls = [];
@@ -3381,7 +3387,7 @@
     }
 
     function activateNoteControl(action, event, options = {}) {
-      if (action.startsWith("search-")) { activateArSearchKey(action); return; }
+      if (action.startsWith("search-")) { activateArSearchKey(action, event); return; }
       if (action === "close") {
         closeNote();
         return;
@@ -3982,13 +3988,15 @@
 
     function keyboardTexture(text, options = {}) {
       const canvas = document.createElement("canvas");
-      canvas.width = options.width ?? 512;
-      canvas.height = options.height ?? 128;
+      canvas.height = options.height ?? 256;
+      canvas.width = options.width ?? Math.max(128, Math.round(canvas.height * (options.aspect ?? 1)));
       const context = canvas.getContext("2d");
       context.fillStyle = options.background ?? "#192438";
       context.fillRect(0, 0, canvas.width, canvas.height);
       context.fillStyle = options.color ?? "#f5f7ff";
-      context.font = options.font ?? "600 46px system-ui, sans-serif";
+      const fontSize = options.fontSize ?? Math.round(canvas.height * 0.38);
+      context.font = options.font ??
+        ((options.weight ?? 650) + " " + fontSize + "px system-ui, sans-serif");
       context.textAlign = "center";
       context.textBaseline = "middle";
       context.fillText(String(text), canvas.width / 2, canvas.height / 2, canvas.width - 24);
@@ -4007,7 +4015,7 @@
         height: 128,
         background: "#0b1220",
         color: arSearchQuery ? "#ffffff" : "#8fa3bd",
-        font: "500 42px system-ui, sans-serif"
+        font: "500 40px system-ui, sans-serif"
       });
       arSearchDisplay.material.needsUpdate = true;
     }
@@ -4016,7 +4024,11 @@
       const key = new THREE.Mesh(
         new THREE.PlaneGeometry(width, 0.052),
         new THREE.MeshBasicMaterial({
-          map: keyboardTexture(label, { background: color }),
+          map: keyboardTexture(label, {
+            background: color,
+            aspect: width / 0.052,
+            fontSize: label.length > 2 ? 62 : 98
+          }),
           transparent: true,
           depthTest: false,
           toneMapped: false
@@ -4042,15 +4054,15 @@
     function openKeyboardSearch() {
       if (!xrSession || arSearchKeyboardActive) return;
       disposeArNote();
-      noteWindowAnchor?.delete?.();
-      noteWindowAnchor = null;
-      noteWindowPinned = false;
       arSearchKeyboardActive = true;
       arSearchQuery = "";
       arNoteGroup.visible = true;
-      arNoteGroup.position.set(0, -0.02, -0.78);
-      arNoteGroup.quaternion.identity();
-      camera.add(arNoteGroup);
+      arNoteGroup.scale.setScalar(0.78);
+      if (!noteWindowPinned) {
+        arNoteGroup.position.set(0, -0.02, -0.78);
+        arNoteGroup.quaternion.identity();
+        camera.add(arNoteGroup);
+      }
 
       const background = new THREE.Mesh(
         new THREE.PlaneGeometry(0.72, 0.46),
@@ -4068,6 +4080,7 @@
       arSearchDisplay.renderOrder = 1001;
       arNoteGroup.add(arSearchDisplay);
       updateArSearchDisplay();
+      addArSearchKey("PIN", "search-pin", 0.294, 0.165, 0.064, "#72572a");
 
       const rows = ["ABCDEFGHIJ", "KLMNOPQRST", "UVWXYZÁÉÍÓ", "ÚÇ"];
       rows.forEach((letters, rowIndex) => {
@@ -4092,14 +4105,25 @@
         setXrMessage("Digite parte do nome da nota.");
         return;
       }
+      const match = findBestNoteMatch(query, { typed: true });
+      if (!match) {
+        const suggestions = noteSearchSuggestionText(query);
+        setXrMessage(
+          suggestions
+            ? "Nenhuma correspondência segura. Próximas: " + suggestions + "."
+            : "Nenhuma nota semelhante a " + query + " foi encontrada."
+        );
+        return;
+      }
       closeKeyboardSearch();
-      highlightNoteSearchResult(query);
+      highlightNoteSearchResult(query, match);
     }
 
-    function activateArSearchKey(action) {
+    function activateArSearchKey(action, event) {
       if (!arSearchKeyboardActive) return;
       if (action === "search-close") return closeKeyboardSearch();
       if (action === "search-submit") return submitKeyboardSearch();
+      if (action === "search-pin") return void toggleNoteWindowPin(event);
       if (action === "search-backspace") arSearchQuery = [...arSearchQuery].slice(0, -1).join("");
       else if (action === "search-space") arSearchQuery += " ";
       else if (action.startsWith("search-char:")) arSearchQuery += action.slice(12);
@@ -4805,33 +4829,54 @@
       return Math.max(fuzzyTextScore(query, label), fuzzyTextScore(query, id) * 0.94, fuzzyTextScore(query, idStem) * 0.98);
     }
 
-    function findBestNoteMatch(spokenText) {
+    function findNoteMatches(spokenText, limit = 5) {
       const sourceData = graphHierarchy?.fullData ?? graphData;
-      if (!sourceData?.nodes?.length) return null;
+      if (!sourceData?.nodes?.length) return [];
       const candidates = voiceQueryCandidates(spokenText);
-      if (!candidates.length) return null;
+      if (!candidates.length) return [];
       const primaryQuery = candidates[0];
-      const exactMatches = sourceData.nodes.filter((node) => {
-        const label = normalizeNoteSearchText(node?.label ?? "");
-        const fileName = String(node?.id ?? "").split(/[\\/]/).at(-1) ?? "";
-        return label === primaryQuery || normalizeNoteSearchText(fileName) === primaryQuery;
-      });
-      if (exactMatches.length === 1) {
-        return { node: exactMatches[0], score: 2000, exact: true };
-      }
       const ranked = [];
       for (const node of sourceData.nodes) {
         let score = 0;
         for (const query of candidates) score = Math.max(score, noteSearchScore(node, query));
-        ranked.push({ node, score });
+        const label = normalizeNoteSearchText(node?.label ?? "");
+        const fileName = normalizeNoteSearchText(
+          String(node?.id ?? "").split(/[\/]/).at(-1) ?? ""
+        );
+        if (label === primaryQuery || fileName === primaryQuery) score = Math.max(score, 2000);
+        else if (label.includes(primaryQuery) || fileName.includes(primaryQuery)) {
+          score = Math.max(score, 1100 - Math.abs(label.length - primaryQuery.length));
+        }
+        ranked.push({ node, score, query: primaryQuery });
       }
       ranked.sort((left, right) => right.score - left.score);
+      return ranked.slice(0, Math.max(1, limit));
+    }
+
+    function findBestNoteMatch(spokenText, options = {}) {
+      const ranked = findNoteMatches(spokenText, 8);
       const best = ranked[0];
       const second = ranked[1];
-      console.info("[VOICE] correspondência de nota", { spokenText, candidates, best: best?.node?.id, score: best?.score, second: second?.node?.id, secondScore: second?.score });
+      console.info("[SEARCH] correspondência de nota", {
+        spokenText,
+        typed: options.typed === true,
+        best: best?.node?.id,
+        score: best?.score,
+        second: second?.node?.id,
+        secondScore: second?.score
+      });
       if (!best || best.score < 330) return null;
+      if (options.typed === true && best.score >= 600) return best;
       if (second && best.score < 900 && best.score - second.score < 18) return null;
       return best;
+    }
+
+    function noteSearchSuggestionText(spokenText) {
+      const suggestions = findNoteMatches(spokenText, 3)
+        .filter((item) => item.score >= 180)
+        .map((item) => item.node?.label ?? item.node?.id)
+        .filter(Boolean);
+      return suggestions.length ? suggestions.join(" · ") : "";
     }
 
     function isVoiceSearchCommand(spokenText) {
@@ -4866,10 +4911,15 @@
       return { nodes: [back, center, ...nodes], links: nodes.map((node) => ({ source: center.id, target: node.id })) };
     }
 
-    function highlightNoteSearchResult(spokenText) {
-      const match = findBestNoteMatch(spokenText);
+    function highlightNoteSearchResult(spokenText, resolvedMatch = null) {
+      const match = resolvedMatch ?? findBestNoteMatch(spokenText);
       if (!match) {
-        setXrMessage(`Nenhuma nota semelhante a “${spokenText}” foi encontrada.`);
+        const suggestions = noteSearchSuggestionText(spokenText);
+        setXrMessage(
+          suggestions
+            ? "Nota não encontrada. Sugestões: " + suggestions + "."
+            : "Nenhuma nota semelhante foi encontrada."
+        );
         return;
       }
       let target = graphData?.nodes?.find((node) => node.id === match.node.id) ?? null;

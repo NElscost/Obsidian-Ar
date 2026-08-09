@@ -130,8 +130,8 @@ Wait for graph processing to complete, then enter AR.
 - close four fingers and swipe the thumb to change pages;
 - while viewing the main graph, perform two thumb taps within 650 ms to open
   a fully immersive 3D keyboard; point with the palm ray and pinch to type;
-- the keyboard button in the AR HUD opens the same 3D fallback without leaving WebXR;
-- a successful search redraws only the matched note and up to 96 direct neighbours;
+- the keyboard button in the AR HUD opens the same smaller 3D fallback without leaving WebXR; its pin control can anchor it in space;
+- typed search accepts partial titles, suggests nearby matches when uncertain, and redraws only the matched note and up to 96 direct neighbours;
   the matched note pulses, and the back node restores the complete graph;
 - use the 3D controls to pin, navigate, play media, or close the note;
 - select a labeled node in the note's local graph to replace both panels with
