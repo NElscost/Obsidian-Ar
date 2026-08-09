@@ -3263,7 +3263,7 @@
         new THREE.ShaderMaterial({
           uniforms: { videoMap: { value: activeNoteVideoTexture } },
           vertexShader: "varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }",
-          fragmentShader: "uniform sampler2D videoMap; varying vec2 vUv; void main(){ vec2 d=vec2(0.055); vec3 c=texture2D(videoMap,vUv).rgb; c+=texture2D(videoMap,vUv+vec2(d.x,0.0)).rgb; c+=texture2D(videoMap,vUv-vec2(d.x,0.0)).rgb; c+=texture2D(videoMap,vUv+vec2(0.0,d.y)).rgb; c+=texture2D(videoMap,vUv-vec2(0.0,d.y)).rgb; c*=0.25; float l=max(c.r,max(c.g,c.b)); gl_FragColor=vec4(c*(1.15+0.4*l),0.30); }",
+          fragmentShader: "uniform sampler2D videoMap; varying vec2 vUv; void main(){ vec2 d=vec2(0.055); vec3 c=texture2D(videoMap,vUv).rgb; c+=texture2D(videoMap,vUv+vec2(d.x,0.0)).rgb; c+=texture2D(videoMap,vUv-vec2(d.x,0.0)).rgb; c+=texture2D(videoMap,vUv+vec2(0.0,d.y)).rgb; c+=texture2D(videoMap,vUv-vec2(0.0,d.y)).rgb; c*=0.25; float l=max(c.r,max(c.g,c.b)); float edgeDistance=min(min(vUv.x,1.0-vUv.x),min(vUv.y,1.0-vUv.y)); float border=(1.0-smoothstep(0.075,0.19,edgeDistance))*smoothstep(0.0,0.025,edgeDistance); gl_FragColor=vec4(c*(1.15+0.4*l),border*0.34); }",
           transparent: true,
           blending: THREE.AdditiveBlending,
           depthTest: false,
@@ -4308,6 +4308,9 @@
       key.position.set(x, y, 0.006);
       key.renderOrder = 1002;
       key.userData.noteAction = action;
+      // Never enlarge the actual raycast surface: adjacent rows are only 9 mm
+      // apart, so scaling the key could overlap and commit a different letter.
+      key.userData.highlightScale = false;
       arNoteControls.push(key);
       arNoteGroup.add(key);
       return key;
@@ -4388,6 +4391,7 @@
         result.renderOrder = 1003;
         result.userData.noteAction = "search-result:" + encodeURIComponent(String(match.node.id));
         result.userData.searchNodeId = match.node.id;
+        result.userData.highlightScale = false;
         arNoteControls.push(result);
         arSearchSuggestionGroup.add(result);
       });
@@ -5851,19 +5855,27 @@
     function onSelect(event) {
       if (arNoteGroup.visible) {
         const hit = controlFromSelectEvent(event);
-        const control = hit?.object ?? pointedNoteControl;
-        if (control) {
-          activateNoteControl(control.userData.noteAction, event, {
-            ratio: hit?.uv?.x ?? pointedNoteControlRatio,
-            uv: hit?.uv ?? (
+        // Commit the same stabilized palm-ray target that the user can see.
+        // targetRaySpace can jump during pinch and hit the note surface or a
+        // neighbouring keyboard row even while another control is highlighted.
+        const usesPointedControl = Boolean(pointedNoteControl);
+        const control = pointedNoteControl ?? hit?.object;
+        const controlUv = usesPointedControl
+          ? (
               Number.isFinite(pointedNoteControlRatio) && Number.isFinite(pointedNoteControlRatioY)
                 ? { x: pointedNoteControlRatio, y: pointedNoteControlRatioY }
                 : null
-            ),
+            )
+          : hit?.uv ?? null;
+        const controlInstanceId = usesPointedControl
+          ? pointedNoteControlInstanceId
+          : hit?.instanceId;
+        if (control) {
+          activateNoteControl(control.userData.noteAction, event, {
+            ratio: controlUv?.x,
+            uv: controlUv,
             seconds: control.userData.bookmarkSeconds,
-            path: control.userData.localGraphNodes?.[
-              hit?.instanceId ?? pointedNoteControlInstanceId
-            ]?.id
+            path: control.userData.localGraphNodes?.[controlInstanceId]?.id
           });
           resetGestureState("await-release");
         }

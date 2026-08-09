@@ -458,4 +458,14 @@ test("oferece ambilight e YouTube no overlay WebXR", async () => {
   assert.match(html, /frame-src https:\/\/www\.youtube\.com https:\/\/www\.youtube-nocookie\.com/);
   assert.match(html, /THREE\.AdditiveBlending/);
   assert.match(html, /uniforms: \{ videoMap:/);
+  assert.match(html, /float edgeDistance=/);
+  assert.match(html, /border\*0\.34/);
+});
+
+test("mantém o alvo destacado pela palma durante a pinça", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /const usesPointedControl = Boolean\(pointedNoteControl\)/);
+  assert.match(html, /const control = pointedNoteControl \?\? hit\?\.object/);
+  assert.match(html, /\? pointedNoteControlInstanceId/);
+  assert.match(html, /key\.userData\.highlightScale = false/);
 });
