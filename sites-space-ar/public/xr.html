@@ -1241,7 +1241,7 @@
           iwInputManager.visualAdapters?.hand?.right?.toggleVisual(true);
           for (const adapter of [iwInputManager.visualAdapters?.hand?.left, iwInputManager.visualAdapters?.hand?.right]) {
             if (!adapter) continue;
-            adapter.outlineOptions = { enabled: true, color: { r: 1, g: 1, b: 1, a: 1 }, width: IW_HAND_OUTLINE_WIDTH, renderPass: "*Outline*" };
+            adapter.outlineOptions = { enabled: true, color: { r: 1, g: 1, b: 1, a: 1 }, width: IW_HAND_OUTLINE_WIDTH, renderPass: "*Silhouette*" };
           }
           console.info("IWSDK XRInputManager ativo para as mãos virtuais.");
           return;
@@ -1321,6 +1321,7 @@
     let arSearchKeyboardActive = false;
     let arSearchQuery = "";
     let arSearchDisplay = null;
+    let arSearchSuggestionGroup = null;
     let noteAudioTracks = [];
     let noteVideoTracks = [];
     let activeNoteAudio = null;
@@ -3761,7 +3762,7 @@
       );
       line.visible = false;
       line.frustumCulled = false;
-      line.renderOrder = 999;
+      line.renderOrder = 2005;
       scene.add(line);
       return line;
     });
@@ -4018,6 +4019,7 @@
         font: "500 40px system-ui, sans-serif"
       });
       arSearchDisplay.material.needsUpdate = true;
+      updateArSearchSuggestions();
     }
 
     function addArSearchKey(label, action, x, y, width = 0.052, color = "#26354d") {
@@ -4042,6 +4044,85 @@
       return key;
     }
 
+    function clearArSearchSuggestions() {
+      if (!arSearchSuggestionGroup) return;
+      const suggestionControls = new Set();
+      arSearchSuggestionGroup.traverse((object) => {
+        if (object.userData?.noteAction?.startsWith("search-result:")) {
+          suggestionControls.add(object);
+        }
+        if (!object.isMesh) return;
+        object.geometry?.dispose();
+        object.material?.map?.dispose();
+        object.material?.dispose();
+      });
+      arNoteControls = arNoteControls.filter((control) => !suggestionControls.has(control));
+      arSearchSuggestionGroup.removeFromParent();
+      arSearchSuggestionGroup = null;
+    }
+
+    function updateArSearchSuggestions() {
+      clearArSearchSuggestions();
+      if (!arSearchKeyboardActive || arSearchQuery.trim().length < 2) return;
+      const matches = findNoteMatches(arSearchQuery, 5).filter((item) => item.score >= 180);
+      arSearchSuggestionGroup = new THREE.Group();
+      arSearchSuggestionGroup.position.set(0.57, 0, 0.001);
+      arNoteGroup.add(arSearchSuggestionGroup);
+
+      const panel = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.34, 0.38),
+        new THREE.MeshBasicMaterial({
+          color: 0x08111f,
+          transparent: true,
+          opacity: 0.96,
+          depthTest: false,
+          toneMapped: false
+        })
+      );
+      panel.renderOrder = 1000;
+      arSearchSuggestionGroup.add(panel);
+
+      const title = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.29, 0.052),
+        new THREE.MeshBasicMaterial({
+          map: keyboardTexture(matches.length ? "RESULTADOS" : "SEM RESULTADOS", {
+            aspect: 0.29 / 0.052,
+            fontSize: 54,
+            background: "#101c30",
+            color: matches.length ? "#75e7d0" : "#ff9c9c"
+          }),
+          transparent: true,
+          depthTest: false,
+          toneMapped: false
+        })
+      );
+      title.position.set(0, 0.145, 0.004);
+      title.renderOrder = 1002;
+      arSearchSuggestionGroup.add(title);
+
+      matches.forEach((match, index) => {
+        const label = String(match.node?.label ?? match.node?.id ?? "Nota");
+        const result = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.29, 0.052),
+          new THREE.MeshBasicMaterial({
+            map: keyboardTexture(label, {
+              aspect: 0.29 / 0.052,
+              fontSize: 48,
+              background: index === 0 ? "#176b62" : "#273a55"
+            }),
+            transparent: true,
+            depthTest: false,
+            toneMapped: false
+          })
+        );
+        result.position.set(0, 0.078 - index * 0.061, 0.006);
+        result.renderOrder = 1003;
+        result.userData.noteAction = "search-result:" + encodeURIComponent(String(match.node.id));
+        result.userData.searchNodeId = match.node.id;
+        arNoteControls.push(result);
+        arSearchSuggestionGroup.add(result);
+      });
+    }
     function closeKeyboardSearch() {
       xrSearch.classList.remove("visible");
       xrSearchInput.blur();
@@ -4123,7 +4204,26 @@
       if (!arSearchKeyboardActive) return;
       if (action === "search-close") return closeKeyboardSearch();
       if (action === "search-submit") return submitKeyboardSearch();
-      if (action === "search-pin") return void toggleNoteWindowPin(event);
+      if (action.startsWith("search-result:")) {
+        const nodeId = decodeURIComponent(action.slice("search-result:".length));
+        const sourceData = graphHierarchy?.fullData ?? graphData;
+        const node = sourceData?.nodes?.find((candidate) => String(candidate.id) === nodeId);
+        if (!node) {
+          setXrMessage("A nota sugerida não está mais disponível no grafo.");
+          return;
+        }
+        closeKeyboardSearch();
+        highlightNoteSearchResult(node.label ?? node.id, { node, score: 2000, exact: true });
+        return;
+      }
+      if (action === "search-pin") {
+        void toggleNoteWindowPin(event).then(() => {
+          if (arSearchKeyboardActive) {
+            arNoteGroup.scale.setScalar(noteWindowPinned ? 0.62 : 0.78);
+          }
+        });
+        return;
+      }
       if (action === "search-backspace") arSearchQuery = [...arSearchQuery].slice(0, -1).join("");
       else if (action === "search-space") arSearchQuery += " ";
       else if (action.startsWith("search-char:")) arSearchQuery += action.slice(12);
@@ -4841,9 +4941,13 @@
         for (const query of candidates) score = Math.max(score, noteSearchScore(node, query));
         const label = normalizeNoteSearchText(node?.label ?? "");
         const fileName = normalizeNoteSearchText(
-          String(node?.id ?? "").split(/[\/]/).at(-1) ?? ""
+          String(node?.id ?? "").replaceAll(String.fromCharCode(92), "/").split("/").at(-1) ?? ""
         );
         if (label === primaryQuery || fileName === primaryQuery) score = Math.max(score, 2000);
+        const queryWords = primaryQuery.split(" ").filter(Boolean);
+        const allWordsMatch = queryWords.length > 1 &&
+          queryWords.every((word) => label.includes(word) || fileName.includes(word));
+        if (allWordsMatch) score = Math.max(score, 1080 - Math.abs(label.length - primaryQuery.length));
         else if (label.includes(primaryQuery) || fileName.includes(primaryQuery)) {
           score = Math.max(score, 1100 - Math.abs(label.length - primaryQuery.length));
         }
