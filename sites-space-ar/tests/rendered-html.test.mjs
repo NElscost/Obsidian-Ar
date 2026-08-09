@@ -175,7 +175,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function extractNoteVideoTracks/);
   assert.match(html, /function createArVideoSurface/);
   assert.match(html, /activeNoteVideoGroup\.name = "note-video-window"/);
-  assert.match(html, /activeNoteVideoGroup\.add\(videoBackdrop, activeNoteVideoSurface\)/);
+  assert.match(html, /activeNoteVideoGroup\.add\(videoBackdrop, activeNoteVideoSurface, videoClose\)/);
   assert.match(html, /new THREE\.VideoTexture\(video\)/);
   assert.match(html, /noteVideoTracks\[0\] \?\? noteAudioTracks\[0\]/);
   assert.match(html, /function describeVideoPlaybackError/);
@@ -429,7 +429,9 @@ test("mantém a busca digitada dentro da sessão WebXR", async () => {
   assert.match(html, /function updateArSearchSuggestions/);
   assert.ok(html.includes('"search-result:" + encodeURIComponent'));
   assert.ok(html.includes("void requestNote(node.id)"));
-  assert.ok(html.includes("noteWindowPinned ? 0.62 : 0.78"));
+  assert.ok(html.includes("keyboardWindowPinned ? 0.62 : 0.78"));
+  assert.match(html, /let keyboardWindowAnchor = null/);
+  assert.match(html, /const activeWindowAnchor = arSearchKeyboardActive/);
   assert.ok(html.includes("line.renderOrder = 2005"));
   assert.match(html, /arNoteControls\.push\(key\)/);
   assert.match(html, /Busca 3D aberta/);
@@ -457,9 +459,11 @@ test("oferece ambilight e YouTube no overlay WebXR", async () => {
   assert.match(html, /youtube-nocookie\.com\/embed/);
   assert.match(html, /frame-src https:\/\/www\.youtube\.com https:\/\/www\.youtube-nocookie\.com/);
   assert.match(html, /THREE\.AdditiveBlending/);
-  assert.match(html, /uniforms: \{ videoMap:/);
+  assert.match(html, /topColor: \{ value: new THREE\.Color/);
+  assert.match(html, /function prepareVideoAmbilight/);
+  assert.match(html, /function updateVideoAmbilight/);
   assert.match(html, /float edgeDistance=/);
-  assert.match(html, /border\*0\.34/);
+  assert.match(html, /border\*0\.36/);
 });
 
 test("mantém o alvo destacado pela palma durante a pinça", async () => {
@@ -468,4 +472,13 @@ test("mantém o alvo destacado pela palma durante a pinça", async () => {
   assert.match(html, /const control = pointedNoteControl \?\? hit\?\.object/);
   assert.match(html, /\? pointedNoteControlInstanceId/);
   assert.match(html, /key\.userData\.highlightScale = false/);
+});
+
+
+test("preserva o vídeo no grafo local e usa painéis curvos", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /function curvedPanelGeometry/);
+  assert.match(html, /preserveVideoOnNextNote = Boolean/);
+  assert.match(html, /noteAction = "video-close"/);
+  assert.match(html, /disposeArNote\(\{ preserveVideo \}\)/);
 });

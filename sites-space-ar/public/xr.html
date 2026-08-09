@@ -1438,6 +1438,12 @@
     let activeNoteVideoLayer = null;
     let activeNoteVideoLayerSession = null;
     let activeNoteVideoBackdrop = null;
+    let activeNoteVideoCloseControl = null;
+    let preserveVideoOnNextNote = false;
+    let activeNoteAmbilightTimeline = null;
+    let activeNoteAmbilightUniforms = null;
+    let activeNoteAmbilightLastUpdateAt = 0;
+    const videoAmbilightCache = new Map();
     let videoSurfaceVisibilityCheckedAt = 0;
     let preparedNoteVideo = null;
     let noteVideoPreparation = null;
@@ -1462,12 +1468,11 @@
     const AUDIO_BOOKMARK_STORAGE_KEY = "space-ar-audio-bookmarks-v1";
     let noteWindowPinned = false;
     let noteWindowAnchor = null;
+    let keyboardWindowPinned = false;
+    let keyboardWindowAnchor = null;
     let waveformDragInputSource = null;
 
-    function disposeArNote() {
-      audioWaveformGeneration += 1;
-      noteVideoPreparationGeneration += 1;
-      cancelNoteCapture();
+    function releaseActiveMedia() {
       if (activeNoteAudio) {
         activeNoteAudio.pause();
         activeNoteAudio.removeAttribute("src");
@@ -1475,26 +1480,70 @@
       }
       if (activeNoteAudioObjectUrl) URL.revokeObjectURL(activeNoteAudioObjectUrl);
       if (preparedNoteVideo?.objectUrl) URL.revokeObjectURL(preparedNoteVideo.objectUrl);
+      disposeVideoMediaLayer();
+      activeNoteVideoTexture?.dispose();
+      spatialAudioSource?.disconnect();
+      spatialAudioPanner?.disconnect();
       activeNoteAudio = null;
       activeNoteTrack = null;
       activeNoteAudioObjectUrl = null;
-      activeNoteAudioControl = null;
-      disposeVideoMediaLayer();
-      activeNoteVideoTexture?.dispose();
       activeNoteVideoTexture = null;
       activeNoteVideoSurface = null;
       activeNoteVideoBackdrop = null;
+      activeNoteVideoCloseControl = null;
       activeNoteVideoGroup = null;
+      activeNoteAmbilightTimeline = null;
+      activeNoteAmbilightUniforms = null;
+      activeNoteAmbilightLastUpdateAt = 0;
+      spatialAudioSource = null;
+      spatialAudioPanner = null;
+    }
+
+    function closeActiveVideo(silent = false) {
+      if (!activeNoteVideoGroup && !activeNoteAudio?.tagName?.toLowerCase().includes("video")) return;
+      const group = activeNoteVideoGroup;
+      if (group) {
+        group.removeFromParent();
+        group.traverse((object) => {
+          if (!object.isMesh) return;
+          object.geometry?.dispose();
+          if (object.material !== activeNoteVideoSurface?.material) {
+            object.material?.map?.dispose();
+          }
+          object.material?.dispose();
+        });
+      }
+      if (activeNoteVideoCloseControl) {
+        arNoteControls = arNoteControls.filter((control) => control !== activeNoteVideoCloseControl);
+      }
+      releaseActiveMedia();
+      updateAudioControlColor();
+      if (!silent) setXrMessage("Janela de vídeo fechada.");
+    }
+
+    function disposeArNote(options = {}) {
+      const preserveVideo = Boolean(
+        options.preserveVideo && activeNoteVideoGroup && activeNoteAudio
+      );
+      const preservedVideoGroup = preserveVideo ? activeNoteVideoGroup : null;
+      const preservedVideoCloseControl = preserveVideo ? activeNoteVideoCloseControl : null;
+      if (preservedVideoGroup) preservedVideoGroup.removeFromParent();
+
+      audioWaveformGeneration += 1;
+      noteVideoPreparationGeneration += 1;
+      cancelNoteCapture();
+      if (!preserveVideo) {
+        if (activeNoteVideoGroup) closeActiveVideo(true);
+        else releaseActiveMedia();
+      }
+      activeNoteAudioControl = null;
+      if (preparedNoteVideo?.objectUrl) URL.revokeObjectURL(preparedNoteVideo.objectUrl);
       preparedNoteVideo = null;
       noteVideoPreparation = null;
       noteVideoPreparationError = null;
       videoFallbackBusy = false;
       localNoteGraphGroup = null;
       pointedLocalNotePath = null;
-      spatialAudioSource?.disconnect();
-      spatialAudioPanner?.disconnect();
-      spatialAudioSource = null;
-      spatialAudioPanner = null;
       audioWaveformTexture?.dispose();
       audioWaveformGroup = null;
       audioWaveformTexture = null;
@@ -1533,6 +1582,13 @@
       pointedNoteControlRatio = null;
       pointedNoteControlRatioY = null;
       candidateNoteControl = null;
+
+      if (preservedVideoGroup) {
+        activeNoteVideoGroup = preservedVideoGroup;
+        activeNoteVideoCloseControl = preservedVideoCloseControl;
+        arNoteGroup.add(preservedVideoGroup);
+        if (preservedVideoCloseControl) arNoteControls.push(preservedVideoCloseControl);
+      }
     }
 
     function closeNote() {
@@ -2881,7 +2937,7 @@
           transparent: true
         })
       );
-      control.position.set(x, y, 0.004);
+      control.position.set(x, y, 0.032);
       control.renderOrder = 1001;
       control.userData.noteAction = action;
       const icon = new THREE.Mesh(
@@ -3249,6 +3305,21 @@
       videoSurfaceVisibilityCheckedAt = time;
     }
 
+    function curvedPanelGeometry(width, height, depth = 0.022, segments = 18) {
+      const geometry = new THREE.PlaneGeometry(width, height, segments, 1);
+      const positions = geometry.attributes.position;
+      const halfWidth = Math.max(width / 2, 0.001);
+      for (let index = 0; index < positions.count; index += 1) {
+        const normalizedX = positions.getX(index) / halfWidth;
+        positions.setZ(index, depth * normalizedX * normalizedX);
+      }
+      positions.needsUpdate = true;
+      geometry.computeVertexNormals();
+      geometry.computeBoundingBox();
+      geometry.computeBoundingSphere();
+      return geometry;
+    }
+
     function createArVideoSurface(video) {
       activeNoteVideoTexture = new THREE.VideoTexture(video);
       activeNoteVideoTexture.colorSpace = THREE.SRGBColorSpace;
@@ -3259,11 +3330,16 @@
       activeNoteVideoGroup.name = "note-video-window";
       activeNoteVideoGroup.position.set(AR_VIDEO_CENTER_X, 0, 0.006);
       const videoBackdrop = new THREE.Mesh(
-        new THREE.PlaneGeometry(AR_VIDEO_WIDTH + 0.075, AR_VIDEO_HEIGHT + 0.075),
+        curvedPanelGeometry(AR_VIDEO_WIDTH + 0.075, AR_VIDEO_HEIGHT + 0.075, 0.026),
         new THREE.ShaderMaterial({
-          uniforms: { videoMap: { value: activeNoteVideoTexture } },
+          uniforms: {
+            topColor: { value: new THREE.Color(0x18243a) },
+            rightColor: { value: new THREE.Color(0x18243a) },
+            bottomColor: { value: new THREE.Color(0x18243a) },
+            leftColor: { value: new THREE.Color(0x18243a) }
+          },
           vertexShader: "varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }",
-          fragmentShader: "uniform sampler2D videoMap; varying vec2 vUv; void main(){ vec2 d=vec2(0.055); vec3 c=texture2D(videoMap,vUv).rgb; c+=texture2D(videoMap,vUv+vec2(d.x,0.0)).rgb; c+=texture2D(videoMap,vUv-vec2(d.x,0.0)).rgb; c+=texture2D(videoMap,vUv+vec2(0.0,d.y)).rgb; c+=texture2D(videoMap,vUv-vec2(0.0,d.y)).rgb; c*=0.25; float l=max(c.r,max(c.g,c.b)); float edgeDistance=min(min(vUv.x,1.0-vUv.x),min(vUv.y,1.0-vUv.y)); float border=(1.0-smoothstep(0.075,0.19,edgeDistance))*smoothstep(0.0,0.025,edgeDistance); gl_FragColor=vec4(c*(1.15+0.4*l),border*0.34); }",
+          fragmentShader: "uniform vec3 topColor; uniform vec3 rightColor; uniform vec3 bottomColor; uniform vec3 leftColor; varying vec2 vUv; void main(){ float edgeDistance=min(min(vUv.x,1.0-vUv.x),min(vUv.y,1.0-vUv.y)); float border=(1.0-smoothstep(0.075,0.19,edgeDistance))*smoothstep(0.0,0.025,edgeDistance); float horizontal=smoothstep(0.18,0.82,vUv.x); float vertical=smoothstep(0.18,0.82,vUv.y); vec3 side=mix(leftColor,rightColor,horizontal); vec3 cap=mix(bottomColor,topColor,vertical); float sideWeight=smoothstep(0.0,0.2,abs(vUv.x-0.5)-abs(vUv.y-0.5)+0.5); vec3 c=mix(cap,side,sideWeight); float l=max(c.r,max(c.g,c.b)); gl_FragColor=vec4(c*(1.08+0.35*l),border*0.36); }",
           transparent: true,
           blending: THREE.AdditiveBlending,
           depthTest: false,
@@ -3275,8 +3351,9 @@
       videoBackdrop.renderOrder = 998;
       videoBackdrop.raycast = () => {};
       activeNoteVideoBackdrop = videoBackdrop;
+      activeNoteAmbilightUniforms = videoBackdrop.material.uniforms;
       activeNoteVideoSurface = new THREE.Mesh(
-        new THREE.PlaneGeometry(AR_VIDEO_WIDTH - 0.03, AR_VIDEO_HEIGHT - 0.03),
+        curvedPanelGeometry(AR_VIDEO_WIDTH - 0.03, AR_VIDEO_HEIGHT - 0.03),
         new THREE.MeshBasicMaterial({
           map: activeNoteVideoTexture,
           toneMapped: false,
@@ -3286,7 +3363,33 @@
       activeNoteVideoSurface.position.set(0, 0, 0.002);
       activeNoteVideoSurface.renderOrder = 1000;
       activeNoteVideoSurface.raycast = () => {};
-      activeNoteVideoGroup.add(videoBackdrop, activeNoteVideoSurface);
+      const videoClose = new THREE.Mesh(
+        new THREE.CircleGeometry(0.019, 14),
+        new THREE.MeshBasicMaterial({
+          color: 0xff6b6b,
+          transparent: true,
+          depthTest: false,
+          toneMapped: false
+        })
+      );
+      videoClose.position.set(AR_VIDEO_WIDTH / 2 - 0.03, AR_VIDEO_HEIGHT / 2 - 0.03, 0.034);
+      videoClose.renderOrder = 1003;
+      videoClose.userData.noteAction = "video-close";
+      const videoCloseIcon = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.024, 0.024),
+        new THREE.MeshBasicMaterial({
+          map: noteControlIconTexture("close", false),
+          transparent: true,
+          depthTest: false,
+          toneMapped: false
+        })
+      );
+      videoCloseIcon.position.z = 0.003;
+      videoCloseIcon.raycast = () => {};
+      videoClose.add(videoCloseIcon);
+      activeNoteVideoCloseControl = videoClose;
+      activeNoteVideoGroup.add(videoBackdrop, activeNoteVideoSurface, videoClose);
+      arNoteControls.push(videoClose);
       arNoteGroup.add(activeNoteVideoGroup);
       const resize = () => {
         if (!activeNoteVideoSurface || !video.videoWidth || !video.videoHeight) return;
@@ -3298,7 +3401,7 @@
           width = height * aspect;
         }
         activeNoteVideoSurface.geometry.dispose();
-        activeNoteVideoSurface.geometry = new THREE.PlaneGeometry(width, height);
+        activeNoteVideoSurface.geometry = curvedPanelGeometry(width, height);
         if (activeNoteVideoLayer) {
           try {
             activeNoteVideoLayer.width = width;
@@ -3308,6 +3411,61 @@
       };
       video.addEventListener("loadedmetadata", resize, { once: true });
       tryCreateVideoMediaLayer(video);
+    }
+
+    function setAmbilightColor(color, left, right, mix) {
+      color.setRGB(
+        THREE.MathUtils.lerp(left[0], right[0], mix) / 255,
+        THREE.MathUtils.lerp(left[1], right[1], mix) / 255,
+        THREE.MathUtils.lerp(left[2], right[2], mix) / 255
+      );
+    }
+
+    function updateVideoAmbilight(time) {
+      if (
+        !activeNoteAudio ||
+        !activeNoteAmbilightUniforms ||
+        !activeNoteAmbilightTimeline?.frames?.length ||
+        time - activeNoteAmbilightLastUpdateAt < 50
+      ) return;
+      activeNoteAmbilightLastUpdateAt = time;
+      const frames = activeNoteAmbilightTimeline.frames;
+      const interval = Math.max(0.1, Number(activeNoteAmbilightTimeline.interval) || 1);
+      const position = Math.max(0, activeNoteAudio.currentTime || 0) / interval;
+      const index = Math.min(frames.length - 1, Math.floor(position));
+      const nextIndex = Math.min(frames.length - 1, index + 1);
+      const mix = position - Math.floor(position);
+      const current = frames[index];
+      const next = frames[nextIndex];
+      if (!current || !next) return;
+      setAmbilightColor(activeNoteAmbilightUniforms.topColor.value, current.slice(0, 3), next.slice(0, 3), mix);
+      setAmbilightColor(activeNoteAmbilightUniforms.rightColor.value, current.slice(3, 6), next.slice(3, 6), mix);
+      setAmbilightColor(activeNoteAmbilightUniforms.bottomColor.value, current.slice(6, 9), next.slice(6, 9), mix);
+      setAmbilightColor(activeNoteAmbilightUniforms.leftColor.value, current.slice(9, 12), next.slice(9, 12), mix);
+    }
+
+    async function prepareVideoAmbilight(track, notePath) {
+      if (!track || isNetworkSource(track.source) || isBrowserLocalSource(track.source)) return;
+      const config = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
+      if (!config?.url || !config?.token) return;
+      const cacheKey = notePath + "\n" + track.source;
+      try {
+        let timeline = videoAmbilightCache.get(cacheKey);
+        if (!timeline) {
+          const response = await fetch(config.url + "/video-ambilight", {
+            method: "POST",
+            headers: bridgeRequestHeaders(config, true),
+            body: JSON.stringify({ notePath, assetPath: track.source })
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error ?? ("HTTP " + response.status));
+          timeline = result;
+          videoAmbilightCache.set(cacheKey, timeline);
+        }
+        if (arNotePath === notePath) activeNoteAmbilightTimeline = timeline;
+      } catch (error) {
+        console.warn("Ambilight pré-processado indisponível; usando borda neutra.", error);
+      }
     }
 
     function describeVideoPlaybackError(video, error) {
@@ -3454,10 +3612,17 @@
         });
         arNoteGroup.remove(activeNoteVideoGroup);
       }
+      if (activeNoteVideoCloseControl) {
+        arNoteControls = arNoteControls.filter((control) => control !== activeNoteVideoCloseControl);
+      }
       activeNoteVideoTexture = null;
       activeNoteVideoSurface = null;
       activeNoteVideoBackdrop = null;
+      activeNoteVideoCloseControl = null;
       activeNoteVideoGroup = null;
+      activeNoteAmbilightTimeline = null;
+      activeNoteAmbilightUniforms = null;
+      activeNoteAmbilightLastUpdateAt = 0;
       spatialAudioSource?.disconnect();
       spatialAudioPanner?.disconnect();
       spatialAudioSource = null;
@@ -3614,43 +3779,50 @@
     }
 
     async function toggleNoteWindowPin(event) {
-      if (noteWindowPinned) {
-        if (noteWindowAnchor?.delete) noteWindowAnchor.delete();
-        noteWindowAnchor = null;
-        noteWindowPinned = false;
+      const keyboard = arSearchKeyboardActive;
+      const pinned = keyboard ? keyboardWindowPinned : noteWindowPinned;
+      const anchor = keyboard ? keyboardWindowAnchor : noteWindowAnchor;
+      const label = keyboard ? "Teclado" : "Janela";
+      if (pinned) {
+        if (anchor?.delete) anchor.delete();
+        if (keyboard) {
+          keyboardWindowAnchor = null;
+          keyboardWindowPinned = false;
+        } else {
+          noteWindowAnchor = null;
+          noteWindowPinned = false;
+        }
         camera.add(arNoteGroup);
-        arNoteGroup.position.set(0, 0, -0.82);
+        arNoteGroup.position.set(0, keyboard ? -0.02 : 0, keyboard ? -0.78 : -0.82);
         arNoteGroup.quaternion.identity();
-        setXrMessage("Janela solta: ela acompanhará sua visão.");
+        setXrMessage(label + " solto: acompanhará sua visão.");
         return;
       }
 
       arNoteGroup.updateWorldMatrix(true, false);
       scene.attach(arNoteGroup);
-      noteWindowPinned = true;
+      if (keyboard) keyboardWindowPinned = true;
+      else noteWindowPinned = true;
       if (event?.frame?.createAnchor && referenceSpace) {
         const position = arNoteGroup.position;
         const orientation = arNoteGroup.quaternion;
         try {
-          noteWindowAnchor = await event.frame.createAnchor(
+          const createdAnchor = await event.frame.createAnchor(
             new XRRigidTransform(
               { x: position.x, y: position.y, z: position.z },
-              {
-                x: orientation.x,
-                y: orientation.y,
-                z: orientation.z,
-                w: orientation.w
-              }
+              { x: orientation.x, y: orientation.y, z: orientation.z, w: orientation.w }
             ),
             referenceSpace
           );
-          setXrMessage("Janela fixada com anchor. As próximas notas usarão esta posição.");
+          if (keyboard) keyboardWindowAnchor = createdAnchor;
+          else noteWindowAnchor = createdAnchor;
+          setXrMessage(label + " fixado com anchor independente.");
         } catch (error) {
-          console.warn("Anchor da janela indisponível; usando pose fixa.", error);
-          setXrMessage("Janela fixada nesta posição.");
+          console.warn("Anchor indisponível; usando pose fixa.", error);
+          setXrMessage(label + " fixado nesta posição.");
         }
       } else {
-        setXrMessage("Janela fixada nesta posição.");
+        setXrMessage(label + " fixado nesta posição.");
       }
     }
 
@@ -3662,6 +3834,10 @@
       }
       if (action === "pin") {
         void toggleNoteWindowPin(event);
+        return;
+      }
+      if (action === "video-close") {
+        closeActiveVideo();
         return;
       }
       if (action === "audio") {
@@ -3684,6 +3860,7 @@
       if (action === "local-note") {
         const path = options.path || pointedLocalNotePath;
         if (path && path !== arNotePath) {
+          preserveVideoOnNextNote = Boolean(activeNoteVideoGroup && activeNoteAudio);
           setXrMessage(`Abrindo ${path} pelo grafo local…`);
           void requestNote(path);
         }
@@ -3844,7 +4021,9 @@
       if (!xrSession) return;
       const audioTracks = extractNoteAudioTracks(source);
       const videoTracks = extractNoteVideoTracks(source);
-      disposeArNote();
+      const preserveVideo = preserveVideoOnNextNote;
+      preserveVideoOnNextNote = false;
+      disposeArNote({ preserveVideo });
       noteAudioTracks = audioTracks;
       noteVideoTracks = videoTracks;
       arNotePath = path;
@@ -3876,7 +4055,7 @@
       const width = AR_NOTE_WIDTH;
       const height = AR_NOTE_HEIGHT;
       arNoteSurface = new THREE.Mesh(
-        new THREE.PlaneGeometry(width, height),
+        curvedPanelGeometry(width, height),
         new THREE.MeshBasicMaterial({
           map: arNoteTexture,
           transparent: false,
@@ -3909,11 +4088,14 @@
           0x63e6be
         );
         const timelineTrack = noteVideoTracks[0] ?? noteAudioTracks[0];
-        activeNoteTrack = timelineTrack ?? null;
-        if (timelineTrack) void prepareAudioWaveform(timelineTrack, path, width, height);
+        if (!preserveVideo) activeNoteTrack = timelineTrack ?? null;
+        if (timelineTrack && !preserveVideo) {
+          void prepareAudioWaveform(timelineTrack, path, width, height);
+        }
         const firstLocalVideo = noteVideoTracks.find((track) => track.kind === "video");
         if (firstLocalVideo) {
           beginNoteVideoPreparation(firstLocalVideo, path);
+          void prepareVideoAmbilight(firstLocalVideo, path);
         }
       }
       drawArNotePage();
@@ -4412,7 +4594,9 @@
       arSearchQuery = "";
       arNoteGroup.visible = true;
       arNoteGroup.scale.setScalar(0.78);
-      if (!noteWindowPinned) {
+      if (keyboardWindowPinned) {
+        if (arNoteGroup.parent !== scene) scene.attach(arNoteGroup);
+      } else {
         arNoteGroup.position.set(0, -0.02, -0.78);
         arNoteGroup.quaternion.identity();
         camera.add(arNoteGroup);
@@ -4493,7 +4677,7 @@
       if (action === "search-pin") {
         void toggleNoteWindowPin(event).then(() => {
           if (arSearchKeyboardActive) {
-            arNoteGroup.scale.setScalar(noteWindowPinned ? 0.62 : 0.78);
+            arNoteGroup.scale.setScalar(keyboardWindowPinned ? 0.62 : 0.78);
           }
         });
         return;
@@ -6771,6 +6955,8 @@
           const action = pointedNoteControl.userData.noteAction;
           const label = action === "close"
             ? "fechar"
+            : action === "video-close"
+              ? "fechar o vídeo"
             : action === "pin"
               ? (noteWindowPinned ? "soltar a janela" : "fixar a janela")
               : action === "note-media"
@@ -6915,8 +7101,11 @@
     }
 
     function updatePlacement(frame) {
-      if (noteWindowAnchor && referenceSpace) {
-        const notePose = frame.getPose(noteWindowAnchor.anchorSpace, referenceSpace);
+      const activeWindowAnchor = arSearchKeyboardActive
+        ? keyboardWindowAnchor
+        : noteWindowAnchor;
+      if (activeWindowAnchor && referenceSpace) {
+        const notePose = frame.getPose(activeWindowAnchor.anchorSpace, referenceSpace);
         if (notePose) {
           workingMatrix.fromArray(notePose.transform.matrix);
           workingMatrix.decompose(
@@ -6962,6 +7151,7 @@
     function render(time, frame) {
       updateVirtualHands(time);
       if (isPlaced) synapsePulseTime.value = time * 0.001;
+      updateVideoAmbilight(time);
       if (forceGraph && dynamicGraphTicking) {
         forceGraph.tickFrame();
         syncDynamicNodeProxies();
@@ -7018,8 +7208,11 @@
       hitTestSource = null;
       disposeAnchor();
       if (noteWindowAnchor?.delete) noteWindowAnchor.delete();
+      if (keyboardWindowAnchor?.delete) keyboardWindowAnchor.delete();
       noteWindowAnchor = null;
+      keyboardWindowAnchor = null;
       noteWindowPinned = false;
+      keyboardWindowPinned = false;
       xrSession = null;
       virtualHandFrameTime = 0;
       virtualHandStyleCheckAt = 0;

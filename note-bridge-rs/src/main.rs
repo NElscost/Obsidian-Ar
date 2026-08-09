@@ -49,6 +49,7 @@ struct AppState {
     note_cache: Arc<RwLock<HashMap<String, CachedNote>>>,
     asset_cache: Arc<RwLock<HashMap<String, PathBuf>>>,
     waveform_cache: Arc<RwLock<HashMap<String, CachedWaveform>>>,
+    ambilight_cache: Arc<RwLock<HashMap<String, CachedAmbilight>>>,
     video_cache: Arc<RwLock<HashMap<String, CachedVideo>>>,
     media_tickets: Arc<RwLock<HashMap<String, MediaTicket>>>,
     remote_client: reqwest::Client,
@@ -76,6 +77,13 @@ struct CachedWaveform {
 }
 
 #[derive(Clone)]
+struct CachedAmbilight {
+    modified: SystemTime,
+    size: u64,
+    response: AmbilightResponse,
+}
+
+#[derive(Clone)]
 struct CachedVideo {
     modified: SystemTime,
     size: u64,
@@ -96,6 +104,7 @@ fn bridge_capabilities(_state: &AppState) -> Vec<&'static str> {
         "byte-ranges",
         "media-tickets",
         "waveform",
+        "video-ambilight",
     ]
 }
 
@@ -175,6 +184,17 @@ mod origin_tests {
     fn empty_waveform_is_silent() {
         assert_eq!(normalize_waveform(&[], 4), vec![0, 0, 0, 0]);
     }
+
+    #[test]
+    fn ambilight_reduces_uniform_frame_to_four_equal_edges() {
+        let frame = [12_u8, 34, 56].repeat(AMBILIGHT_WIDTH * AMBILIGHT_HEIGHT);
+        let response = analyze_ambilight_frames(&frame);
+        assert_eq!(response.frames.len(), 1);
+        assert_eq!(
+            response.frames[0],
+            [12, 34, 56, 12, 34, 56, 12, 34, 56, 12, 34, 56]
+        );
+    }
 }
 
 #[derive(Deserialize)]
@@ -194,6 +214,15 @@ struct AssetRequest {
 struct WaveformResponse {
     duration: f64,
     samples: Vec<u8>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AmbilightResponse {
+    interval: f32,
+    width: usize,
+    height: usize,
+    frames: Vec<[u8; 12]>,
 }
 
 #[derive(Deserialize)]
@@ -1149,6 +1178,168 @@ fn analyze_audio_waveform(path: &Path) -> Result<WaveformResponse> {
     })
 }
 
+const AMBILIGHT_WIDTH: usize = 24;
+const AMBILIGHT_HEIGHT: usize = 14;
+const AMBILIGHT_INTERVAL: f32 = 1.0;
+const AMBILIGHT_MAX_FRAMES: usize = 3600;
+
+fn average_rgb<I>(pixels: I) -> [u8; 3]
+where
+    I: Iterator<Item = [u8; 3]>,
+{
+    let mut sum = [0_u64; 3];
+    let mut count = 0_u64;
+    for pixel in pixels {
+        sum[0] += pixel[0] as u64;
+        sum[1] += pixel[1] as u64;
+        sum[2] += pixel[2] as u64;
+        count += 1;
+    }
+    if count == 0 {
+        return [0, 0, 0];
+    }
+    [
+        (sum[0] / count) as u8,
+        (sum[1] / count) as u8,
+        (sum[2] / count) as u8,
+    ]
+}
+
+fn analyze_ambilight_frames(bytes: &[u8]) -> AmbilightResponse {
+    let stride = AMBILIGHT_WIDTH * AMBILIGHT_HEIGHT * 3;
+    let mut frames = Vec::with_capacity((bytes.len() / stride).min(AMBILIGHT_MAX_FRAMES));
+    for frame in bytes.chunks_exact(stride).take(AMBILIGHT_MAX_FRAMES) {
+        let pixel = |x: usize, y: usize| {
+            let offset = (y * AMBILIGHT_WIDTH + x) * 3;
+            [frame[offset], frame[offset + 1], frame[offset + 2]]
+        };
+        let band = 2;
+        let top =
+            average_rgb((0..band).flat_map(|y| (0..AMBILIGHT_WIDTH).map(move |x| pixel(x, y))));
+        let right =
+            average_rgb((0..AMBILIGHT_HEIGHT).flat_map(|y| {
+                ((AMBILIGHT_WIDTH - band)..AMBILIGHT_WIDTH).map(move |x| pixel(x, y))
+            }));
+        let bottom = average_rgb(
+            ((AMBILIGHT_HEIGHT - band)..AMBILIGHT_HEIGHT)
+                .flat_map(|y| (0..AMBILIGHT_WIDTH).map(move |x| pixel(x, y))),
+        );
+        let left =
+            average_rgb((0..AMBILIGHT_HEIGHT).flat_map(|y| (0..band).map(move |x| pixel(x, y))));
+        frames.push([
+            top[0], top[1], top[2], right[0], right[1], right[2], bottom[0], bottom[1], bottom[2],
+            left[0], left[1], left[2],
+        ]);
+    }
+    AmbilightResponse {
+        interval: AMBILIGHT_INTERVAL,
+        width: AMBILIGHT_WIDTH,
+        height: AMBILIGHT_HEIGHT,
+        frames,
+    }
+}
+
+async fn analyze_video_ambilight(path: &Path) -> Result<AmbilightResponse> {
+    let fps = format!("fps=1/{AMBILIGHT_INTERVAL},scale={AMBILIGHT_WIDTH}:{AMBILIGHT_HEIGHT}:force_original_aspect_ratio=decrease,pad={AMBILIGHT_WIDTH}:{AMBILIGHT_HEIGHT}:(ow-iw)/2:(oh-ih)/2");
+    let output = Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-i"])
+        .arg(path)
+        .args([
+            "-an",
+            "-vf",
+            &fps,
+            "-frames:v",
+            &AMBILIGHT_MAX_FRAMES.to_string(),
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ])
+        .output()
+        .await
+        .context("FFmpeg não está disponível para analisar as bordas do vídeo.")?;
+    if !output.status.success() {
+        bail!(
+            "FFmpeg não conseguiu gerar o ambilight: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(analyze_ambilight_frames(&output.stdout))
+}
+
+async fn read_video_ambilight(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<AssetRequest>,
+) -> Response {
+    if !authorized(&headers, &state.token) {
+        return error(StatusCode::UNAUTHORIZED, "Token inválido.");
+    }
+    let note_path = normalize_note_path(&payload.note_path);
+    if !matches!(note_is_allowed(&state, &note_path).await, Ok(true)) {
+        return error(StatusCode::NOT_FOUND, "Nota não permitida.");
+    }
+    let path = match resolve_asset(&state, &note_path, &payload.asset_path).await {
+        Ok(path)
+            if compatibility_video_candidate(&path)
+                || matches!(
+                    path.extension()
+                        .and_then(|value| value.to_str())
+                        .map(str::to_ascii_lowercase)
+                        .as_deref(),
+                    Some("webm" | "ogv")
+                ) =>
+        {
+            path
+        }
+        Ok(_) => {
+            return error(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "O arquivo solicitado não é um vídeo.",
+            )
+        }
+        Err(err) => return error(StatusCode::NOT_FOUND, err.to_string()),
+    };
+    let metadata = match tokio::fs::metadata(&path).await {
+        Ok(metadata) => metadata,
+        Err(err) => return error(StatusCode::NOT_FOUND, err.to_string()),
+    };
+    let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+    let key = path.to_string_lossy().to_string();
+    if let Some(cached) = state
+        .ambilight_cache
+        .read()
+        .await
+        .get(&key)
+        .filter(|cached| cached.modified == modified && cached.size == metadata.len())
+        .cloned()
+    {
+        return Json(cached.response).into_response();
+    }
+    println!(
+        "[VIDEO] analisando bordas 24x14 para ambilight: {}",
+        path.display()
+    );
+    let response = match analyze_video_ambilight(&path).await {
+        Ok(response) => response,
+        Err(err) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
+    };
+    println!(
+        "[VIDEO] ambilight pronto: {} amostras.",
+        response.frames.len()
+    );
+    state.ambilight_cache.write().await.insert(
+        key,
+        CachedAmbilight {
+            modified,
+            size: metadata.len(),
+            response: response.clone(),
+        },
+    );
+    Json(response).into_response()
+}
+
 async fn read_waveform(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1463,6 +1654,7 @@ async fn main() -> Result<()> {
         note_cache: Default::default(),
         asset_cache: Default::default(),
         waveform_cache: Default::default(),
+        ambilight_cache: Default::default(),
         video_cache: Default::default(),
         media_tickets: Default::default(),
         remote_client: reqwest::Client::builder()
@@ -1492,6 +1684,7 @@ async fn main() -> Result<()> {
         .route("/media-ticket", post(create_media_ticket))
         .route("/media/{ticket}", get(read_media_ticket))
         .route("/waveform", post(read_waveform))
+        .route("/video-ambilight", post(read_video_ambilight))
         .route("/remote-image", post(read_remote_image))
         .layer(CompressionLayer::new())
         .layer(cors)
