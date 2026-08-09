@@ -178,6 +178,9 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /fetchYoutubeMediaTicket/);
   assert.match(html, /track\.kind === "video" \|\| track\.kind === "youtube"/);
   assert.match(html, /activateNoteMediaAtUv/);
+  assert.match(html, /function rebuildArNoteMediaHotspotControls/);
+  assert.match(html, /noteAction = `media-track:/);
+  assert.match(html, /action\.startsWith\("media-track:"\)/);
   assert.match(html, /activeNoteVideoGroup\.name = "note-video-window"/);
   assert.match(html, /activeNoteVideoGroup\.add\(videoBackdrop, activeNoteVideoSurface, videoClose\)/);
   assert.match(html, /new THREE\.VideoTexture\(video\)/);

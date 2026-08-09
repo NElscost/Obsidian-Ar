@@ -1409,6 +1409,7 @@
     let arNoteTexture = null;
     let arNoteSurface = null;
     let arNoteControls = [];
+    let arNoteMediaHotspotControls = [];
     let pointedNoteControl = null;
     let pointedNoteControlInstanceId = null;
     let pointedNoteControlRatio = null;
@@ -1591,6 +1592,7 @@
       arNoteTexture?.dispose();
       arNoteSurface = null;
       arNoteControls = [];
+      arNoteMediaHotspotControls = [];
       arNoteTexture = null;
       arNoteCanvas = null;
       arNotePages = [];
@@ -2794,7 +2796,37 @@
       );
     }
 
+    function rebuildArNoteMediaHotspotControls() {
+      for (const control of arNoteMediaHotspotControls) {
+        arNoteControls = arNoteControls.filter((item) => item !== control);
+        control.removeFromParent();
+        control.geometry?.dispose();
+        control.material?.dispose();
+      }
+      arNoteMediaHotspotControls = [];
+      for (const hotspot of arNotePages[arNotePage]?.mediaHotspots ?? []) {
+        const control = new THREE.Mesh(
+          new THREE.PlaneGeometry(
+            Math.max(0.025, (hotspot.x2 - hotspot.x1) * AR_NOTE_WIDTH),
+            Math.max(0.025, (hotspot.y2 - hotspot.y1) * AR_NOTE_HEIGHT)
+          ),
+          new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.001, depthWrite: false })
+        );
+        control.position.set(
+          ((hotspot.x1 + hotspot.x2) / 2 - 0.5) * AR_NOTE_WIDTH,
+          ((hotspot.y1 + hotspot.y2) / 2 - 0.5) * AR_NOTE_HEIGHT,
+          0.026
+        );
+        control.userData.noteAction = `media-track:${encodeURIComponent(hotspot.source)}`;
+        control.userData.highlightScale = false;
+        arNoteGroup.add(control);
+        arNoteControls.push(control);
+        arNoteMediaHotspotControls.push(control);
+      }
+    }
+
     function drawArNotePage() {
+      rebuildArNoteMediaHotspotControls();
       if (!arNoteCanvas || !arNoteTexture) return;
       const context = arNoteCanvas.getContext("2d");
       context.fillStyle = "#0a101b";
@@ -3925,6 +3957,16 @@
       }
       if (action === "audio") {
         void toggleNoteAudio();
+        return;
+      }
+      if (action.startsWith("media-track:")) {
+        let source = action.slice("media-track:".length);
+        try { source = decodeURIComponent(source); } catch {}
+        const track = [...noteVideoTracks, ...noteAudioTracks].find((item) => item.source === source);
+        if (track) {
+          setXrMessage(`Mídia selecionada: ${track.label}. Preparando reprodução…`);
+          void toggleNoteAudio(track);
+        }
         return;
       }
       if (action === "note-media") {
@@ -7034,7 +7076,7 @@
         for (const control of arNoteControls) {
           const active = control === pointedNoteControl;
           control.scale.setScalar(active && control.userData.highlightScale !== false ? 1.35 : 1);
-          if (control.material && control.userData.noteAction !== "note-media") {
+          if (control.material && control.userData.noteAction !== "note-media" && !control.userData.noteAction?.startsWith("media-track:")) {
             control.material.opacity = active ? 1 : 0.82;
           }
         }
