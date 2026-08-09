@@ -202,16 +202,6 @@ async function startBridge(port, debug) {
   if (!path.isAbsolute(String(config.vaultPath ?? "")) || !existsSync(vaultPath) || !statSync(vaultPath).isDirectory()) {
     throw new Error("vaultPath precisa ser um diretório absoluto existente em note-bridge.config.json.");
   }
-  const defaultWhisperModel = path.join(workspace, ".models", "ggml-base-q5_1.bin");
-  const whisperModelSetting = String(
-    config.whisperModelPath ?? (existsSync(defaultWhisperModel) ? defaultWhisperModel : "")
-  ).trim();
-  const whisperModelPath = whisperModelSetting
-    ? path.resolve(workspace, whisperModelSetting)
-    : "";
-  if (whisperModelPath && (!existsSync(whisperModelPath) || !statSync(whisperModelPath).isFile())) {
-    throw new Error(`whisperModelPath não encontrado: ${whisperModelPath}`);
-  }
   if (!commandAvailable("cloudflared")) {
     throw new Error("cloudflared não encontrado. Instale-o e reinicie o Obsidian para atualizar o PATH.");
   }
@@ -229,9 +219,7 @@ async function startBridge(port, debug) {
   const serverError = path.join(logDir, "server-error.log");
   const tunnelLog = path.join(logDir, "tunnel.log");
   const tunnelError = path.join(logDir, "tunnel-error.log");
-  const serverEnv = { ...process.env, SPACE_NOTE_PORT: String(port), SPACE_NOTE_TOKEN: token, SPACE_VAULT_PATH: vaultPath, SPACE_PENDING_OPTIMIZATION_PATH: pendingPath, SPACE_WHISPER_LANGUAGE: String(config.whisperLanguage || "pt") };
   if (existsSync(graphPath)) serverEnv.SPACE_GRAPH_PATH = graphPath;
-  if (whisperModelPath) serverEnv.SPACE_WHISPER_MODEL = whisperModelPath;
   const server = spawnLogged(serverPath, [], serverLog, serverError, serverEnv);
   let tunnel;
   try {

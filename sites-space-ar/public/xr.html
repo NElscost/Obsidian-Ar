@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -310,22 +310,9 @@
       color: #fff;
       font-size: 12px;
     }
-    #voice-search {
-      display: inline-grid !important;
-      place-items: center;
-      width: 44px;
-      min-width: 44px;
-      height: 44px;
-      min-height: 44px;
-      padding: 0;
-      border-radius: 50%;
-      border: 1px solid rgba(117, 231, 208, 0.55);
-      background: rgba(38, 177, 151, 0.3);
-      color: #eafffa;
-      font-size: 20px;
-      line-height: 1;
-    }
 
+    .language-picker { display:grid; grid-template-columns:auto minmax(140px,1fr); align-items:center; gap:10px; margin-bottom:12px; color:#b8c4d6; font-size:12px; }
+    .language-picker select { min-height:38px; border:1px solid rgba(142,171,207,.32); border-radius:10px; background:#09111d; color:#f1f5fb; padding:0 10px; }
 
     #keyboard-search {
       display: inline-grid !important;
@@ -616,68 +603,66 @@
 <body>
   <main class="shell">
     <section class="panel" aria-labelledby="title">
+      <label class="language-picker"><span data-i18n="language">Language</span><select id="language-select" aria-label="Language"><option value="en">English</option><option value="pt">Português</option><option value="es">Español</option><option value="fr">Français</option><option value="it">Italiano</option><option value="ro">Română</option></select></label>
       <p class="eyebrow">WebXR · Meta Quest</p>
-      <h1 id="title">Space em realidade aumentada.</h1>
-      <p class="intro">
-        Posicione o modelo no ambiente real com passthrough. A experiência usa
-        detecção de superfície, âncora espacial e rastreamento das mãos.
-      </p>
+      <h1 id="title" data-i18n="title">Space in augmented reality.</h1>
+      <p class="intro" data-i18n="intro">Place your knowledge graph in the real world with passthrough, spatial anchors, and hand tracking.</p>
       <ol class="steps">
-        <li>Olhe para uma superfície até o marcador aparecer.</li>
-        <li>Faça uma pinça ou pressione o gatilho para ancorar.</li>
-        <li>Use duas pinças e afaste ou aproxime as mãos para mudar a escala.</li>
+        <li data-i18n="step1">Look at a surface until the marker appears.</li>
+        <li data-i18n="step2">Pinch or press the trigger to anchor the graph.</li>
+        <li data-i18n="step3">Use two pinches and move your hands apart or together to change the scale.</li>
       </ol>
       <div class="bridge-config">
-        <input id="bridge-url" type="url" placeholder="URL HTTPS da ponte do Obsidian">
-        <input id="bridge-token" type="password" placeholder="Token da ponte">
+        <input id="bridge-url" type="url" placeholder="Obsidian bridge HTTPS URL" data-i18n-placeholder="bridgeUrl">
+        <input id="bridge-token" type="password" placeholder="Bridge token" data-i18n-placeholder="bridgeToken">
         <details>
-          <summary>Cloudflare Access (opcional)</summary>
+          <summary data-i18n="access">Cloudflare Access (optional)</summary>
           <input id="access-client-id" type="text" autocomplete="off" placeholder="Access Client ID">
           <input id="access-client-secret" type="password" autocomplete="off" placeholder="Access Client Secret">
         </details>
         <label class="graph-mode">
           <input id="dynamic-graph" type="checkbox" checked>
-          Gerar o grafo diretamente do vault, sem Blender ou glTF
+          <span data-i18n="dynamic">Build the graph directly from the vault, without Blender or glTF</span>
         </label>
         <label class="graph-budget">
-          <span>Máximo de nós visíveis (800–1200)</span>
+          <span data-i18n="limit">Maximum visible nodes (800–1200)</span>
           <input id="graph-node-limit" type="number" min="800" max="1200" step="50" value="800" inputmode="numeric">
         </label>
         <details class="panorama-options" open>
-          <summary>Fundo panorâmico 360° (opcional)</summary>
+          <summary data-i18n="panorama">360° panoramic background (optional)</summary>
           <input id="background-360" type="file" accept="image/avif,image/webp,image/jpeg,image/png">
-          <small>Sem arquivo: passthrough. Recomendado: imagem equiretangular 4096×2048 em WebP ou AVIF.</small>
+          <small data-i18n="panoramaHint">No file: passthrough. Recommended: 4096×2048 equirectangular WebP or AVIF.</small>
         </details>
-        <button id="save-bridge" type="button">Salvar acesso às notas</button>
+        <button id="save-bridge" type="button" data-i18n="save">Save note access</button>
         <p id="bridge-feedback" class="bridge-feedback" role="status"></p>
       </div>
-      <button id="enter-ar" type="button" disabled>Verificando compatibilidade…</button>
-      <p id="status" class="status" role="status">Carregando Space.gltf…</p>
+      <button id="enter-ar" type="button" disabled data-i18n="checking">Checking compatibility…</button>
+      <p id="status" class="status" role="status" data-i18n="loading">Loading Space.gltf…</p>
       <div id="graph-progress" class="graph-progress" role="progressbar" aria-label="Processamento do grafo" aria-valuemin="0" aria-valuemax="100" hidden>
         <div class="graph-progress-track"><div id="graph-progress-bar" class="graph-progress-bar"></div></div>
         <div class="graph-progress-meta">
           <span id="graph-progress-percent">0%</span>
-          <span id="graph-progress-time">Estimando…</span>
+          <span id="graph-progress-time" data-i18n="estimating">Estimating…</span>
         </div>
       </div>
     </section>
   </main>
 
   <aside id="xr-hud" class="xr-hud" aria-live="polite">
-    <p id="xr-message">Procure uma superfície e faça uma pinça para posicionar.</p>
-    <button id="voice-search" type="button" aria-label="Procurar nota por voz" title="Procurar nota por voz">🎙</button>
-    <button id="keyboard-search" type="button" aria-label="Digitar busca de nota" title="Digitar busca de nota">⌨</button>
-    <button id="replace" type="button">Reposicionar</button>
+    <p id="xr-message" data-i18n="surface">Find a surface and pinch to place the graph.</p>
+
+    <button id="keyboard-search" type="button" aria-label="Search notes" title="Search notes">⌨</button>
+    <button id="replace" type="button" data-i18n="reposition">Reposition</button>
   </aside>
   <form id="xr-search" class="xr-search" role="search">
-    <input id="xr-search-input" type="search" inputmode="search" enterkeyhint="search" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Nome da nota">
-    <button type="submit">Buscar</button>
-    <button id="xr-search-close" type="button" aria-label="Fechar busca">Fechar</button>
+    <input id="xr-search-input" type="search" inputmode="search" enterkeyhint="search" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Note name" data-i18n-placeholder="noteName">
+    <button type="submit" data-i18n="search">Search</button>
+    <button id="xr-search-close" type="button" aria-label="Close search" data-i18n="close">Close</button>
   </form>
   <aside id="note-panel" class="note-panel" aria-live="polite">
     <header class="note-header">
-      <h2 id="note-title">Nota</h2>
-      <button id="close-note" type="button" aria-label="Fechar nota">Fechar</button>
+      <h2 id="note-title" data-i18n="note">Note</h2>
+      <button id="close-note" type="button" aria-label="Close note" data-i18n="close">Close</button>
     </header>
     <article id="note-content" class="note-content"></article>
   </aside>
@@ -714,6 +699,23 @@
     const RECENT_NOTES_STORAGE_KEY = "space-ar-recent-notes";
     const MAX_BACKGROUND_360_WIDTH = 4096;
     const MAX_BACKGROUND_360_HEIGHT = 2048;
+    const LANGUAGE_STORAGE_KEY = "space-ar-language";
+    const UI_TRANSLATIONS = {
+      en:["Language","Space in augmented reality.","Place your knowledge graph in the real world with passthrough, spatial anchors, and hand tracking.","Look at a surface until the marker appears.","Pinch or press the trigger to anchor the graph.","Use two pinches and move your hands apart or together to change the scale.","Obsidian bridge HTTPS URL","Bridge token","Cloudflare Access (optional)","Build the graph directly from the vault, without Blender or glTF","Maximum visible nodes (800–1200)","360° panoramic background (optional)","No file: passthrough. Recommended: 4096×2048 equirectangular WebP or AVIF.","Save note access","Checking compatibility…","Loading Space.gltf…","Estimating…","Find a surface and pinch to place the graph.","Reposition","Note name","Search","Close","Note"],
+      pt:["Idioma","Espaço em realidade aumentada.","Posicione seu grafo no ambiente real com passthrough, âncoras espaciais e rastreamento das mãos.","Olhe para uma superfície até o marcador aparecer.","Faça uma pinça ou pressione o gatilho para ancorar o grafo.","Use duas pinças e afaste ou aproxime as mãos para mudar a escala.","URL HTTPS da ponte do Obsidian","Token da ponte","Cloudflare Access (opcional)","Gerar o grafo diretamente do vault, sem Blender ou glTF","Máximo de nós visíveis (800–1200)","Fundo panorâmico 360° (opcional)","Sem arquivo: passthrough. Recomendado: WebP ou AVIF equiretangular 4096×2048.","Salvar acesso às notas","Verificando compatibilidade…","Carregando Space.gltf…","Estimando…","Procure uma superfície e faça uma pinça para posicionar.","Reposicionar","Nome da nota","Buscar","Fechar","Nota"],
+      es:["Idioma","Espacio en realidad aumentada.","Coloca tu grafo en el mundo real con passthrough, anclajes espaciales y seguimiento de manos.","Mira una superficie hasta que aparezca el marcador.","Haz una pinza o pulsa el gatillo para anclar el grafo.","Usa dos pinzas para cambiar la escala.","URL HTTPS del puente de Obsidian","Token del puente","Cloudflare Access (opcional)","Crear el grafo directamente desde el vault, sin Blender ni glTF","Máximo de nodos visibles (800–1200)","Fondo panorámico 360° (opcional)","Sin archivo: passthrough. Recomendado: WebP o AVIF equirectangular 4096×2048.","Guardar acceso a notas","Comprobando compatibilidad…","Cargando Space.gltf…","Estimando…","Busca una superficie y haz una pinza para colocar el grafo.","Reposicionar","Nombre de la nota","Buscar","Cerrar","Nota"],
+      fr:["Langue","Espace en réalité augmentée.","Placez votre graphe dans le monde réel avec passthrough, ancres spatiales et suivi des mains.","Regardez une surface jusqu’à l’apparition du marqueur.","Pincez ou appuyez sur la gâchette pour ancrer le graphe.","Utilisez deux pincements pour changer l’échelle.","URL HTTPS du pont Obsidian","Jeton du pont","Cloudflare Access (facultatif)","Créer le graphe directement depuis le coffre, sans Blender ni glTF","Nombre maximal de nœuds visibles (800–1200)","Arrière-plan panoramique 360° (facultatif)","Sans fichier : passthrough. WebP ou AVIF équirectangulaire 4096×2048 recommandé.","Enregistrer l’accès aux notes","Vérification de la compatibilité…","Chargement de Space.gltf…","Estimation…","Trouvez une surface et pincez pour placer le graphe.","Repositionner","Nom de la note","Rechercher","Fermer","Note"],
+      it:["Lingua","Spazio in realtà aumentata.","Posiziona il grafo nel mondo reale con passthrough, ancoraggi spaziali e tracciamento delle mani.","Guarda una superficie finché non appare il marcatore.","Esegui una pinza o premi il grilletto per ancorare il grafo.","Usa due pinze per modificare la scala.","URL HTTPS del bridge Obsidian","Token del bridge","Cloudflare Access (opzionale)","Crea il grafo direttamente dal vault, senza Blender o glTF","Massimo di nodi visibili (800–1200)","Sfondo panoramico 360° (opzionale)","Nessun file: passthrough. Consigliato WebP o AVIF equirettangolare 4096×2048.","Salva accesso alle note","Verifica compatibilità…","Caricamento di Space.gltf…","Stima…","Trova una superficie ed esegui una pinza per posizionare il grafo.","Riposiziona","Nome della nota","Cerca","Chiudi","Nota"],
+      ro:["Limbă","Spațiu în realitate augmentată.","Plasează graful în lumea reală cu passthrough, ancore spațiale și urmărirea mâinilor.","Privește o suprafață până apare marcajul.","Fă o ciupire sau apasă trăgaciul pentru a ancora graful.","Folosește două ciupiri pentru a schimba scala.","URL HTTPS pentru puntea Obsidian","Tokenul punții","Cloudflare Access (opțional)","Construiește graful direct din vault, fără Blender sau glTF","Număr maxim de noduri vizibile (800–1200)","Fundal panoramic 360° (opțional)","Fără fișier: passthrough. Recomandat WebP sau AVIF equirectangular 4096×2048.","Salvează accesul la note","Se verifică compatibilitatea…","Se încarcă Space.gltf…","Se estimează…","Găsește o suprafață și ciupește pentru a plasa graful.","Repoziționează","Numele notei","Caută","Închide","Notă"]
+    };
+    const UI_KEYS=["language","title","intro","step1","step2","step3","bridgeUrl","bridgeToken","access","dynamic","limit","panorama","panoramaHint","save","checking","loading","estimating","surface","reposition","noteName","search","close","note"];
+    function applyUiLanguage(code) {
+      code = UI_TRANSLATIONS[code] ? code : "en"; const values=UI_TRANSLATIONS[code]; const messages=Object.fromEntries(UI_KEYS.map((key,index)=>[key,values[index]]));
+      document.documentElement.lang=code; languageSelect.value=code;
+      document.querySelectorAll("[data-i18n]").forEach((el)=>{if(messages[el.dataset.i18n])el.textContent=messages[el.dataset.i18n]});
+      document.querySelectorAll("[data-i18n-placeholder]").forEach((el)=>{el.placeholder=messages[el.dataset.i18nPlaceholder]||el.placeholder});
+      localStorage.setItem(LANGUAGE_STORAGE_KEY,code);
+    }
     const STATIC_ASSET_HEADERS = { "skip_zrok_interstitial": "1" };
 
     const enterButton = document.querySelector("#enter-ar");
@@ -725,7 +727,7 @@
     const graphProgressTime = document.querySelector("#graph-progress-time");
     const xrHud = document.querySelector("#xr-hud");
     const xrMessage = document.querySelector("#xr-message");
-    const voiceSearchButton = document.querySelector("#voice-search");
+    const languageSelect = document.querySelector("#language-select");
     const keyboardSearchButton = document.querySelector("#keyboard-search");
     const xrSearch = document.querySelector("#xr-search");
     const xrSearchInput = document.querySelector("#xr-search-input");
@@ -1233,7 +1235,7 @@
           const { XRInputManager, outlineMaterial, stencilMaterial } = await import(
             "https://esm.sh/@iwsdk/xr-input@0.4.2?external=three"
           );
-          outlineMaterial.uniforms.outlineColor.value.set(0xffffff);
+          outlineMaterial.uniforms.outlineColor.value.set(0x000000);
           stencilMaterial.uniforms.outlineThickness.value = 0.0012 * IW_HAND_OUTLINE_WIDTH;
           iwInputManager = new XRInputManager({ scene, camera });
           scene.add(iwInputManager.xrOrigin);
@@ -1241,7 +1243,7 @@
           iwInputManager.visualAdapters?.hand?.right?.toggleVisual(true);
           for (const adapter of [iwInputManager.visualAdapters?.hand?.left, iwInputManager.visualAdapters?.hand?.right]) {
             if (!adapter) continue;
-            adapter.outlineOptions = { enabled: true, color: { r: 1, g: 1, b: 1, a: 1 }, width: IW_HAND_OUTLINE_WIDTH, renderPass: "*Silhouette*" };
+            adapter.outlineOptions = { enabled: true, color: { r: 0, g: 0, b: 0, a: 1 }, width: IW_HAND_OUTLINE_WIDTH, renderPass: "*Silhouette*" };
           }
           console.info("IWSDK XRInputManager ativo para as mãos virtuais.");
           return;
@@ -3691,18 +3693,8 @@
     let baseModelScale = 1;
     let userScaleFactor = 1;
     let graphIntroPulseStartedAt = null;
-    let voiceRecognition = null;
-    let voiceRecognitionActive = false;
-    let voiceCaptureEnabled = false;
-    let voiceRestartTimer = null;
-    let voiceMediaStream = null;
-    let voiceMediaRecorder = null;
-    let voiceSegmentDeadline = 0;
-    let voiceRecorderAttemptAt = 0;
-    let voiceBridgeBusy = false;
-    let voiceBridgeSupported = false;
-    let voiceHighlightedNode = null;
-    let voiceHighlightUntil = 0;
+    let searchHighlightedNode = null;
+    let searchHighlightUntil = 0;
     const synapsePulseTime = { value: 0 };
     let xrSession = null;
     let referenceSpace = null;
@@ -4213,7 +4205,8 @@
           return;
         }
         closeKeyboardSearch();
-        highlightNoteSearchResult(node.label ?? node.id, { node, score: 2000, exact: true });
+        setXrMessage("Opening " + (node.label ?? node.id) + "…");
+        void requestNote(node.id);
         return;
       }
       if (action === "search-pin") {
@@ -4869,8 +4862,8 @@
         .toLowerCase();
     }
 
-    const VOICE_COMMAND_WORDS = ["procure", "procurar", "busque", "buscar", "encontre", "encontrar", "search", "find"];
-    const VOICE_FILLER_WORDS = new Set(["a", "o", "as", "os", "uma", "um", "de", "da", "do", "das", "dos", "por", "para", "pela", "pelo", "pelas", "pelos", "nota", "note", "arquivo", "file", "chamada", "chamado", "called", "named", "com", "nome"]);
+    const SEARCH_COMMAND_WORDS = ["procure", "procurar", "busque", "buscar", "encontre", "encontrar", "search", "find"];
+    const SEARCH_FILLER_WORDS = new Set(["a", "o", "as", "os", "uma", "um", "de", "da", "do", "das", "dos", "por", "para", "pela", "pelo", "pelas", "pelos", "nota", "note", "arquivo", "file", "chamada", "chamado", "called", "named", "com", "nome"]);
 
     function editDistance(left, right) {
       if (left === right) return 0;
@@ -4887,17 +4880,17 @@
       return previous[right.length];
     }
 
-    function isVoiceCommandWord(word) {
-      return VOICE_COMMAND_WORDS.some((command) => editDistance(word, command) <= (Math.max(command.length, word.length) >= 7 ? 2 : 1));
+    function isSearchCommandWord(word) {
+      return SEARCH_COMMAND_WORDS.some((command) => editDistance(word, command) <= (Math.max(command.length, word.length) >= 7 ? 2 : 1));
     }
 
-    function voiceQueryCandidates(spokenText) {
+    function noteQueryCandidates(spokenText) {
       const words = normalizeNoteSearchText(spokenText).split(/\s+/).filter(Boolean);
       let start = 0;
-      if (words.length && isVoiceCommandWord(words[0])) start = 1;
-      while (start < words.length && VOICE_FILLER_WORDS.has(words[start])) start += 1;
+      if (words.length && isSearchCommandWord(words[0])) start = 1;
+      while (start < words.length && SEARCH_FILLER_WORDS.has(words[start])) start += 1;
       const spokenTitle = words.slice(start).join(" ");
-      const meaningful = words.slice(start).filter((word) => !VOICE_FILLER_WORDS.has(word));
+      const meaningful = words.slice(start).filter((word) => !SEARCH_FILLER_WORDS.has(word));
       const candidates = new Set();
       if (spokenTitle) candidates.add(spokenTitle);
       for (let size = 1; size <= Math.min(4, meaningful.length); size += 1) {
@@ -4932,7 +4925,7 @@
     function findNoteMatches(spokenText, limit = 5) {
       const sourceData = graphHierarchy?.fullData ?? graphData;
       if (!sourceData?.nodes?.length) return [];
-      const candidates = voiceQueryCandidates(spokenText);
+      const candidates = noteQueryCandidates(spokenText);
       if (!candidates.length) return [];
       const primaryQuery = candidates[0];
       const ranked = [];
@@ -4983,11 +4976,6 @@
       return suggestions.length ? suggestions.join(" · ") : "";
     }
 
-    function isVoiceSearchCommand(spokenText) {
-      const words = normalizeNoteSearchText(spokenText).split(/\s+/).filter(Boolean);
-      return Boolean(words.length && (isVoiceCommandWord(words[0]) || words.includes("nota") || words.includes("note")));
-    }
-
     function searchResultGraphData(targetId) {
       const fullData = graphHierarchy?.fullData ?? graphData;
       const nodesById = new Map(fullData.nodes.map((node) => [node.id, node]));
@@ -5035,238 +5023,9 @@
           target = graphData.nodes.find((node) => node.id === match.node.id) ?? null;
         }
       }
-      voiceHighlightedNode = target ?? match.node;
-      voiceHighlightUntil = performance.now() + 10_000;
+      searchHighlightedNode = target ?? match.node;
+      searchHighlightUntil = performance.now() + 10_000;
       setXrMessage(`Nota encontrada: ${match.node.label ?? match.node.id}. O nó piscará por 10 segundos.`);
-    }
-
-    function voiceBridgeConfig() {
-      return JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
-    }
-
-    function handleVoiceTranscript(transcript) {
-      const text = String(transcript ?? "").trim();
-      if (!text) {
-        setXrMessage("Nenhuma fala detectada. Tente novamente mais perto do microfone.");
-      } else if (isVoiceSearchCommand(text)) {
-        highlightNoteSearchResult(text);
-      } else {
-        setXrMessage(`Ouvi “${text}”. Comece com “Procure”, “Busque” ou “Search”.`);
-      }
-    }
-
-    function stopBridgeVoiceCapture(stopStream = false) {
-      voiceSegmentDeadline = 0;
-      const recorder = voiceMediaRecorder;
-      if (recorder?.state === "recording") {
-        try { recorder.stop(); } catch {}
-      } else {
-        voiceMediaRecorder = null;
-      }
-      if (stopStream && voiceMediaStream) {
-        for (const track of voiceMediaStream.getTracks()) track.stop();
-        voiceMediaStream = null;
-      }
-    }
-
-    async function transcribeVoiceBlob(blob) {
-      const config = voiceBridgeConfig();
-      if (!config?.url || !blob?.size) return;
-      voiceBridgeBusy = true;
-      setXrMessage("Transcrevendo comando de voz no computador…");
-      try {
-        const response = await fetch(`${config.url}/transcribe`, {
-          method: "POST",
-          headers: { ...bridgeRequestHeaders(config), "Content-Type": blob.type || "audio/webm" },
-          body: blob
-        });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(result.error ?? `Transcrição HTTP ${response.status}`);
-        handleVoiceTranscript(result.text);
-      } catch (error) {
-        console.warn("Transcrição local indisponível.", error);
-        setXrMessage(`Não foi possível transcrever: ${describeError(error)}`);
-      } finally {
-        voiceBridgeBusy = false;
-      }
-    }
-
-    function beginBridgeVoiceSegment() {
-      if (!voiceCaptureEnabled || !xrSession || !voiceMediaStream || voiceBridgeBusy ||
-          voiceMediaRecorder?.state === "recording") return false;
-      voiceRecorderAttemptAt = performance.now();
-      const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
-      const mimeType = candidates.find((type) => MediaRecorder.isTypeSupported?.(type)) ?? "";
-      const chunks = [];
-      let recorder;
-      try {
-        recorder = new MediaRecorder(voiceMediaStream, mimeType ? { mimeType } : undefined);
-        voiceMediaRecorder = recorder;
-        recorder.addEventListener("dataavailable", (event) => {
-          if (event.data?.size) chunks.push(event.data);
-        });
-        recorder.addEventListener("error", (event) => {
-          console.warn("MediaRecorder falhou no Quest.", event.error ?? event);
-          setXrMessage(`Falha na captura do microfone: ${describeError(event.error ?? event)}`);
-        });
-        recorder.addEventListener("stop", async () => {
-          if (voiceMediaRecorder === recorder) voiceMediaRecorder = null;
-          voiceSegmentDeadline = 0;
-          if (chunks.length) {
-            await transcribeVoiceBlob(new Blob(chunks, {
-              type: recorder.mimeType || mimeType || "audio/webm"
-            }));
-          } else if (voiceCaptureEnabled && xrSession) {
-            setXrMessage("O microfone não retornou áudio; tentando novamente…");
-          }
-        }, { once: true });
-        recorder.start();
-      } catch (error) {
-        if (voiceMediaRecorder === recorder) voiceMediaRecorder = null;
-        voiceSegmentDeadline = 0;
-        console.warn("Não foi possível iniciar o MediaRecorder.", error);
-        setXrMessage(`Captura de voz indisponível: ${describeError(error)}`);
-        return false;
-      }
-      voiceSegmentDeadline = performance.now() + 5_000;
-      voiceSearchButton.textContent = "●";
-      voiceSearchButton.setAttribute("aria-label", "Ouvindo comando de voz");
-      return true;
-    }
-
-    function updateBridgeVoiceCapture(time) {
-      if (!voiceCaptureEnabled || !xrSession || !voiceBridgeSupported) return;
-      if (voiceMediaRecorder?.state === "recording") {
-        if (voiceSegmentDeadline > 0 && time >= voiceSegmentDeadline) {
-          try {
-            voiceMediaRecorder.requestData?.();
-            voiceMediaRecorder.stop();
-          } catch (error) {
-            console.warn("Não foi possível finalizar o segmento de voz.", error);
-            voiceMediaRecorder = null;
-            voiceSegmentDeadline = 0;
-          }
-        }
-        return;
-      }
-      if (!voiceBridgeBusy && time - voiceRecorderAttemptAt >= 500) {
-        beginBridgeVoiceSegment();
-      }
-    }
-
-    function startVoiceNoteSearch() {
-      const SpeechRecognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
-      if (voiceRecognitionActive || voiceMediaRecorder?.state === "recording") {
-        voiceCaptureEnabled = false;
-        if (voiceRecognitionActive) voiceRecognition?.stop();
-        stopBridgeVoiceCapture(false);
-        voiceSearchButton.textContent = "🎙";
-        setXrMessage("Microfone pausado. Selecione o ícone para reativar.");
-        return;
-      }
-      voiceCaptureEnabled = true;
-      if (!SpeechRecognition) {
-        if (!voiceBridgeSupported || !voiceMediaStream) {
-          setXrMessage("Transcrição local não configurada na ponte.");
-          return;
-        }
-        setXrMessage("Diga: “Procure a nota do Carl Sagan”.");
-        beginBridgeVoiceSegment();
-        return;
-      }
-      if (!voiceRecognition) {
-        voiceRecognition = new SpeechRecognition();
-        voiceRecognition.lang = navigator.language || "pt-BR";
-        voiceRecognition.interimResults = false;
-        voiceRecognition.continuous = false;
-        voiceRecognition.maxAlternatives = 3;
-        voiceRecognition.addEventListener("result", (event) => {
-          const alternatives = Array.from(event.results[event.results.length - 1] ?? []);
-          const best = alternatives
-            .map((item) => ({ transcript: item.transcript, match: findBestNoteMatch(item.transcript) }))
-            .sort((left, right) => (right.match?.score ?? 0) - (left.match?.score ?? 0))[0];
-          handleVoiceTranscript(best?.transcript);
-        });
-        voiceRecognition.addEventListener("error", (event) => {
-          setXrMessage(event.error === "not-allowed"
-            ? "Permissão do microfone negada. Autorize-a nas permissões do site."
-            : `Busca por voz indisponível: ${event.error}.`);
-        });
-        voiceRecognition.addEventListener("end", () => {
-          voiceRecognitionActive = false;
-          voiceSearchButton.textContent = "🎙";
-          voiceSearchButton.setAttribute("aria-label", "Procurar nota por voz");
-          if (voiceCaptureEnabled && xrSession) {
-            clearTimeout(voiceRestartTimer);
-            voiceRestartTimer = setTimeout(() => {
-              if (voiceCaptureEnabled && xrSession && !voiceRecognitionActive) beginVoiceRecognition();
-            }, 650);
-          }
-        });
-      }
-      beginVoiceRecognition();
-    }
-
-    function beginVoiceRecognition() {
-      if (!voiceRecognition || voiceRecognitionActive) return;
-      voiceRecognitionActive = true;
-      voiceSearchButton.textContent = "●";
-      voiceSearchButton.setAttribute("aria-label", "Ouvindo comando de voz");
-      setXrMessage("Diga: “Procure a nota do Carl Sagan”.");
-      try {
-        voiceRecognition.start();
-      } catch {
-        voiceRecognitionActive = false;
-        voiceSearchButton.textContent = "🎙";
-        voiceSearchButton.setAttribute("aria-label", "Procurar nota por voz");
-      }
-    }
-
-    async function requestVoicePermissionBeforeAr() {
-      const SpeechRecognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
-      if (!navigator.mediaDevices?.getUserMedia) {
-        voiceCaptureEnabled = false;
-        voiceSearchButton.disabled = true;
-        return false;
-      }
-      voiceBridgeSupported = false;
-      if (!SpeechRecognition) {
-        try {
-          const config = voiceBridgeConfig();
-          if (config?.url) bridgeCapabilityCache.delete(config.url);
-          const capabilities = config?.url ? await ensureVideoBridge(config) : null;
-          voiceBridgeSupported = Boolean(
-            window.MediaRecorder && capabilities?.capabilities?.includes("voice-transcribe")
-          );
-        } catch (error) {
-          console.warn("Não foi possível consultar a transcrição da ponte.", error);
-        }
-      }
-      if (!SpeechRecognition && !voiceBridgeSupported) {
-        voiceCaptureEnabled = false;
-        voiceSearchButton.disabled = true;
-        return false;
-      }
-      setStatus("Autorize o microfone para procurar notas durante a sessão AR…");
-      try {
-        voiceMediaStream = await navigator.mediaDevices.getUserMedia({
-          audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-          video: false
-        });
-        if (SpeechRecognition) {
-          for (const track of voiceMediaStream.getTracks()) track.stop();
-          voiceMediaStream = null;
-        }
-        voiceCaptureEnabled = true;
-        voiceSearchButton.disabled = false;
-        return true;
-      } catch (error) {
-        voiceCaptureEnabled = false;
-        voiceSearchButton.disabled = true;
-        console.warn("Permissão do microfone não concedida.", error);
-        setStatus("Microfone não autorizado; a sessão continuará sem busca por voz.");
-        return false;
-      }
     }
 
     function expandedClusterData(hub) {
@@ -5746,7 +5505,7 @@
       cancelNoteCapture();
       enterButton.disabled = true;
       try {
-        const voiceAllowed = await requestVoicePermissionBeforeAr();
+
         xrSession = await navigator.xr.requestSession("immersive-ar", {
           requiredFeatures: ["hit-test"],
           optionalFeatures: ["anchors", "hand-tracking", "local-floor", "dom-overlay"],
@@ -5776,7 +5535,7 @@
         xrSession.addEventListener("end", endSession, { once: true });
         document.body.classList.add("session-active");
         xrHud.classList.add("visible");
-        if (voiceAllowed) startVoiceNoteSearch();
+
         setXrMessage(
           environment360Ready
             ? "Fundo 360° carregado. Procure uma superfície para posicionar o grafo."
@@ -6758,16 +6517,16 @@
         }
       }
       if (!highlightMesh) return;
-      if (voiceHighlightedNode && time >= voiceHighlightUntil) voiceHighlightedNode = null;
-      const highlightedNode = selectedNode ?? voiceHighlightedNode;
+      if (searchHighlightedNode && time >= searchHighlightUntil) searchHighlightedNode = null;
+      const highlightedNode = selectedNode ?? searchHighlightedNode;
       highlightMesh.visible = Boolean(highlightedNode);
       if (highlightedNode) {
         setNodeLocalPosition(highlightMesh.position, highlightedNode);
         highlightMesh.material.color.set(highlightedNode.color ?? "#8db4ff");
-        const voicePulse = highlightedNode === voiceHighlightedNode
+        const searchPulse = highlightedNode === searchHighlightedNode
           ? 1.55 + Math.sin(time * 0.014) * 0.55
           : 1.18 + Math.sin(time * 0.008) * 0.12;
-        highlightMesh.scale.setScalar(voicePulse * (dynamicGraphActive ? 16 : 1));
+        highlightMesh.scale.setScalar(searchPulse * (dynamicGraphActive ? 16 : 1));
         if (selectedNode && gestureMode === "idle") {
           setXrMessage(
             highlightedNode.isClusterBack || graphHierarchy?.expandedHubId === highlightedNode.id
@@ -6913,7 +6672,7 @@
         updateSpatialNoteAudio();
         updateVideoPresentation(time);
         updateAudioWaveformProgress();
-        updateBridgeVoiceCapture(time);
+
         const graphIntroPulseActive = updateGraphIntroPulse(time);
         if (!graphIntroPulseActive) {
           updateNoteMicroGestures(frame, time);
@@ -6951,12 +6710,7 @@
     }
 
     function endSession() {
-      voiceCaptureEnabled = false;
-      clearTimeout(voiceRestartTimer);
-      if (voiceRecognitionActive) voiceRecognition?.stop();
-      stopBridgeVoiceCapture(true);
-      voiceBridgeBusy = false;
-      voiceHighlightedNode = null;
+      searchHighlightedNode = null;
       hitTestSource?.cancel();
       hitTestSource = null;
       disposeAnchor();
@@ -6992,8 +6746,10 @@
       renderer.setSize(innerWidth, innerHeight);
     }
 
+    applyUiLanguage(localStorage.getItem(LANGUAGE_STORAGE_KEY) || "en");
+    languageSelect.addEventListener("change", () => applyUiLanguage(languageSelect.value));
     enterButton.addEventListener("click", startSession);
-    voiceSearchButton.addEventListener("click", startVoiceNoteSearch);
+
     keyboardSearchButton.addEventListener("click", openKeyboardSearch);
     xrSearch.addEventListener("submit", submitKeyboardSearch);
     xrSearchCloseButton.addEventListener("click", closeKeyboardSearch);

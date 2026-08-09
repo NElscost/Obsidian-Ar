@@ -147,22 +147,6 @@ if (
   throw "vaultPath inválido em note-bridge.config.json. Execute .\Scripts\Configurar-NoteBridge.bat."
 }
 $vaultPath = [IO.Path]::GetFullPath($vaultPath)
-$whisperModelPath = ([string]$bridgeConfig.whisperModelPath).Trim()
-if ([string]::IsNullOrWhiteSpace($whisperModelPath)) {
-  $defaultWhisperModel = Join-Path $workspace ".models\ggml-base-q5_1.bin"
-  if (Test-Path -LiteralPath $defaultWhisperModel -PathType Leaf) {
-    $whisperModelPath = $defaultWhisperModel
-  }
-}
-if (-not [string]::IsNullOrWhiteSpace($whisperModelPath)) {
-  if (-not [IO.Path]::IsPathRooted($whisperModelPath)) {
-    $whisperModelPath = Join-Path $workspace $whisperModelPath
-  }
-  $whisperModelPath = [IO.Path]::GetFullPath($whisperModelPath)
-  if (-not (Test-Path -LiteralPath $whisperModelPath -PathType Leaf)) {
-    throw "whisperModelPath não encontrado: $whisperModelPath"
-  }
-}
 $tunnelMode = ([string]$bridgeConfig.tunnelMode).Trim().ToLowerInvariant()
 if ([string]::IsNullOrWhiteSpace($tunnelMode)) { $tunnelMode = "quick" }
 if ($tunnelMode -notin @("quick", "named")) {
@@ -255,10 +239,6 @@ $serverEnvironment = @{
   SPACE_NOTE_TOKEN = $token
   SPACE_VAULT_PATH = $vaultPath
   SPACE_PENDING_OPTIMIZATION_PATH = $pendingOptimizationPath
-  SPACE_WHISPER_LANGUAGE = if ([string]::IsNullOrWhiteSpace([string]$bridgeConfig.whisperLanguage)) { "pt" } else { ([string]$bridgeConfig.whisperLanguage).Trim() }
-}
-if (-not [string]::IsNullOrWhiteSpace($whisperModelPath)) {
-  $serverEnvironment.SPACE_WHISPER_MODEL = $whisperModelPath
 }
 if (Test-Path -LiteralPath $graphPath) {
   $serverEnvironment.SPACE_GRAPH_PATH = $graphPath

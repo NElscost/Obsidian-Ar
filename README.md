@@ -10,7 +10,7 @@ local Rust bridge, creates an HTTPS tunnel, and displays a QR code for pairing.
 - passthrough or an optional equirectangular 360° panorama;
 - WebXR hit testing and anchors;
 - hand gestures for placement, scale, rotation, selection, and pagination;
-- fuzzy voice search that highlights a matching note in the 3D graph;
+- fuzzy keyboard search with selectable 3D suggestions;
 - Markdown, tables, LaTeX, code, images, audio, and video in a 3D note window;
 - spatial HRTF audio, audio/video waveform seeking, and media bookmarks;
 - cached note rendering and preprocessing to reduce frame drops;
@@ -163,39 +163,9 @@ a position, keep the pinch held while moving to scrub, and release to store a
 bookmark. The preprocessing queue prioritizes notes containing video, fenced
 code blocks, and LaTeX so their first open is less likely to interrupt XR.
 
-During AR, select **Voice** in the lower overlay and say a command such as
-“Find the Carl Sagan note” or “Procure a nota do Carl Sagan”. The viewer removes
-accents and filler words, expands a grouped hub when needed, and pulses the best
-matching node for ten seconds.
+The viewer starts in English and includes a language selector for Portuguese, Spanish, French, Italian, and Romanian.
 
-Quest Browser does not currently expose `SpeechRecognition` consistently, so
-the viewer has a local Rust fallback. It records 4.5-second Opus segments at
-32 kbps, sends them through the authenticated tunnel, and the bridge converts
-them to mono 16 kHz PCM with FFmpeg. `whisper-rs`/whisper.cpp then transcribes
-the segment on the computer using two CPU threads; the model is loaded once and
-requests are serialized, so neither inference nor model memory is placed on the
-Quest's rendering thread.
-
-Download the multilingual quantized base model (~57 MiB) once after cloning:
-
-```powershell
-New-Item -ItemType Directory -Force .models
-Invoke-WebRequest https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin -OutFile .models/ggml-base-q5_1.bin
-```
-
-On macOS or Linux:
-
-```sh
-mkdir -p .models
-curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin -o .models/ggml-base-q5_1.bin
-```
-
-The default path is `.models/ggml-base-q5_1.bin`. To use another model or language,
-set `whisperModelPath` and `whisperLanguage` (for example `pt`, `en`, or
-`auto`) in `note-bridge.config.json`. The model directory is ignored by Git.
-While listening, the bridge console reports every received audio segment, the
-transcribed text and processing time; silent segments are discarded before
-Whisper inference to avoid unnecessary CPU use.
+During AR, use the keyboard search to find notes by title. Selecting a suggested result with a pinch opens the note through the same cached bridge path used by the main graph.
 
 The local note graph is deliberately bounded to 27 neighbors. It uses one
 instanced node mesh, one line geometry, and one text atlas, without starting a

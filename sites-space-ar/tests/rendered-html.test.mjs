@@ -229,38 +229,16 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /space-ar-note-cache-v4/);
 });
 
-test("procura notas por voz e pulsa o resultado no grafo", async () => {
+test("remove a captura de voz e preserva a busca local", async () => {
   const html = await readFile(xrUrl, "utf8");
-  assert.match(html, /id="voice-search"/);
-  assert.match(html, /#voice-search/);
-  assert.match(html, />🎙<\/button>/);
-  assert.match(html, /window\.SpeechRecognition \?\? window\.webkitSpeechRecognition/);
-  assert.match(html, /async function requestVoicePermissionBeforeAr/);
-  assert.match(html, /navigator\.mediaDevices\.getUserMedia/);
-  assert.match(html, /new MediaRecorder/);
-  assert.match(html, /recorder\.start\(\)/);
-  assert.match(html, /function updateBridgeVoiceCapture/);
-  assert.match(html, /updateBridgeVoiceCapture\(time\)/);
-  assert.match(html, /bridgeCapabilityCache\.delete\(config\.url\)/);
-  assert.match(html, /\/transcribe/);
-  assert.match(html, /voice-transcribe/);
-  assert.match(html, /if \(voiceAllowed\) startVoiceNoteSearch\(\)/);
-  assert.match(html, /function isVoiceSearchCommand/);
+  assert.doesNotMatch(html, /id="voice-search"/);
+  assert.doesNotMatch(html, /SpeechRecognition|MediaRecorder|\/transcribe|voice-transcribe/);
   assert.match(html, /function findBestNoteMatch/);
-  assert.match(html, /function highlightNoteSearchResult/);
-  assert.match(html, /const spokenTitle = words\.slice\(start\)\.join/);
   assert.match(html, /function findNoteMatches/);
-  assert.match(html, /options\.typed === true && best\.score >= 600/);
-  assert.match(html, /noteSearchSuggestionText/);
   assert.match(html, /id="xr-search-input"/);
   assert.match(html, /function registerDoubleThumbTap/);
-  assert.match(html, /tapThumb:\s*4/);
-  assert.match(html, /time - \(state\.lastThumbTapAt \?\? 0\) <= 650/);
-  assert.match(html, /ownerById/);
-  assert.match(html, /voiceHighlightUntil = performance\.now\(\) \+ 10_000/);
-  assert.match(html, /Nota encontrada:/);
+  assert.match(html, /searchHighlightUntil = performance\.now\(\) \+ 10_000/);
 });
-
 test("mostra uma cópia 3D local ao lado da nota sem nova simulação", async () => {
   const html = await readFile(xrUrl, "utf8");
   assert.match(html, /function createLocalNoteGraph/);
@@ -441,7 +419,7 @@ test("mantém a busca digitada dentro da sessão WebXR", async () => {
   assert.ok(html.includes('renderPass: "*Silhouette*"'));
   assert.match(html, /function updateArSearchSuggestions/);
   assert.ok(html.includes('"search-result:" + encodeURIComponent'));
-  assert.ok(html.includes("highlightNoteSearchResult(node.label ?? node.id"));
+  assert.ok(html.includes("void requestNote(node.id)"));
   assert.ok(html.includes("noteWindowPinned ? 0.62 : 0.78"));
   assert.ok(html.includes("line.renderOrder = 2005"));
   assert.match(html, /arNoteControls\.push\(key\)/);
