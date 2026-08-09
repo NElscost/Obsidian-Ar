@@ -200,7 +200,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /new XRMediaBinding\(xrSession\)/);
   assert.match(html, /function updateVideoPresentation/);
   assert.match(html, /AR_VIDEO_CENTER_X = -\(/);
-  assert.match(html, /new THREE\.PlaneGeometry\(AR_VIDEO_WIDTH, AR_VIDEO_HEIGHT\)/);
+  assert.match(html, /new THREE\.ShaderMaterial/);
   assert.match(html, /async function recoverVideoWithBlob/);
   assert.match(html, /Streaming indisponível neste Quest/);
   assert.match(html, /createMediaElementSource/);
@@ -445,6 +445,17 @@ test("renderiza callouts do Obsidian e mostra a contagem de palavras", async () 
   assert.match(html, /name:"obsidianCallout"/);
   assert.match(html, /class="obsidian-callout callout-/);
   assert.match(html, /CALLOUT_ALIASES/);
-  assert.match(html, /arNoteWordCount/);
+  assert.match(html, /let arNoteWordCount = 0/);
   assert.match(html, /wordsLabel/);
+});
+
+test("oferece ambilight e YouTube no overlay WebXR", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /function youtubeVideoId/);
+  assert.match(html, /function youtubeCardHtml/);
+  assert.match(html, /function openYouTubeOverlay/);
+  assert.match(html, /youtube-nocookie\.com\/embed/);
+  assert.match(html, /frame-src https:\/\/www\.youtube\.com https:\/\/www\.youtube-nocookie\.com/);
+  assert.match(html, /THREE\.AdditiveBlending/);
+  assert.match(html, /uniforms: \{ videoMap:/);
 });

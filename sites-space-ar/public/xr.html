@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#070b12">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://esm.sh; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' blob: https:; img-src 'self' data: blob: https:; font-src 'self' data: https://cdn.jsdelivr.net; media-src 'self' blob: https:; worker-src 'self' blob:; manifest-src 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://esm.sh; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' blob: https:; img-src 'self' data: blob: https:; font-src 'self' data: https://cdn.jsdelivr.net; media-src 'self' blob: https:; frame-src https://www.youtube.com https://www.youtube-nocookie.com; worker-src 'self' blob:; manifest-src 'self'">
   <script>
     (() => {
       try {
@@ -582,6 +582,11 @@
 
     .session-active .panel { display: none; }
 
+    .youtube-overlay { position:fixed; z-index:12; left:max(14px,env(safe-area-inset-left)); top:50%; display:none; width:min(44vw,640px); min-width:320px; aspect-ratio:16/9; overflow:hidden; border:1px solid rgba(141,180,255,.42); border-radius:18px; background:#03060b; box-shadow:0 0 44px rgba(82,139,255,.34); transform:translateY(-50%); pointer-events:auto; }
+    .youtube-overlay.visible { display:block; }
+    .youtube-overlay iframe { width:100%; height:100%; border:0; }
+    .youtube-overlay button { position:absolute; z-index:2; top:8px; right:8px; width:38px; min-height:38px; padding:0; border-radius:50%; background:rgba(8,13,22,.82); color:#fff; }
+
     @media (max-height: 700px) {
       .shell { padding: 10px; }
       .panel { padding: 16px; border-radius: 20px; }
@@ -673,6 +678,10 @@
       <button id="close-note" type="button" aria-label="Close note" data-i18n="close">Close</button>
     </header>
     <article id="note-content" class="note-content"></article>
+  </aside>
+  <aside id="youtube-overlay" class="youtube-overlay" aria-label="YouTube video">
+    <button id="youtube-overlay-close" type="button" aria-label="Close YouTube video">×</button>
+    <iframe id="youtube-player" title="YouTube video" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
   </aside>
 
   <script type="module">
@@ -768,6 +777,9 @@
     const noteTitle = document.querySelector("#note-title");
     const noteContent = document.querySelector("#note-content");
     const closeNoteButton = document.querySelector("#close-note");
+    const youtubeOverlay = document.querySelector("#youtube-overlay");
+    const youtubePlayer = document.querySelector("#youtube-player");
+    const youtubeOverlayClose = document.querySelector("#youtube-overlay-close");
     let renderedNodeLimit = DEFAULT_RENDERED_NODES;
     let rustMathPromise = null;
     let katexFallbackPromise = null;
@@ -983,6 +995,24 @@
       }">▶ Vídeo: ${escapeNoteHtml(title)}</div>`;
     }
 
+    function youtubeVideoId(value) {
+      try {
+        const url = new URL(String(value ?? "").trim());
+        if (url.hostname === "youtu.be") return url.pathname.split("/").filter(Boolean)[0] ?? "";
+        if (url.hostname.endsWith("youtube.com")) {
+          if (url.pathname === "/watch") return url.searchParams.get("v") ?? "";
+          const parts = url.pathname.split("/").filter(Boolean);
+          if (["embed", "shorts", "live"].includes(parts[0])) return parts[1] ?? "";
+        }
+      } catch {}
+      return "";
+    }
+
+    function youtubeCardHtml(source, label = "") {
+      if (!youtubeVideoId(source)) return escapeNoteHtml(label || source);
+      return `<div class="note-video-card note-youtube-card" data-note-video-source="${encodeURIComponent(source)}">▶ YouTube: ${escapeNoteHtml(label || source)}</div>`;
+    }
+
     async function renderNoteMarkdown(source) {
       const math = [];
       const stashMath = (latex, displayMode) => {
@@ -1014,6 +1044,10 @@
         .replace(
           /!\[\[([^\]|#]+\.(?:m4v|mov|mp4|ogv|webm))(?:\|([^\]]+))?\]\]/gi,
           (_, target, label) => videoCardHtml(target, label)
+        )
+        .replace(
+          /!?\[([^\]]*)\]\((https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/[^)]+)\)/gi,
+          (_, label, target) => youtubeCardHtml(target, label)
         )
         .replace(
           /!\[([^\]]*)\]\(([^)]+\.(?:m4v|mov|mp4|ogv|webm))\)/gi,
@@ -1090,6 +1124,15 @@
         }
       }
       for (const link of noteContent.querySelectorAll("a")) {
+        const href = link.getAttribute("href")?.trim() ?? "";
+        if (youtubeVideoId(href)) {
+          const card = document.createElement("div");
+          card.className = "note-video-card note-youtube-card";
+          card.dataset.noteVideoSource = encodeURIComponent(href);
+          card.textContent = "YouTube: " + (link.textContent?.trim() || href);
+          link.replaceWith(card);
+          continue;
+        }
         link.target = "_blank";
         link.rel = "noopener noreferrer";
       }
@@ -1378,6 +1421,7 @@
     let arNotePage = 0;
     let arNoteTitle = "";
     let arNotePath = "";
+    let arNoteWordCount = 0;
     let arSearchKeyboardActive = false;
     let arSearchQuery = "";
     let arSearchDisplay = null;
@@ -1479,6 +1523,8 @@
       arNotePages = [];
       arNotePage = 0;
       arNotePath = "";
+      arNoteWordCount = 0;
+      closeYouTubeOverlay();
       arSearchKeyboardActive = false;
       arSearchQuery = "";
       arSearchDisplay = null;
@@ -2064,13 +2110,16 @@
     function extractNoteVideoTracks(source) {
       const tracks = [];
       const seen = new Set();
-      const add = (value, label = "") => {
+      const add = (value, label = "", kind = "video") => {
         const path = String(value ?? "").trim();
         if (!path || seen.has(path)) return;
         seen.add(path);
-        tracks.push({ source: path, label: String(label || path), kind: "video" });
+        tracks.push({ source: path, label: String(label || path), kind });
       };
       const markdown = String(source ?? "");
+      for (const match of markdown.matchAll(
+        /https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/[^\s)\]>]+/gi
+      )) add(match[0], "YouTube", "youtube");
       for (const match of markdown.matchAll(
         /!\[\[([^\]|#]+\.(?:m4v|mov|mp4|ogv|webm))(?:\|([^\]]+))?\]\]/gi
       )) add(match[1], match[2]);
@@ -3210,12 +3259,15 @@
       activeNoteVideoGroup.name = "note-video-window";
       activeNoteVideoGroup.position.set(AR_VIDEO_CENTER_X, 0, 0.006);
       const videoBackdrop = new THREE.Mesh(
-        new THREE.PlaneGeometry(AR_VIDEO_WIDTH, AR_VIDEO_HEIGHT),
-        new THREE.MeshBasicMaterial({
-          color: 0x03060b,
+        new THREE.PlaneGeometry(AR_VIDEO_WIDTH + 0.075, AR_VIDEO_HEIGHT + 0.075),
+        new THREE.ShaderMaterial({
+          uniforms: { videoMap: { value: activeNoteVideoTexture } },
+          vertexShader: "varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }",
+          fragmentShader: "uniform sampler2D videoMap; varying vec2 vUv; void main(){ vec2 d=vec2(0.055); vec3 c=texture2D(videoMap,vUv).rgb; c+=texture2D(videoMap,vUv+vec2(d.x,0.0)).rgb; c+=texture2D(videoMap,vUv-vec2(d.x,0.0)).rgb; c+=texture2D(videoMap,vUv+vec2(0.0,d.y)).rgb; c+=texture2D(videoMap,vUv-vec2(0.0,d.y)).rgb; c*=0.25; float l=max(c.r,max(c.g,c.b)); gl_FragColor=vec4(c*(1.15+0.4*l),0.30); }",
           transparent: true,
-          opacity: 0.14,
+          blending: THREE.AdditiveBlending,
           depthTest: false,
+          depthWrite: false,
           toneMapped: false
         })
       );
@@ -3360,6 +3412,24 @@
       }
     }
 
+    function closeYouTubeOverlay() {
+      if (!youtubeOverlay || !youtubePlayer) return;
+      youtubeOverlay.classList.remove("visible");
+      youtubePlayer.removeAttribute("src");
+    }
+
+    function openYouTubeOverlay(track) {
+      const id = youtubeVideoId(track?.source);
+      if (!id || !youtubeOverlay || !youtubePlayer) {
+        setXrMessage("Link do YouTube inválido.");
+        return;
+      }
+      youtubePlayer.src = "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(id)
+        + "?autoplay=1&playsinline=1&enablejsapi=1&origin=" + encodeURIComponent(location.origin);
+      youtubeOverlay.classList.add("visible");
+      setXrMessage("YouTube aberto no painel do navegador.");
+    }
+
     function clearActiveNoteMediaForSwitch() {
       if (activeNoteAudio) {
         activeNoteAudio.pause();
@@ -3445,6 +3515,11 @@
       } else {
         activeNoteTrack = track;
       }
+      if (track.kind === "youtube") {
+        openYouTubeOverlay(track);
+        return;
+      }
+      closeYouTubeOverlay();
       const isVideo = track.kind === "video";
       try {
         if (isVideo && preparedNoteVideo?.track?.source !== track.source) {
@@ -3836,8 +3911,9 @@
         const timelineTrack = noteVideoTracks[0] ?? noteAudioTracks[0];
         activeNoteTrack = timelineTrack ?? null;
         if (timelineTrack) void prepareAudioWaveform(timelineTrack, path, width, height);
-        if (noteVideoTracks.length) {
-          beginNoteVideoPreparation(noteVideoTracks[0], path);
+        const firstLocalVideo = noteVideoTracks.find((track) => track.kind === "video");
+        if (firstLocalVideo) {
+          beginNoteVideoPreparation(firstLocalVideo, path);
         }
       }
       drawArNotePage();
@@ -6989,6 +7065,7 @@
       setTimeout(() => location.reload(), 450);
     });
     closeNoteButton.addEventListener("click", closeNote);
+    youtubeOverlayClose.addEventListener("click", closeYouTubeOverlay);
     replaceButton.addEventListener("click", resetPlacement);
     addEventListener("resize", resize, { passive: true });
     renderer.setAnimationLoop(render);
