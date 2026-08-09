@@ -168,7 +168,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /redirect: "follow"/);
   assert.match(html, /URL\.createObjectURL\(blob\)/);
   assert.match(html, /function calculateNotePageRanges/);
-  assert.match(html, /querySelectorAll\("img, table, \.note-video-card"\)/);
+  assert.match(html, /\.note-audio-card, \.obsidian-callout/);
   assert.match(html, /element\.querySelectorAll\("tr"\)/);
   assert.match(html, /NOTE_PAGE_HEIGHT\s*=\s*570/);
   assert.match(html, /function extractNoteAudioTracks/);
@@ -187,7 +187,11 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /if \(isVideo && !preparedNoteVideo\)/);
   assert.match(html, /if \(isVideo && !activeNoteVideoSurface\) createArVideoSurface/);
   assert.match(html, /MP4 com H\.264 \+ AAC/);
-  assert.match(html, /async function toggleNoteAudio/);
+  assert.match(html, /async function toggleNoteAudio\(requestedTrack = null\)/);
+  assert.match(html, /function attachNoteMediaHotspots/);
+  assert.match(html, /function activateNoteMediaAtUv/);
+  assert.match(html, /noteAction = "note-media"/);
+  assert.match(html, /pointedNoteControlRatioY/);
   assert.match(html, /activeNoteAudio\.preload = isVideo \? "metadata" : "none"/);
   assert.match(html, /async function fetchVaultMediaTicket/);
   assert.match(html, /capabilities\?\.includes\("media-tickets"\)/);
@@ -434,4 +438,13 @@ test("mantém a busca digitada dentro da sessão WebXR", async () => {
   assert.match(html, /expandedHubId = "__search__:"/);
   assert.match(html, /1\.55 \+ Math\.sin\([^\n]+\) \* 0\.55/);
   assert.doesNotMatch(html, /xrSearchInput\.focus\(\{ preventScroll: true \}\)/);
+});
+
+test("renderiza callouts do Obsidian e mostra a contagem de palavras", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /name:"obsidianCallout"/);
+  assert.match(html, /class="obsidian-callout callout-/);
+  assert.match(html, /CALLOUT_ALIASES/);
+  assert.match(html, /arNoteWordCount/);
+  assert.match(html, /wordsLabel/);
 });

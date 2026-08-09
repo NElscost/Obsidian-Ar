@@ -497,6 +497,14 @@
       border-radius: 8px;
       break-inside: avoid;
     }
+    .note-content .obsidian-callout { --callout-rgb:83,143,255; margin:12px 0; padding:10px 14px; border:1px solid rgba(var(--callout-rgb),.55); border-left:5px solid rgb(var(--callout-rgb)); border-radius:9px; background:rgba(var(--callout-rgb),.12); break-inside:avoid; }
+    .note-content .obsidian-callout-title { color:rgb(var(--callout-rgb)); font-weight:800; }
+    .note-content .obsidian-callout-content > :last-child { margin-bottom:0; }
+    .note-content .callout-abstract { --callout-rgb:68,190,190; } .note-content .callout-tip { --callout-rgb:54,210,196; } .note-content .callout-success { --callout-rgb:67,190,108; }
+    .note-content .callout-question, .note-content .callout-warning { --callout-rgb:238,176,54; }
+    .note-content .callout-failure, .note-content .callout-danger, .note-content .callout-bug { --callout-rgb:239,83,99; }
+    .note-content .callout-example { --callout-rgb:164,108,226; } .note-content .callout-quote { --callout-rgb:150,160,175; }
+
     .note-content .note-audio-card,
     .note-content .note-video-card {
       display: flex;
@@ -671,6 +679,21 @@
     import * as THREE from "three";
     import { marked } from "https://cdn.jsdelivr.net/npm/marked@15.0.12/+esm";
     import DOMPurify from "https://cdn.jsdelivr.net/npm/dompurify@3.2.6/+esm";
+
+    const CALLOUT_TITLES = { note:"Note", abstract:"Abstract", info:"Info", todo:"Todo", tip:"Tip", success:"Success", question:"Question", warning:"Warning", failure:"Failure", danger:"Danger", bug:"Bug", example:"Example", quote:"Quote" };
+    const CALLOUT_ALIASES = { summary:"abstract", tldr:"abstract", hint:"tip", important:"tip", check:"success", done:"success", help:"question", faq:"question", caution:"warning", attention:"warning", fail:"failure", missing:"failure", error:"danger", cite:"quote" };
+    marked.use({ extensions:[{ name:"obsidianCallout", level:"block",
+      start(source) { return source.match(/^ {0,3}> *\[!/m)?.index; },
+      tokenizer(source) {
+        const block=/^(?: {0,3}>[^\n]*(?:\n|$))+/.exec(source)?.[0]; if(!block) return;
+        const lines=block.replace(/\n$/,"").split("\n");
+        const first=lines[0].match(/^ {0,3}> *\[!([^\]\s]+)\]([+-]?)(?: +(.*))?$/i); if(!first) return;
+        const rawType=first[1].toLowerCase(); const calloutType=CALLOUT_ALIASES[rawType]??rawType;
+        const body=lines.slice(1).map((line)=>line.replace(/^ {0,3}> ?/,"")).join("\n");
+        return { type:"obsidianCallout", raw:block, calloutType, title:first[3]?.trim()||CALLOUT_TITLES[calloutType]||rawType, tokens:this.lexer.blockTokens(body) };
+      },
+      renderer(token) { return '<aside class="obsidian-callout callout-'+escapeNoteHtml(token.calloutType)+'" data-callout="'+escapeNoteHtml(token.calloutType)+'"><header class="obsidian-callout-title">'+escapeNoteHtml(token.title)+'</header><div class="obsidian-callout-content">'+this.parser.parse(token.tokens)+'</div></aside>'; }
+    }] });
 
     const FALLBACK_MODEL_URL = "./Space.gltf";
     const TARGET_SIZE_METERS = 0.28;
@@ -996,6 +1019,10 @@
           /!\[([^\]]*)\]\(([^)]+\.(?:m4v|mov|mp4|ogv|webm))\)/gi,
           (_, label, target) => videoCardHtml(target, label)
         )
+        .replace(
+          /!\[([^\]]*)\]\(([^)]+\.(?:aac|flac|m4a|mp3|oga|ogg|opus|wav))\)/gi,
+          (_, label, target) => audioCardHtml(target, label)
+        )
         .replace(/!?\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g, (_, target, label) =>
           label ?? target
         )
@@ -1007,9 +1034,9 @@
       });
       noteContent.innerHTML = DOMPurify.sanitize(dirty, {
         ALLOWED_TAGS: [
-          "a", "blockquote", "br", "code", "del", "em", "h1", "h2", "h3",
+          "a", "aside", "blockquote", "br", "code", "del", "em", "h1", "h2", "h3",
           "audio", "a", "blockquote", "br", "code", "del", "div", "em", "h1", "h2", "h3",
-          "h4", "h5", "h6", "hr", "img", "li", "mark", "ol", "p", "pre", "source", "span", "video",
+          "h4", "h5", "h6", "header", "hr", "img", "li", "mark", "ol", "p", "pre", "source", "span", "video",
           "strong", "table", "tbody", "td", "th", "thead", "tr", "ul"
         ],
         ALLOWED_ATTR: [
@@ -1342,6 +1369,7 @@
     let pointedNoteControl = null;
     let pointedNoteControlInstanceId = null;
     let pointedNoteControlRatio = null;
+    let pointedNoteControlRatioY = null;
     let candidateNoteControl = null;
     let candidateNoteControlSince = 0;
     let lastNoteControlHitAt = 0;
@@ -1357,6 +1385,7 @@
     let noteAudioTracks = [];
     let noteVideoTracks = [];
     let activeNoteAudio = null;
+    let activeNoteTrack = null;
     let activeNoteAudioObjectUrl = null;
     let activeNoteAudioControl = null;
     let activeNoteVideoSurface = null;
@@ -1403,6 +1432,7 @@
       if (activeNoteAudioObjectUrl) URL.revokeObjectURL(activeNoteAudioObjectUrl);
       if (preparedNoteVideo?.objectUrl) URL.revokeObjectURL(preparedNoteVideo.objectUrl);
       activeNoteAudio = null;
+      activeNoteTrack = null;
       activeNoteAudioObjectUrl = null;
       activeNoteAudioControl = null;
       disposeVideoMediaLayer();
@@ -1455,6 +1485,7 @@
       pointedNoteControl = null;
       pointedNoteControlInstanceId = null;
       pointedNoteControlRatio = null;
+      pointedNoteControlRatioY = null;
       candidateNoteControl = null;
     }
 
@@ -2022,6 +2053,9 @@
         /!\[\[([^\]|#]+\.(?:aac|flac|m4a|mp3|oga|ogg|opus|wav))(?:\|([^\]]+))?\]\]/gi
       )) add(match[1], match[2]);
       for (const match of markdown.matchAll(
+        /!\[([^\]]*)\]\(([^)]+\.(?:aac|flac|m4a|mp3|oga|ogg|opus|wav))\)/gi
+      )) add(match[2], match[1]);
+      for (const match of markdown.matchAll(
         /<audio\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi
       )) add(match[1]);
       return tracks;
@@ -2063,7 +2097,9 @@
       const noteBounds = noteContent.getBoundingClientRect();
       const contentHeight = Math.max(1, noteContent.scrollHeight);
       const atoms = [];
-      for (const element of noteContent.querySelectorAll("img, table, .note-video-card")) {
+      for (const element of noteContent.querySelectorAll(
+        "img, table, .note-video-card, .note-audio-card, .obsidian-callout"
+      )) {
         const bounds = element.getBoundingClientRect();
         const height = bounds.height;
         if (element.matches("table") && height > NOTE_PAGE_HEIGHT) {
@@ -2103,6 +2139,38 @@
         pageTop = pageBottom;
       }
       return ranges.length ? ranges : [{ top: 0, bottom: NOTE_PAGE_HEIGHT }];
+    }
+
+    function attachNoteMediaHotspots(pages) {
+      if (!Array.isArray(pages) || !pages.length) return;
+      const noteBounds = noteContent.getBoundingClientRect();
+      for (const page of pages) page.mediaHotspots = [];
+      for (const element of noteContent.querySelectorAll(
+        ".note-audio-card, .note-video-card"
+      )) {
+        const bounds = element.getBoundingClientRect();
+        const top = bounds.top - noteBounds.top;
+        const bottom = bounds.bottom - noteBounds.top;
+        const page = pages.find((candidate) => {
+          const middle = (top + bottom) / 2;
+          return middle >= candidate.top && middle < candidate.bottom;
+        });
+        if (!page) continue;
+        const kind = element.matches(".note-video-card") ? "video" : "audio";
+        const encoded = element.dataset[
+          kind === "video" ? "noteVideoSource" : "noteAudioSource"
+        ];
+        let source = encoded || "";
+        try { source = decodeURIComponent(source); } catch {}
+        page.mediaHotspots.push({
+          kind,
+          source,
+          x1: THREE.MathUtils.clamp((62 + bounds.left - noteBounds.left) / 1024, 0, 1),
+          x2: THREE.MathUtils.clamp((62 + bounds.right - noteBounds.left) / 1024, 0, 1),
+          y1: THREE.MathUtils.clamp(1 - (108 + bottom - page.top) / 768, 0, 1),
+          y2: THREE.MathUtils.clamp(1 - (108 + top - page.top) / 768, 0, 1)
+        });
+      }
     }
 
     function buildNotePageCapture(page, pageIndex) {
@@ -2194,6 +2262,7 @@
           top: range.top,
           bottom: range.bottom
         }));
+        attachNoteMediaHotspots(pages);
         await captureOneNotePage(snapdom, pages[0], 0);
         return { pages, snapdom, generation };
       } catch (error) {
@@ -2682,11 +2751,11 @@
       context.fillStyle = "#8fa0b8";
       context.font = "20px system-ui, sans-serif";
       context.textAlign = "center";
-      context.fillText(
-        `Página ${arNotePage + 1} de ${arNotePages.length}`,
-        512,
-        738
-      );
+      const language = document.documentElement.lang;
+      const pageWord = language === "pt" || language === "es" ? "Página" : language === "it" || language === "ro" ? "Pagina" : "Page";
+      const ofWord = language === "pt" || language === "es" ? "de" : language === "fr" ? "sur" : language === "it" ? "di" : language === "ro" ? "din" : "of";
+      const wordsLabel = language === "pt" ? "palavras" : language === "es" ? "palabras" : language === "fr" ? "mots" : language === "it" ? "parole" : language === "ro" ? "cuvinte" : "words";
+      context.fillText(pageWord + " " + (arNotePage + 1) + " " + ofWord + " " + arNotePages.length + " · " + arNoteWordCount + " " + wordsLabel, 512, 738);
       context.textAlign = "start";
       arNoteTexture.needsUpdate = true;
     }
@@ -2855,7 +2924,7 @@
     }
 
     function audioBookmarkKey() {
-      const source = (noteVideoTracks[0] ?? noteAudioTracks[0])?.source ?? "";
+      const source = activeNoteTrack?.source ?? "";
       return `${arNotePath}\n${source}`;
     }
 
@@ -3291,11 +3360,102 @@
       }
     }
 
-    async function toggleNoteAudio() {
-      const track = noteVideoTracks[0] ?? noteAudioTracks[0];
+    function clearActiveNoteMediaForSwitch() {
+      if (activeNoteAudio) {
+        activeNoteAudio.pause();
+        activeNoteAudio.removeAttribute("src");
+        activeNoteAudio.load();
+      }
+      if (activeNoteAudioObjectUrl) URL.revokeObjectURL(activeNoteAudioObjectUrl);
+      if (preparedNoteVideo?.objectUrl) URL.revokeObjectURL(preparedNoteVideo.objectUrl);
+      activeNoteAudio = null;
+      activeNoteAudioObjectUrl = null;
+      preparedNoteVideo = null;
+      noteVideoPreparation = null;
+      noteVideoPreparationError = null;
+      noteVideoPreparationGeneration += 1;
+      disposeVideoMediaLayer();
+      if (activeNoteVideoGroup) {
+        activeNoteVideoGroup.traverse((object) => {
+          if (!object.isMesh) return;
+          object.geometry?.dispose();
+          object.material?.map?.dispose();
+          object.material?.dispose();
+        });
+        arNoteGroup.remove(activeNoteVideoGroup);
+      }
+      activeNoteVideoTexture = null;
+      activeNoteVideoSurface = null;
+      activeNoteVideoBackdrop = null;
+      activeNoteVideoGroup = null;
+      spatialAudioSource?.disconnect();
+      spatialAudioPanner?.disconnect();
+      spatialAudioSource = null;
+      spatialAudioPanner = null;
+      if (audioWaveformGroup) {
+        const controls = new Set();
+        audioWaveformGroup.traverse((object) => controls.add(object));
+        arNoteControls = arNoteControls.filter((control) => !controls.has(control));
+        audioWaveformGroup.traverse((object) => {
+          if (!object.isMesh) return;
+          object.geometry?.dispose();
+          object.material?.map?.dispose();
+          object.material?.dispose();
+        });
+        arNoteGroup.remove(audioWaveformGroup);
+      }
+      audioWaveformGroup = null;
+      audioWaveformTexture = null;
+      audioWaveformPlayhead = null;
+      audioWaveformWidth = 0;
+      audioWaveformDuration = 0;
+      audioBookmarkMeshes = [];
+      updateAudioControlColor();
+    }
+
+    function noteTrackForHotspot(hotspot) {
+      if (!hotspot?.source) return null;
+      const tracks = hotspot.kind === "video" ? noteVideoTracks : noteAudioTracks;
+      return tracks.find((track) => track.source === hotspot.source) ?? null;
+    }
+
+    function activateNoteMediaAtUv(uv) {
+      if (!uv || !Number.isFinite(uv.x) || !Number.isFinite(uv.y)) return;
+      const hotspots = arNotePages[arNotePage]?.mediaHotspots ?? [];
+      const hotspot = hotspots.find((item) =>
+        uv.x >= item.x1 && uv.x <= item.x2 && uv.y >= item.y1 && uv.y <= item.y2
+      );
+      const track = noteTrackForHotspot(hotspot);
+      if (track) {
+        void toggleNoteAudio(track);
+      } else {
+        setXrMessage("Aponte para um cartão de áudio ou vídeo e faça a pinça.");
+      }
+    }
+
+    async function toggleNoteAudio(requestedTrack = null) {
+      const track = requestedTrack ?? activeNoteTrack ?? noteVideoTracks[0] ?? noteAudioTracks[0];
       if (!track) return;
+      const switchingTrack = activeNoteTrack?.source !== track.source;
+      if (switchingTrack) {
+        clearActiveNoteMediaForSwitch();
+        activeNoteTrack = track;
+        audioWaveformGeneration += 1;
+        void prepareAudioWaveform(track, arNotePath, AR_NOTE_WIDTH, AR_NOTE_HEIGHT);
+      } else {
+        activeNoteTrack = track;
+      }
       const isVideo = track.kind === "video";
       try {
+        if (isVideo && preparedNoteVideo?.track?.source !== track.source) {
+          if (noteVideoPreparation) {
+            setXrMessage("O video selecionado ainda esta sendo preparado.");
+            return;
+          }
+          beginNoteVideoPreparation(track, arNotePath);
+          setXrMessage("Preparando o vídeo selecionado. Faça outra pinça quando o botão ficar verde.");
+          return;
+        }
         if (isVideo && !preparedNoteVideo) {
           if (noteVideoPreparationError) {
             beginNoteVideoPreparation(track, arNotePath);
@@ -3431,6 +3591,10 @@
       }
       if (action === "audio") {
         void toggleNoteAudio();
+        return;
+      }
+      if (action === "note-media") {
+        activateNoteMediaAtUv(options.uv);
         return;
       }
       if (action === "waveform") {
@@ -3609,6 +3773,8 @@
       noteAudioTracks = audioTracks;
       noteVideoTracks = videoTracks;
       arNotePath = path;
+      const plainWords = String(source ?? "").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, " ").replace(/<[^>]+>|!\?\[\[[^\]]+\]\]|\[[^\]]*\]\([^)]+\)|[#>*_~=|$\\{}\[\]()-]/g, " ");
+      arNoteWordCount = plainWords.match(/[\p{L}\p{N}]+(?:['’.-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
       arNoteCanvas = document.createElement("canvas");
       arNoteCanvas.width = 1024;
       arNoteCanvas.height = 768;
@@ -3616,6 +3782,7 @@
       let progressiveCapture = null;
       if (cachedPages) {
         arNotePages = cachedPages;
+        attachNoteMediaHotspots(arNotePages);
       } else {
         try {
           progressiveCapture = await captureRenderedNotePages();
@@ -3643,7 +3810,10 @@
         })
       );
       arNoteSurface.renderOrder = 1000;
+      arNoteSurface.userData.noteAction = "note-media";
+      arNoteSurface.userData.highlightScale = false;
       arNoteGroup.add(arNoteSurface);
+      arNoteControls.push(arNoteSurface);
       createLocalNoteGraph(path, width);
       addArNoteControl("close", width / 2 - 0.03, height / 2 - 0.03, 0xff6b6b);
       addArNoteControl(
@@ -3664,6 +3834,7 @@
           0x63e6be
         );
         const timelineTrack = noteVideoTracks[0] ?? noteAudioTracks[0];
+        activeNoteTrack = timelineTrack ?? null;
         if (timelineTrack) void prepareAudioWaveform(timelineTrack, path, width, height);
         if (noteVideoTracks.length) {
           beginNoteVideoPreparation(noteVideoTracks[0], path);
@@ -5608,6 +5779,11 @@
         if (control) {
           activateNoteControl(control.userData.noteAction, event, {
             ratio: hit?.uv?.x ?? pointedNoteControlRatio,
+            uv: hit?.uv ?? (
+              Number.isFinite(pointedNoteControlRatio) && Number.isFinite(pointedNoteControlRatioY)
+                ? { x: pointedNoteControlRatio, y: pointedNoteControlRatioY }
+                : null
+            ),
             seconds: control.userData.bookmarkSeconds,
             path: control.userData.localGraphNodes?.[
               hit?.instanceId ?? pointedNoteControlInstanceId
@@ -6310,6 +6486,7 @@
       let nearest = null;
         let nearestControl = null;
         let nearestControlRatio = null;
+        let nearestControlRatioY = null;
         let nearestControlInstanceId = null;
       let handRayIndex = 0;
       for (const inputSource of xrSession.inputSources) {
@@ -6409,6 +6586,7 @@
           if (controlHit) {
             nearestControl = controlHit.object;
             nearestControlRatio = controlHit.uv?.x ?? null;
+            nearestControlRatioY = controlHit.uv?.y ?? null;
             nearestControlInstanceId = controlHit.instanceId ?? null;
           }
           continue;
@@ -6466,6 +6644,7 @@
           lastNoteControlHitAt = time;
           if (pointedNoteControl === nearestControl) {
             pointedNoteControlRatio = nearestControlRatio;
+            pointedNoteControlRatioY = nearestControlRatioY;
             pointedNoteControlInstanceId = nearestControlInstanceId;
             pointedLocalNotePath = nearestControl.userData.localGraphNodes?.[nearestControlInstanceId]?.id ?? null;
             candidateNoteControl = null;
@@ -6473,6 +6652,7 @@
             if (time - candidateNoteControlSince >= 70) {
               pointedNoteControl = nearestControl;
               pointedNoteControlRatio = nearestControlRatio;
+              pointedNoteControlRatioY = nearestControlRatioY;
               pointedNoteControlInstanceId = nearestControlInstanceId;
               pointedLocalNotePath = nearestControl.userData.localGraphNodes?.[nearestControlInstanceId]?.id ?? null;
               candidateNoteControl = null;
@@ -6484,6 +6664,7 @@
         } else if (time - lastNoteControlHitAt > 420) {
           pointedNoteControl = null;
           pointedNoteControlRatio = null;
+          pointedNoteControlRatioY = null;
           pointedNoteControlInstanceId = null;
           pointedLocalNotePath = null;
           candidateNoteControl = null;
@@ -6494,7 +6675,9 @@
         for (const control of arNoteControls) {
           const active = control === pointedNoteControl;
           control.scale.setScalar(active && control.userData.highlightScale !== false ? 1.35 : 1);
-          if (control.material) control.material.opacity = active ? 1 : 0.82;
+          if (control.material && control.userData.noteAction !== "note-media") {
+            control.material.opacity = active ? 1 : 0.82;
+          }
         }
         if (pointedNoteControl) {
           const action = pointedNoteControl.userData.noteAction;
@@ -6502,6 +6685,8 @@
             ? "fechar"
             : action === "pin"
               ? (noteWindowPinned ? "soltar a janela" : "fixar a janela")
+              : action === "note-media"
+                ? "reproduzir a mídia selecionada"
               : action === "audio"
                 ? (activeNoteAudio && !activeNoteAudio.paused
                     ? "pausar o áudio"
