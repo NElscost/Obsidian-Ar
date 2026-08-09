@@ -219,6 +219,13 @@ async function startBridge(port, debug) {
   const serverError = path.join(logDir, "server-error.log");
   const tunnelLog = path.join(logDir, "tunnel.log");
   const tunnelError = path.join(logDir, "tunnel-error.log");
+  const serverEnv = {
+    ...process.env,
+    SPACE_NOTE_PORT: String(port),
+    SPACE_NOTE_TOKEN: token,
+    SPACE_VAULT_PATH: vaultPath,
+    SPACE_PENDING_OPTIMIZATION_PATH: pendingPath
+  };
   if (existsSync(graphPath)) serverEnv.SPACE_GRAPH_PATH = graphPath;
   const server = spawnLogged(serverPath, [], serverLog, serverError, serverEnv);
   let tunnel;

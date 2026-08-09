@@ -1194,7 +1194,7 @@
           const styledMaterials = materials.map((source) => {
             const material = source.clone();
             material.transparent = true;
-            material.opacity = 0.34;
+            material.opacity = 0.56;
             material.depthWrite = false;
             material.toneMapped = false;
             material.color?.set(0x000000);
@@ -1216,9 +1216,9 @@
         outline.material = new THREE.MeshBasicMaterial({
           color: 0xffffff,
           transparent: true,
-          opacity: 0.5,
+          opacity: 0.22,
           side: THREE.BackSide,
-          depthTest: false,
+          depthTest: true,
           depthWrite: false,
           toneMapped: false
         });
@@ -1238,9 +1238,9 @@
         const fill = new THREE.MeshBasicMaterial({
           color: 0x000000,
           transparent: true,
-          opacity: 0.24,
+          opacity: 0.58,
           depthTest: true,
-          depthWrite: false,
+          depthWrite: true,
           side: THREE.DoubleSide,
           toneMapped: false
         });
@@ -1260,6 +1260,10 @@
             "https://esm.sh/@iwsdk/xr-input@0.4.2?external=three"
           );
           outlineMaterial.uniforms.outlineColor.value.set(0xffffff);
+          outlineMaterial.transparent = true;
+          outlineMaterial.opacity = 0.26;
+          outlineMaterial.depthTest = true;
+          outlineMaterial.depthWrite = false;
           iwStencilMaterial = stencilMaterial;
           stencilMaterial.uniforms.outlineThickness.value = 0.0012 * IW_HAND_OUTLINE_WIDTH;
           iwInputManager = new XRInputManager({ scene, camera });
@@ -1268,7 +1272,7 @@
           iwInputManager.visualAdapters?.hand?.right?.toggleVisual(true);
           for (const adapter of [iwInputManager.visualAdapters?.hand?.left, iwInputManager.visualAdapters?.hand?.right]) {
             if (!adapter) continue;
-            adapter.outlineOptions = { enabled: true, color: { r: 1, g: 1, b: 1, a: 0.78 }, width: IW_HAND_OUTLINE_WIDTH, renderPass: "*Silhouette*" };
+            adapter.outlineOptions = { enabled: true, color: { r: 1, g: 1, b: 1, a: 0.28 }, width: IW_HAND_OUTLINE_WIDTH, renderPass: "*Silhouette*" };
           }
           console.info("IWSDK XRInputManager ativo para as mãos virtuais.");
           return;
