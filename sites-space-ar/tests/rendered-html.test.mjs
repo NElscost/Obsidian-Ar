@@ -416,7 +416,7 @@ test("mantém a busca digitada dentro da sessão WebXR", async () => {
   assert.match(html, /function keyboardTexture/);
   assert.match(html, /function addArSearchKey/);
   assert.match(html, /aspect: width \/ 0\.052/);
-  assert.match(html, /arNoteGroup\.scale\.setScalar\(0\.78\)/);
+  assert.match(html, /arNoteGroup\.scale\.setScalar\(keyboardWindowPinned \? 0\.62 : 0\.78\)/);
   assert.match(html, /"search-pin"/);
   assert.match(html, /IW_HAND_OUTLINE_WIDTH = 1/);
   assert.match(html, /outlineMaterial\.uniforms\.outlineColor\.value\.set\(0xffffff\)/);
@@ -478,7 +478,19 @@ test("mantém o alvo destacado pela palma durante a pinça", async () => {
 test("preserva o vídeo no grafo local e usa painéis curvos", async () => {
   const html = await readFile(xrUrl, "utf8");
   assert.match(html, /function curvedPanelGeometry/);
+  assert.match(html, /function placeAudioWaveformGroup/);
+  assert.match(html, /activeNoteVideoGroup\.add\(audioWaveformGroup\)/);
+  assert.match(html, /activeNoteMediaPath \|\| arNotePath/);
   assert.match(html, /preserveVideoOnNextNote = Boolean/);
   assert.match(html, /noteAction = "video-close"/);
   assert.match(html, /disposeArNote\(\{ preserveVideo \}\)/);
+});
+
+
+test("restaura a pose ancorada do teclado antes de exibi-lo", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /const keyboardAnchorPosition = new THREE\.Vector3/);
+  assert.match(html, /arNoteGroup\.position\.copy\(keyboardAnchorPosition\)/);
+  assert.match(html, /arNoteGroup\.visible = true;[\s\S]{0,100}setXrMessage\("Busca 3D aberta/);
+  assert.match(html, /smoothstep\(0\.045,0\.115,edgeDistance\)/);
 });

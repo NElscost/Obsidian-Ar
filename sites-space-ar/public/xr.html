@@ -1430,6 +1430,7 @@
     let noteVideoTracks = [];
     let activeNoteAudio = null;
     let activeNoteTrack = null;
+    let activeNoteMediaPath = "";
     let activeNoteAudioObjectUrl = null;
     let activeNoteAudioControl = null;
     let activeNoteVideoSurface = null;
@@ -1470,6 +1471,9 @@
     let noteWindowAnchor = null;
     let keyboardWindowPinned = false;
     let keyboardWindowAnchor = null;
+    const keyboardAnchorPosition = new THREE.Vector3();
+    const keyboardAnchorQuaternion = new THREE.Quaternion();
+    let keyboardAnchorPoseValid = false;
     let waveformDragInputSource = null;
 
     function releaseActiveMedia() {
@@ -1486,6 +1490,7 @@
       spatialAudioPanner?.disconnect();
       activeNoteAudio = null;
       activeNoteTrack = null;
+      activeNoteMediaPath = "";
       activeNoteAudioObjectUrl = null;
       activeNoteVideoTexture = null;
       activeNoteVideoSurface = null;
@@ -1502,6 +1507,14 @@
     function closeActiveVideo(silent = false) {
       if (!activeNoteVideoGroup && !activeNoteAudio?.tagName?.toLowerCase().includes("video")) return;
       const group = activeNoteVideoGroup;
+      const waveformOwnedByVideo = Boolean(
+        group && audioWaveformGroup?.parent === group
+      );
+      if (waveformOwnedByVideo) {
+        const waveformControls = new Set();
+        audioWaveformGroup.traverse((object) => waveformControls.add(object));
+        arNoteControls = arNoteControls.filter((control) => !waveformControls.has(control));
+      }
       if (group) {
         group.removeFromParent();
         group.traverse((object) => {
@@ -1517,6 +1530,15 @@
         arNoteControls = arNoteControls.filter((control) => control !== activeNoteVideoCloseControl);
       }
       releaseActiveMedia();
+      if (waveformOwnedByVideo) {
+        audioWaveformGroup = null;
+        audioWaveformTexture = null;
+        audioWaveformPlayhead = null;
+        audioWaveformWidth = 0;
+        audioWaveformDuration = 0;
+        pendingNoteAudioSeek = null;
+        audioBookmarkMeshes = [];
+      }
       updateAudioControlColor();
       if (!silent) setXrMessage("Janela de vídeo fechada.");
     }
@@ -1544,15 +1566,17 @@
       videoFallbackBusy = false;
       localNoteGraphGroup = null;
       pointedLocalNotePath = null;
-      audioWaveformTexture?.dispose();
-      audioWaveformGroup = null;
-      audioWaveformTexture = null;
-      audioWaveformPlayhead = null;
-      audioWaveformWidth = 0;
-      audioWaveformDuration = 0;
-      pendingNoteAudioSeek = null;
-      audioBookmarkMeshes = [];
-      waveformDragInputSource = null;
+      if (!preserveVideo) {
+        audioWaveformTexture?.dispose();
+        audioWaveformGroup = null;
+        audioWaveformTexture = null;
+        audioWaveformPlayhead = null;
+        audioWaveformWidth = 0;
+        audioWaveformDuration = 0;
+        pendingNoteAudioSeek = null;
+        audioBookmarkMeshes = [];
+        waveformDragInputSource = null;
+      }
       noteAudioTracks = [];
       noteVideoTracks = [];
       arNoteGroup.visible = false;
@@ -1587,7 +1611,11 @@
         activeNoteVideoGroup = preservedVideoGroup;
         activeNoteVideoCloseControl = preservedVideoCloseControl;
         arNoteGroup.add(preservedVideoGroup);
-        if (preservedVideoCloseControl) arNoteControls.push(preservedVideoCloseControl);
+        preservedVideoGroup.traverse((object) => {
+          if (object.userData?.noteAction && !arNoteControls.includes(object)) {
+            arNoteControls.push(object);
+          }
+        });
       }
     }
 
@@ -2971,6 +2999,21 @@
       );
     }
 
+    function placeAudioWaveformGroup(panelHeight = AR_NOTE_HEIGHT) {
+      if (!audioWaveformGroup) return;
+      const belongsToVideo = Boolean(
+        activeNoteVideoGroup &&
+        (activeNoteTrack?.kind === "video" || noteVideoTracks.includes(activeNoteTrack))
+      );
+      if (belongsToVideo) {
+        activeNoteVideoGroup.add(audioWaveformGroup);
+        audioWaveformGroup.position.set(0, -AR_VIDEO_HEIGHT / 2 - 0.034, 0.034);
+      } else {
+        arNoteGroup.add(audioWaveformGroup);
+        audioWaveformGroup.position.set(0, -panelHeight / 2 - 0.034, 0.034);
+      }
+    }
+
     function createArAudioWaveform(waveform, panelWidth, panelHeight) {
       const samples = Array.isArray(waveform?.samples) ? waveform.samples : [];
       if (!samples.length) return;
@@ -2998,7 +3041,6 @@
       audioWaveformTexture.minFilter = THREE.LinearFilter;
       audioWaveformTexture.generateMipmaps = false;
       audioWaveformGroup = new THREE.Group();
-      audioWaveformGroup.position.set(0, -panelHeight / 2 - 0.034, 0.004);
       const surface = new THREE.Mesh(
         new THREE.PlaneGeometry(audioWaveformWidth, 0.038),
         new THREE.MeshBasicMaterial({
@@ -3023,14 +3065,14 @@
       audioWaveformPlayhead.renderOrder = 1002;
       audioWaveformPlayhead.raycast = () => {};
       audioWaveformGroup.add(surface, audioWaveformPlayhead);
-      arNoteGroup.add(audioWaveformGroup);
+      placeAudioWaveformGroup(panelHeight);
       arNoteControls.push(surface);
       rebuildAudioBookmarkMeshes();
     }
 
     function audioBookmarkKey() {
       const source = activeNoteTrack?.source ?? "";
-      return `${arNotePath}\n${source}`;
+      return `${activeNoteMediaPath || arNotePath}\n${source}`;
     }
 
     function readAudioBookmarks() {
@@ -3330,7 +3372,7 @@
       activeNoteVideoGroup.name = "note-video-window";
       activeNoteVideoGroup.position.set(AR_VIDEO_CENTER_X, 0, 0.006);
       const videoBackdrop = new THREE.Mesh(
-        curvedPanelGeometry(AR_VIDEO_WIDTH + 0.075, AR_VIDEO_HEIGHT + 0.075, 0.026),
+        curvedPanelGeometry(AR_VIDEO_WIDTH + 0.045, AR_VIDEO_HEIGHT + 0.045, 0.024),
         new THREE.ShaderMaterial({
           uniforms: {
             topColor: { value: new THREE.Color(0x18243a) },
@@ -3339,7 +3381,7 @@
             leftColor: { value: new THREE.Color(0x18243a) }
           },
           vertexShader: "varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }",
-          fragmentShader: "uniform vec3 topColor; uniform vec3 rightColor; uniform vec3 bottomColor; uniform vec3 leftColor; varying vec2 vUv; void main(){ float edgeDistance=min(min(vUv.x,1.0-vUv.x),min(vUv.y,1.0-vUv.y)); float border=(1.0-smoothstep(0.075,0.19,edgeDistance))*smoothstep(0.0,0.025,edgeDistance); float horizontal=smoothstep(0.18,0.82,vUv.x); float vertical=smoothstep(0.18,0.82,vUv.y); vec3 side=mix(leftColor,rightColor,horizontal); vec3 cap=mix(bottomColor,topColor,vertical); float sideWeight=smoothstep(0.0,0.2,abs(vUv.x-0.5)-abs(vUv.y-0.5)+0.5); vec3 c=mix(cap,side,sideWeight); float l=max(c.r,max(c.g,c.b)); gl_FragColor=vec4(c*(1.08+0.35*l),border*0.36); }",
+          fragmentShader: "uniform vec3 topColor; uniform vec3 rightColor; uniform vec3 bottomColor; uniform vec3 leftColor; varying vec2 vUv; void main(){ float edgeDistance=min(min(vUv.x,1.0-vUv.x),min(vUv.y,1.0-vUv.y)); float border=(1.0-smoothstep(0.045,0.115,edgeDistance))*smoothstep(0.0,0.016,edgeDistance); float horizontal=smoothstep(0.18,0.82,vUv.x); float vertical=smoothstep(0.18,0.82,vUv.y); vec3 side=mix(leftColor,rightColor,horizontal); vec3 cap=mix(bottomColor,topColor,vertical); float sideWeight=smoothstep(0.0,0.2,abs(vUv.x-0.5)-abs(vUv.y-0.5)+0.5); vec3 c=mix(cap,side,sideWeight); float l=max(c.r,max(c.g,c.b)); gl_FragColor=vec4(c*(1.08+0.35*l),border*0.36); }",
           transparent: true,
           blending: THREE.AdditiveBlending,
           depthTest: false,
@@ -3391,6 +3433,7 @@
       activeNoteVideoGroup.add(videoBackdrop, activeNoteVideoSurface, videoClose);
       arNoteControls.push(videoClose);
       arNoteGroup.add(activeNoteVideoGroup);
+      placeAudioWaveformGroup(AR_VIDEO_HEIGHT);
       const resize = () => {
         if (!activeNoteVideoSurface || !video.videoWidth || !video.videoHeight) return;
         const aspect = video.videoWidth / video.videoHeight;
@@ -3603,6 +3646,9 @@
       noteVideoPreparationError = null;
       noteVideoPreparationGeneration += 1;
       disposeVideoMediaLayer();
+      const waveformOwnedByVideo = Boolean(
+        activeNoteVideoGroup && audioWaveformGroup?.parent === activeNoteVideoGroup
+      );
       if (activeNoteVideoGroup) {
         activeNoteVideoGroup.traverse((object) => {
           if (!object.isMesh) return;
@@ -3623,6 +3669,18 @@
       activeNoteAmbilightTimeline = null;
       activeNoteAmbilightUniforms = null;
       activeNoteAmbilightLastUpdateAt = 0;
+      if (waveformOwnedByVideo) {
+        const waveformControls = new Set();
+        audioWaveformGroup.traverse((object) => waveformControls.add(object));
+        arNoteControls = arNoteControls.filter((control) => !waveformControls.has(control));
+        audioWaveformGroup = null;
+        audioWaveformTexture = null;
+        audioWaveformPlayhead = null;
+        audioWaveformWidth = 0;
+        audioWaveformDuration = 0;
+        audioBookmarkMeshes = [];
+      }
+      activeNoteMediaPath = "";
       spatialAudioSource?.disconnect();
       spatialAudioPanner?.disconnect();
       spatialAudioSource = null;
@@ -3675,10 +3733,12 @@
       if (switchingTrack) {
         clearActiveNoteMediaForSwitch();
         activeNoteTrack = track;
+        activeNoteMediaPath = arNotePath;
         audioWaveformGeneration += 1;
         void prepareAudioWaveform(track, arNotePath, AR_NOTE_WIDTH, AR_NOTE_HEIGHT);
       } else {
         activeNoteTrack = track;
+        if (!activeNoteMediaPath) activeNoteMediaPath = arNotePath;
       }
       if (track.kind === "youtube") {
         openYouTubeOverlay(track);
@@ -3788,6 +3848,7 @@
         if (keyboard) {
           keyboardWindowAnchor = null;
           keyboardWindowPinned = false;
+          keyboardAnchorPoseValid = false;
         } else {
           noteWindowAnchor = null;
           noteWindowPinned = false;
@@ -3801,8 +3862,14 @@
 
       arNoteGroup.updateWorldMatrix(true, false);
       scene.attach(arNoteGroup);
-      if (keyboard) keyboardWindowPinned = true;
-      else noteWindowPinned = true;
+      if (keyboard) {
+        keyboardWindowPinned = true;
+        keyboardAnchorPosition.copy(arNoteGroup.position);
+        keyboardAnchorQuaternion.copy(arNoteGroup.quaternion);
+        keyboardAnchorPoseValid = true;
+      } else {
+        noteWindowPinned = true;
+      }
       if (event?.frame?.createAnchor && referenceSpace) {
         const position = arNoteGroup.position;
         const orientation = arNoteGroup.quaternion;
@@ -4592,10 +4659,13 @@
       disposeArNote();
       arSearchKeyboardActive = true;
       arSearchQuery = "";
-      arNoteGroup.visible = true;
-      arNoteGroup.scale.setScalar(0.78);
+      arNoteGroup.scale.setScalar(keyboardWindowPinned ? 0.62 : 0.78);
       if (keyboardWindowPinned) {
-        if (arNoteGroup.parent !== scene) scene.attach(arNoteGroup);
+        scene.add(arNoteGroup);
+        if (keyboardAnchorPoseValid) {
+          arNoteGroup.position.copy(keyboardAnchorPosition);
+          arNoteGroup.quaternion.copy(keyboardAnchorQuaternion);
+        }
       } else {
         arNoteGroup.position.set(0, -0.02, -0.78);
         arNoteGroup.quaternion.identity();
@@ -4633,6 +4703,7 @@
       addArSearchKey("ESPAÇO", "search-space", -0.092, -0.166, 0.226, "#334866");
       addArSearchKey("BUSCAR", "search-submit", 0.116, -0.166, 0.15, "#167c68");
       addArSearchKey("×", "search-close", 0.278, -0.166, 0.07, "#8b3040");
+      arNoteGroup.visible = true;
       setXrMessage("Busca 3D aberta. Aponte com a palma e faça pinça para digitar.");
     }
 
@@ -7113,7 +7184,12 @@
             arNoteGroup.quaternion,
             workingScale
           );
-          arNoteGroup.scale.set(1, 1, 1);
+          arNoteGroup.scale.setScalar(arSearchKeyboardActive ? 0.62 : 1);
+          if (arSearchKeyboardActive) {
+            keyboardAnchorPosition.copy(arNoteGroup.position);
+            keyboardAnchorQuaternion.copy(arNoteGroup.quaternion);
+            keyboardAnchorPoseValid = true;
+          }
         }
       }
       if (currentAnchor && referenceSpace) {
@@ -7213,6 +7289,7 @@
       keyboardWindowAnchor = null;
       noteWindowPinned = false;
       keyboardWindowPinned = false;
+      keyboardAnchorPoseValid = false;
       xrSession = null;
       virtualHandFrameTime = 0;
       virtualHandStyleCheckAt = 0;

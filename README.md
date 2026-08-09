@@ -273,6 +273,6 @@ or macOS.
 
 ### Curved media windows and ambilight
 
-The note and video surfaces use lightweight segmented curved geometry. Local videos expose their own close control and keep playing while a neighboring note is opened from the local graph.
+The note and video surfaces use lightweight segmented curved geometry. Local videos expose their own close control and keep playing while a neighboring note is opened from the local graph. Their waveform, seek position, and bookmarks remain attached below the video window; audio-only waveforms remain below the reading window.
 
 For local vault videos, the Rust bridge asks FFmpeg for a 24×14 RGB stream at one frame per second, averages the four border bands, caches the result by file modification time, and sends only the compact color timeline to the Quest. The WebXR shader interpolates those four colors at runtime, avoiding repeated video texture samples for the ambilight effect. FFmpeg is therefore required for this optimization.
