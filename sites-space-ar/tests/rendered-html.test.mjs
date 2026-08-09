@@ -176,6 +176,11 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function createArVideoSurface/);
   assert.match(html, /ordered\.sort\(\(left, right\) => left\.index - right\.index\)/);
   assert.match(html, /fetchYoutubeMediaTicket/);
+  assert.match(html, /const preparedVideoSessionCache = new Map\(\)/);
+  assert.match(html, /PREPARED_VIDEO_CACHE_TTL_MS = 25 \* 60 \* 1000/);
+  assert.match(html, /activeNoteMediaPath !== arNotePath/);
+  assert.match(html, /activeMediaMatches/);
+  assert.match(html, /preparedNoteVideo\?\.notePath === arNotePath/);
   assert.match(html, /track\.kind === "video" \|\| track\.kind === "youtube"/);
   assert.match(html, /activateNoteMediaAtUv/);
   assert.match(html, /function rebuildArNoteMediaHotspotControls/);
@@ -195,7 +200,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /capabilities\?\.includes\("video-transcode"\)/);
   assert.match(html, /Tentando preparar o vídeo novamente/);
   assert.match(html, /Vídeo pronto\. Faça a pinça/);
-  assert.match(html, /if \(isVideo && !preparedNoteVideo\)/);
+  assert.match(html, /if \(isVideo && !activeMediaMatches && !preparedNoteVideo\)/);
   assert.match(html, /if \(isVideo && !activeNoteVideoSurface\) createArVideoSurface/);
   assert.match(html, /MP4 com H\.264 \+ AAC/);
   assert.match(html, /async function toggleNoteAudio\(requestedTrack = null\)/);

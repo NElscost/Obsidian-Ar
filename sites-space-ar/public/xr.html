@@ -1446,6 +1446,8 @@
     let activeNoteAmbilightUniforms = null;
     let activeNoteAmbilightLastUpdateAt = 0;
     const videoAmbilightCache = new Map();
+    const preparedVideoSessionCache = new Map();
+    const PREPARED_VIDEO_CACHE_TTL_MS = 25 * 60 * 1000;
     let videoSurfaceVisibilityCheckedAt = 0;
     let preparedNoteVideo = null;
     let noteVideoPreparation = null;
@@ -3568,8 +3570,20 @@
 
     function beginNoteVideoPreparation(track, notePath) {
       const generation = noteVideoPreparationGeneration;
+      const cacheKey = preparedVideoCacheKey(track, notePath);
       noteVideoPreparationError = null;
       preparedNoteVideo = null;
+      const cached = preparedVideoSessionCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        preparedNoteVideo = { source: cached.source, objectUrl: null, track, notePath, streaming: cached.streaming };
+        if (cached.waveform) {
+          audioWaveformCache.set(notePath + "\n" + track.source, cached.waveform);
+          createArAudioWaveform(cached.waveform, AR_NOTE_WIDTH, AR_NOTE_HEIGHT);
+        }
+        setXrMessage("Vídeo recuperado do cache da sessão.");
+        return true;
+      }
+      if (cached) preparedVideoSessionCache.delete(cacheKey);
       if (activeNoteAudioControl) {
         activeNoteAudioControl.material.color.setHex(0xffd166);
       }
@@ -3617,7 +3631,13 @@
             if (objectUrl) URL.revokeObjectURL(objectUrl);
             return;
           }
-          preparedNoteVideo = { source, objectUrl, track, streaming };
+          preparedNoteVideo = { source, objectUrl, track, notePath, streaming };
+          if (!objectUrl) {
+            preparedVideoSessionCache.set(cacheKey, {
+              source, streaming, waveform: preparedWaveform,
+              expiresAt: Date.now() + PREPARED_VIDEO_CACHE_TTL_MS
+            });
+          }
           if (preparedWaveform && activeNoteTrack?.source === track.source) {
             const cacheKey = `${notePath}\n${track.source}`;
             audioWaveformCache.set(cacheKey, preparedWaveform);
@@ -3640,6 +3660,15 @@
           }
         }
       })();
+      return false;
+    }
+
+    function preparedVideoCacheKey(track, notePath) {
+      const config = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
+      const bridgeIdentity = config?.url && config?.token
+        ? config.url + "\n" + config.token : "direct";
+      return bridgeIdentity + "\n" + notePath + "\n"
+        + (track?.kind ?? "video") + "\n" + (track?.source ?? "");
     }
 
     async function recoverVideoWithBlob(track) {
@@ -3790,7 +3819,8 @@
     async function toggleNoteAudio(requestedTrack = null) {
       const track = requestedTrack ?? activeNoteTrack ?? noteVideoTracks[0] ?? noteAudioTracks[0];
       if (!track) return;
-      const switchingTrack = activeNoteTrack?.source !== track.source;
+      const switchingTrack = activeNoteTrack?.source !== track.source
+        || activeNoteMediaPath !== arNotePath;
       if (switchingTrack) {
         clearActiveNoteMediaForSwitch();
         activeNoteTrack = track;
@@ -3804,16 +3834,27 @@
       closeYouTubeOverlay();
       const isVideo = track.kind === "video" || track.kind === "youtube";
       try {
-        if (isVideo && preparedNoteVideo?.track?.source !== track.source) {
+        const activeMediaMatches = Boolean(
+          activeNoteAudio
+          && activeNoteTrack?.source === track.source
+          && activeNoteMediaPath === arNotePath
+        );
+        const preparedVideoMatches = Boolean(
+          preparedNoteVideo?.track?.source === track.source
+          && preparedNoteVideo?.notePath === arNotePath
+        );
+        if (isVideo && !activeMediaMatches && !preparedVideoMatches) {
           if (noteVideoPreparation) {
             setXrMessage("O video selecionado ainda esta sendo preparado.");
             return;
           }
-          beginNoteVideoPreparation(track, arNotePath);
-          setXrMessage("Preparando o vídeo selecionado. Faça outra pinça quando o botão ficar verde.");
-          return;
+          const restored = beginNoteVideoPreparation(track, arNotePath);
+          if (!restored) {
+            setXrMessage("Preparando o vídeo selecionado. Faça outra pinça quando o botão ficar verde.");
+            return;
+          }
         }
-        if (isVideo && !preparedNoteVideo) {
+        if (isVideo && !activeMediaMatches && !preparedNoteVideo) {
           if (noteVideoPreparationError) {
             beginNoteVideoPreparation(track, arNotePath);
             setXrMessage("Tentando preparar o vídeo novamente…");
