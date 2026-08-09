@@ -2018,6 +2018,16 @@
       };
     }
 
+    async function fetchYoutubeMediaTicket(config, notePath, url) {
+      const response = await fetch(`${config.url}/youtube-ticket`, {
+        method: "POST", headers: bridgeRequestHeaders(config, true)
+        ,body: JSON.stringify({ notePath, url })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error ?? `YouTube HTTP ${response.status}`);
+      return { ...result, source: new URL(result.url, `${config.url}/`).href };
+    }
+
     async function ensureVideoBridge(config) {
       const key = config.url;
       if (!bridgeCapabilityCache.has(key)) {
@@ -2192,30 +2202,23 @@
     }
 
     function extractNoteVideoTracks(source) {
-      const tracks = [];
-      const seen = new Set();
-      const add = (value, label = "", kind = "video") => {
-        const path = String(value ?? "").trim();
-        if (!path || seen.has(path)) return;
-        seen.add(path);
-        tracks.push({ source: path, label: String(label || path), kind });
-      };
+      const tracks = [], seen = new Set(), ordered = [];
+      const addMatch = (match, value, label = "", kind = "video") =>
+        ordered.push({ index: match.index ?? Number.MAX_SAFE_INTEGER, value, label, kind });
       const markdown = String(source ?? "");
-      for (const match of markdown.matchAll(
-        /https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/[^\s)\]>]+/gi
-      )) add(match[0], "YouTube", "youtube");
-      for (const match of markdown.matchAll(
-        /!\[\[([^\]|#]+\.(?:m4v|mov|mp4|ogv|webm))(?:\|([^\]]+))?\]\]/gi
-      )) add(match[1], match[2]);
-      for (const match of markdown.matchAll(
-        /!\[([^\]]*)\]\(([^)]+\.(?:m4v|mov|mp4|ogv|webm))\)/gi
-      )) add(match[2], match[1]);
-      for (const match of markdown.matchAll(
-        /<video\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi
-      )) add(match[1]);
+      for (const match of markdown.matchAll(/https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/[^\s)\]>]+/gi)) addMatch(match, match[0], "YouTube", "youtube");
+      for (const match of markdown.matchAll(/!\[\[([^\]|#]+\.(?:m4v|mov|mp4|ogv|webm))(?:\|([^\]]+))?\]\]/gi)) addMatch(match, match[1], match[2]);
+      for (const match of markdown.matchAll(/!\[([^\]]*)\]\(([^)]+\.(?:m4v|mov|mp4|ogv|webm))\)/gi)) addMatch(match, match[2], match[1]);
+      for (const match of markdown.matchAll(/<video\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi)) addMatch(match, match[1]);
+      ordered.sort((left, right) => left.index - right.index);
+      for (const item of ordered) {
+        const path = String(item.value ?? "").trim();
+        if (!path || seen.has(path)) continue;
+        seen.add(path);
+        tracks.push({ source: path, label: String(item.label || path), kind: item.kind });
+      }
       return tracks;
     }
-
     function waitForRenderingIdle() {
       return new Promise((resolve) => {
         if ("requestIdleCallback" in window) {
@@ -3534,7 +3537,18 @@
           let source = track.source;
           let objectUrl = null;
           let streaming = false;
-          if (!isNetworkSource(source) && !isBrowserLocalSource(source)) {
+          let preparedWaveform = null;
+          if (track.kind === "youtube") {
+            const config = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
+            if (!config?.url || !config?.token) throw new Error("Configure a ponte para preparar o vídeo do YouTube.");
+            const bridge = await ensureVideoBridge(config);
+            if (!bridge.capabilities?.includes("youtube-video")) throw new Error("Reinicie a ponte para habilitar vídeo do YouTube na janela 3D.");
+            setXrMessage("Preparando YouTube para a janela 3D…");
+            const ticket = await fetchYoutubeMediaTicket(config, notePath, track.source);
+            source = ticket.source;
+            streaming = true;
+            preparedWaveform = ticket.waveform ?? null;
+          } else if (!isNetworkSource(source) && !isBrowserLocalSource(source)) {
             const config = JSON.parse(
               sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null"
             );
@@ -3563,6 +3577,11 @@
             return;
           }
           preparedNoteVideo = { source, objectUrl, track, streaming };
+          if (preparedWaveform && activeNoteTrack?.source === track.source) {
+            const cacheKey = `${notePath}\n${track.source}`;
+            audioWaveformCache.set(cacheKey, preparedWaveform);
+            createArAudioWaveform(preparedWaveform, AR_NOTE_WIDTH, AR_NOTE_HEIGHT);
+          }
           if (activeNoteAudioControl) {
             activeNoteAudioControl.material.color.setHex(0x63e6be);
           }
@@ -3720,6 +3739,7 @@
       );
       const track = noteTrackForHotspot(hotspot);
       if (track) {
+        setXrMessage(`Mídia selecionada: ${track.label}. Preparando reprodução…`);
         void toggleNoteAudio(track);
       } else {
         setXrMessage("Aponte para um cartão de áudio ou vídeo e faça a pinça.");
@@ -3740,12 +3760,8 @@
         activeNoteTrack = track;
         if (!activeNoteMediaPath) activeNoteMediaPath = arNotePath;
       }
-      if (track.kind === "youtube") {
-        openYouTubeOverlay(track);
-        return;
-      }
       closeYouTubeOverlay();
-      const isVideo = track.kind === "video";
+      const isVideo = track.kind === "video" || track.kind === "youtube";
       try {
         if (isVideo && preparedNoteVideo?.track?.source !== track.source) {
           if (noteVideoPreparation) {
@@ -3799,7 +3815,7 @@
           const spatial = connectSpatialNoteAudio(activeNoteAudio, spatialContext);
           if (isVideo) {
             activeNoteAudio.addEventListener("error", () => {
-              if (preparedNoteVideo?.streaming) {
+              if (preparedNoteVideo?.streaming && track.kind !== "youtube") {
                 void recoverVideoWithBlob(track);
                 return;
               }

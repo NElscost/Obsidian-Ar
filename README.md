@@ -32,7 +32,8 @@ local Rust bridge, creates an HTTPS tunnel, and displays a QR code for pairing.
 - a Meta Quest with hand tracking and an up-to-date WebXR browser.
 
 Blender, ADB, Obsidian CLI, and **3D Graph New** are not required for the
-recommended direct-graph mode.
+recommended direct-graph mode. `yt-dlp` is used only when a YouTube card is
+selected for playback inside the 3D video window.
 
 ### Windows packages
 
@@ -46,6 +47,7 @@ winget install --id Kitware.CMake -e
 winget install --id LLVM.LLVM -e
 winget install --id Cloudflare.cloudflared -e
 winget install --id Gyan.FFmpeg -e
+winget install --id yt-dlp.yt-dlp -e
 ```
 
 Close and reopen Obsidian after installation so its process receives the new
@@ -58,6 +60,7 @@ cargo --version
 cloudflared --version
 ffmpeg -version
 ffprobe -version
+yt-dlp --version
 ```
 
 ### macOS packages
@@ -65,7 +68,7 @@ ffprobe -version
 Install [Homebrew](https://brew.sh/) and then run:
 
 ```sh
-brew install git node rustup cmake llvm cloudflared ffmpeg
+brew install git node rustup cmake llvm cloudflared ffmpeg yt-dlp yt-dlp
 rustup-init -y
 ```
 
@@ -79,7 +82,7 @@ For Debian or Ubuntu:
 
 ```sh
 sudo apt update
-sudo apt install -y git curl build-essential cmake clang libclang-dev ffmpeg
+sudo apt install -y git curl build-essential cmake clang libclang-dev ffmpeg yt-dlp
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ```
 

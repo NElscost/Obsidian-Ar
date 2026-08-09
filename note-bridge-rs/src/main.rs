@@ -103,12 +103,13 @@ fn bridge_capabilities(_state: &AppState) -> Vec<&'static str> {
         "video-transcode",
         "byte-ranges",
         "media-tickets",
+        "youtube-video",
         "waveform",
         "video-ambilight",
     ]
 }
 
-const BRIDGE_API_VERSION: u32 = 3;
+const BRIDGE_API_VERSION: u32 = 4;
 
 fn is_allowed_web_origin(origin: &HeaderValue) -> bool {
     let Ok(origin) = origin.to_str() else {
@@ -195,6 +196,18 @@ mod origin_tests {
             [12, 34, 56, 12, 34, 56, 12, 34, 56, 12, 34, 56]
         );
     }
+
+    #[test]
+    fn restricts_youtube_video_hosts() {
+        assert!(youtube_video_url_allowed(
+            "https://www.youtube.com/watch?v=abc"
+        ));
+        assert!(youtube_video_url_allowed("https://youtu.be/abc"));
+        assert!(!youtube_video_url_allowed("http://youtube.com/watch?v=abc"));
+        assert!(!youtube_video_url_allowed(
+            "https://youtube.com.evil.test/watch?v=abc"
+        ));
+    }
 }
 
 #[derive(Deserialize)]
@@ -228,6 +241,13 @@ struct AmbilightResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RemoteImageRequest {
+    url: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteVideoRequest {
+    note_path: String,
     url: String,
 }
 
@@ -1464,6 +1484,144 @@ async fn stream_media_file(path: &Path, headers: &HeaderMap, cache_control: &str
     response.body(Body::from_stream(stream)).unwrap()
 }
 
+fn youtube_video_url_allowed(value: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(value) else {
+        return false;
+    };
+    if url.scheme() != "https" {
+        return false;
+    }
+    matches!(
+        url.host_str()
+            .map(|host| host.to_ascii_lowercase())
+            .as_deref(),
+        Some("youtube.com" | "www.youtube.com" | "m.youtube.com" | "youtu.be")
+    )
+}
+
+async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
+    let mut hasher = DefaultHasher::new();
+    "youtube-video-v1".hash(&mut hasher);
+    url.hash(&mut hasher);
+    let cache_dir = env::temp_dir().join("obsidian-ar-youtube-cache");
+    tokio::fs::create_dir_all(&cache_dir).await?;
+    let output_path = cache_dir.join(format!("{:016x}.mp4", hasher.finish()));
+    if tokio::fs::metadata(&output_path)
+        .await
+        .map(|metadata| metadata.len() > 0)
+        .unwrap_or(false)
+    {
+        return Ok(output_path);
+    }
+
+    println!("[YOUTUBE] preparando vídeo 720p para a janela WebXR: {url}");
+    let status = Command::new("yt-dlp")
+        .args([
+            "--no-playlist",
+            "--no-progress",
+            "--extractor-args",
+            "youtube:player_client=android",
+            "--max-filesize",
+            "256M",
+            "--format",
+            "best[ext=mp4][height<=720]",
+            "--output",
+        ])
+        .arg(&output_path)
+        .arg(url)
+        .status()
+        .await
+        .context(
+            "yt-dlp não está disponível. Instale-o para reproduzir YouTube dentro da janela 3D.",
+        )?;
+    if !status.success() {
+        bail!("yt-dlp não conseguiu preparar o vídeo do YouTube.");
+    }
+    let metadata = tokio::fs::metadata(&output_path)
+        .await
+        .context("yt-dlp terminou sem criar o arquivo de vídeo.")?;
+    if metadata.len() == 0 || metadata.len() > 256 * 1024 * 1024 {
+        let _ = tokio::fs::remove_file(&output_path).await;
+        bail!("O vídeo do YouTube está vazio ou excede o limite de 256 MB.");
+    }
+    Ok(output_path)
+}
+
+async fn create_youtube_ticket(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<RemoteVideoRequest>,
+) -> Response {
+    if !authorized(&headers, &state.token) {
+        return error(StatusCode::UNAUTHORIZED, "Token inválido.");
+    }
+    let note_path = normalize_note_path(&payload.note_path);
+    if !matches!(note_is_allowed(&state, &note_path).await, Ok(true)) {
+        return error(StatusCode::NOT_FOUND, "Nota não permitida.");
+    }
+    if !youtube_video_url_allowed(&payload.url) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Somente URLs HTTPS do YouTube são permitidas.",
+        );
+    }
+    let path = match prepare_youtube_video(&payload.url).await {
+        Ok(path) => path,
+        Err(err) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
+    };
+    let path = match compatible_video_asset(&state, &path).await {
+        Ok(path) => path,
+        Err(err) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
+    };
+    let metadata = match tokio::fs::metadata(&path).await {
+        Ok(metadata) => metadata,
+        Err(err) => return error(StatusCode::NOT_FOUND, err.to_string()),
+    };
+    let waveform_path = path.clone();
+    let waveform = tokio::task::spawn_blocking(move || analyze_audio_waveform(&waveform_path))
+        .await
+        .ok()
+        .and_then(Result::ok);
+
+    let mut random = [0u8; 32];
+    rand::rng().fill_bytes(&mut random);
+    let ticket = random
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let now = Instant::now();
+    let mut tickets = state.media_tickets.write().await;
+    tickets.retain(|_, entry| entry.expires_at > now);
+    if tickets.len() >= 64 {
+        if let Some(oldest) = tickets
+            .iter()
+            .min_by_key(|(_, entry)| entry.expires_at)
+            .map(|(key, _)| key.clone())
+        {
+            tickets.remove(&oldest);
+        }
+    }
+    tickets.insert(
+        ticket.clone(),
+        MediaTicket {
+            path: path.clone(),
+            expires_at: now + MEDIA_TICKET_TTL,
+        },
+    );
+    println!(
+        "[YOUTUBE] janela 3D pronta: {} ({} bytes)",
+        payload.url,
+        metadata.len()
+    );
+    Json(json!({
+        "url": format!("/media/{ticket}"),
+        "expiresIn": MEDIA_TICKET_TTL.as_secs(),
+        "contentType": "video/mp4",
+        "size": metadata.len(),
+        "waveform": waveform
+    }))
+    .into_response()
+}
 async fn create_media_ticket(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1682,6 +1840,7 @@ async fn main() -> Result<()> {
         .route("/note", post(read_note))
         .route("/asset", post(read_asset))
         .route("/media-ticket", post(create_media_ticket))
+        .route("/youtube-ticket", post(create_youtube_ticket))
         .route("/media/{ticket}", get(read_media_ticket))
         .route("/waveform", post(read_waveform))
         .route("/video-ambilight", post(read_video_ambilight))
