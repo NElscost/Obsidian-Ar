@@ -13,7 +13,9 @@ const r2 = process.env.SPACE_R2_BINDING || "MODELS";
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 const allowedDevHosts = [
-  "space-ar.shares.zrok.io",
+  ".shares.zrok.io",
+  ".ngrok-free.app",
+  ".ngrok.app",
   ...(process.env.SPACE_ALLOWED_DEV_HOSTS ?? "")
     .split(",")
     .map((host) => host.trim())
