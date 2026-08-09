@@ -180,6 +180,9 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /PREPARED_VIDEO_CACHE_TTL_MS = 25 \* 60 \* 1000/);
   assert.match(html, /activeNoteMediaPath !== arNotePath/);
   assert.match(html, /activeMediaMatches/);
+  assert.match(html, /pendingPreparedVideoAutoplayKey/);
+  assert.match(html, /queueMicrotask\(\(\) => void toggleNoteAudio\(track\)\)/);
+  assert.match(html, /videoCloseIcon[\s\S]*?color: 0x05070a/);
   assert.match(html, /preparedNoteVideo\?\.notePath === arNotePath/);
   assert.match(html, /track\.kind === "video" \|\| track\.kind === "youtube"/);
   assert.match(html, /activateNoteMediaAtUv/);
@@ -189,7 +192,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /control\.position\.set\([\s\S]*?0\.07/);
   assert.match(html, /videoArcAngle = THREE\.MathUtils\.degToRad\(14\)/);
   assert.match(html, /color: 0x05070a/);
-  assert.match(html, /videoClose[\s\S]*?color: 0x05070a/);
+  assert.match(html, /videoClose[\s\S]*?color: 0xff6b6b/);
   assert.match(html, /activeNoteVideoGroup\.name = "note-video-window"/);
   assert.match(html, /activeNoteVideoGroup\.add\(videoBackdrop, activeNoteVideoSurface, videoClose\)/);
   assert.match(html, /new THREE\.VideoTexture\(video\)/);

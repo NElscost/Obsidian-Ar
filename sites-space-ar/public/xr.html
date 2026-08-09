@@ -1452,6 +1452,7 @@
     let preparedNoteVideo = null;
     let noteVideoPreparation = null;
     let noteVideoPreparationError = null;
+    let pendingPreparedVideoAutoplayKey = "";
     let noteVideoPreparationGeneration = 0;
     let videoFallbackBusy = false;
     let localNoteGraphGroup = null;
@@ -3453,7 +3454,7 @@
       const videoClose = new THREE.Mesh(
         new THREE.CircleGeometry(0.019, 14),
         new THREE.MeshBasicMaterial({
-          color: 0x05070a,
+          color: 0xff6b6b,
           transparent: true,
           depthTest: false,
           toneMapped: false
@@ -3568,9 +3569,10 @@
       return describeError(error || video?.error || "falha desconhecida");
     }
 
-    function beginNoteVideoPreparation(track, notePath) {
+    function beginNoteVideoPreparation(track, notePath, autoplay = false) {
       const generation = noteVideoPreparationGeneration;
       const cacheKey = preparedVideoCacheKey(track, notePath);
+      if (autoplay) pendingPreparedVideoAutoplayKey = cacheKey;
       noteVideoPreparationError = null;
       preparedNoteVideo = null;
       const cached = preparedVideoSessionCache.get(cacheKey);
@@ -3647,9 +3649,20 @@
             activeNoteAudioControl.material.color.setHex(0x63e6be);
           }
           setXrMessage("Vídeo pronto. Faça a pinça no botão verde para reproduzir.");
+          if (
+            pendingPreparedVideoAutoplayKey === cacheKey
+            && arNotePath === notePath
+            && activeNoteTrack?.source === track.source
+          ) {
+            pendingPreparedVideoAutoplayKey = "";
+            queueMicrotask(() => void toggleNoteAudio(track));
+          }
         } catch (error) {
           if (generation !== noteVideoPreparationGeneration) return;
           noteVideoPreparationError = error;
+          if (pendingPreparedVideoAutoplayKey === cacheKey) {
+            pendingPreparedVideoAutoplayKey = "";
+          }
           if (activeNoteAudioControl) {
             activeNoteAudioControl.material.color.setHex(0xff6b6b);
           }
@@ -3733,6 +3746,7 @@
       preparedNoteVideo = null;
       noteVideoPreparation = null;
       noteVideoPreparationError = null;
+      pendingPreparedVideoAutoplayKey = "";
       noteVideoPreparationGeneration += 1;
       disposeVideoMediaLayer();
       const waveformOwnedByVideo = Boolean(
@@ -3848,7 +3862,7 @@
             setXrMessage("O video selecionado ainda esta sendo preparado.");
             return;
           }
-          const restored = beginNoteVideoPreparation(track, arNotePath);
+          const restored = beginNoteVideoPreparation(track, arNotePath, true);
           if (!restored) {
             setXrMessage("Preparando o vídeo selecionado. Faça outra pinça quando o botão ficar verde.");
             return;
@@ -3856,7 +3870,7 @@
         }
         if (isVideo && !activeMediaMatches && !preparedNoteVideo) {
           if (noteVideoPreparationError) {
-            beginNoteVideoPreparation(track, arNotePath);
+            beginNoteVideoPreparation(track, arNotePath, true);
             setXrMessage("Tentando preparar o vídeo novamente…");
             return;
           }
