@@ -437,6 +437,9 @@ test("mantém a busca digitada dentro da sessão WebXR", async () => {
   assert.ok(html.includes('[..."1234567890"]'));
   assert.ok(html.includes('["@", "#", "&", "(", ")", "+", "/", "="]'));
   assert.ok(html.includes('new THREE.PlaneGeometry(0.72, 0.62)'));
+  assert.match(html, /function frostedKeyboardTexture/);
+  assert.match(html, /map: frostedKeyboardTexture\(\)/);
+  assert.match(html, /no extra render pass/);
   assert.match(html, /function addArSearchKey/);
   assert.match(html, /aspect: width \/ 0\.052/);
   assert.match(html, /arNoteGroup\.scale\.setScalar\(keyboardWindowPinned \? 0\.62 : 0\.78\)/);

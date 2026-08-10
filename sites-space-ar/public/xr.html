@@ -4650,6 +4650,49 @@
       return texture;
     }
 
+    function frostedKeyboardTexture() {
+      const canvas = document.createElement("canvas");
+      canvas.width = 256;
+      canvas.height = 220;
+      const context = canvas.getContext("2d");
+      const gradient = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+      gradient.addColorStop(0, "rgba(45, 72, 104, 0.94)");
+      gradient.addColorStop(0.48, "rgba(17, 34, 56, 0.88)");
+      gradient.addColorStop(1, "rgba(5, 13, 25, 0.82)");
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, canvas.width, canvas.height);
+
+      const glow = context.createRadialGradient(46, 28, 0, 46, 28, 150);
+      glow.addColorStop(0, "rgba(190, 226, 255, 0.18)");
+      glow.addColorStop(1, "rgba(190, 226, 255, 0)");
+      context.fillStyle = glow;
+      context.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Deterministic one-time grain: no animated shader and no extra render pass.
+      let seed = 0x51f15e;
+      context.fillStyle = "rgba(224, 240, 255, 0.055)";
+      for (let index = 0; index < 640; index += 1) {
+        seed = (seed * 1664525 + 1013904223) >>> 0;
+        const x = seed % canvas.width;
+        seed = (seed * 1664525 + 1013904223) >>> 0;
+        const y = seed % canvas.height;
+        context.fillRect(x, y, 1, 1);
+      }
+
+      context.strokeStyle = "rgba(218, 239, 255, 0.48)";
+      context.lineWidth = 2;
+      context.strokeRect(2, 2, canvas.width - 4, canvas.height - 4);
+      context.strokeStyle = "rgba(131, 188, 230, 0.16)";
+      context.lineWidth = 1;
+      context.strokeRect(6, 6, canvas.width - 12, canvas.height - 12);
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.minFilter = THREE.LinearFilter;
+      texture.generateMipmaps = false;
+      return texture;
+    }
+
     function updateArSearchDisplay() {
       if (!arSearchDisplay) return;
       arSearchDisplay.material.map?.dispose();
@@ -4798,7 +4841,15 @@
 
       const background = new THREE.Mesh(
         new THREE.PlaneGeometry(0.72, 0.62),
-        new THREE.MeshBasicMaterial({ color: 0x08111f, transparent: true, opacity: 0.96, depthTest: false, toneMapped: false })
+        new THREE.MeshBasicMaterial({
+          map: frostedKeyboardTexture(),
+          color: 0xffffff,
+          transparent: true,
+          opacity: 0.82,
+          depthTest: false,
+          depthWrite: false,
+          toneMapped: false
+        })
       );
       background.position.z = -0.002;
       background.renderOrder = 1000;
