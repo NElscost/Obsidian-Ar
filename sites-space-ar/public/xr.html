@@ -641,6 +641,10 @@
           <span data-i18n="limit">Maximum visible nodes (800–1200)</span>
           <input id="graph-node-limit" type="number" min="800" max="1200" step="50" value="800" inputmode="numeric">
         </label>
+        <label class="graph-mode">
+          <input id="real-glass-blur" type="checkbox">
+          <span id="real-glass-label">Real glass blur (experimental, WebGL only)</span>
+        </label>
         <details class="panorama-options" open>
           <summary data-i18n="panorama">360° panoramic background (optional)</summary>
           <input id="background-360" type="file" accept="image/avif,image/webp,image/jpeg,image/png">
@@ -717,6 +721,7 @@
     const DYNAMIC_GRAPH_STORAGE_KEY = "space-ar-dynamic-graph";
     const GRAPH_LAYOUT_STORAGE_KEY = "space-ar-graph-layout-v1";
     const GRAPH_NODE_LIMIT_STORAGE_KEY = "space-ar-graph-node-limit";
+    const REAL_GLASS_BLUR_STORAGE_KEY = "space-ar-real-glass-blur";
     const LARGE_GRAPH_NODE_THRESHOLD = 5000;
     const HUGE_GRAPH_NODE_THRESHOLD = 9000;
     const MAX_DYNAMIC_LABELS = 384;
@@ -740,10 +745,18 @@
       it:["Lingua","Spazio in realtà aumentata.","Posiziona il grafo nel mondo reale con passthrough, ancoraggi spaziali e tracciamento delle mani.","Guarda una superficie finché non appare il marcatore.","Esegui una pinza o premi il grilletto per ancorare il grafo.","Usa due pinze per modificare la scala.","URL HTTPS del bridge Obsidian","Token del bridge","Cloudflare Access (opzionale)","Crea il grafo direttamente dal vault, senza Blender o glTF","Massimo di nodi visibili (800–1200)","Sfondo panoramico 360° (opzionale)","Nessun file: passthrough. Consigliato WebP o AVIF equirettangolare 4096×2048.","Salva accesso alle note","Verifica compatibilità…","Caricamento di Space.gltf…","Stima…","Trova una superficie ed esegui una pinza per posizionare il grafo.","Riposiziona","Nome della nota","Cerca","Chiudi","Nota"],
       ro:["Limbă","Spațiu în realitate augmentată.","Plasează graful în lumea reală cu passthrough, ancore spațiale și urmărirea mâinilor.","Privește o suprafață până apare marcajul.","Fă o ciupire sau apasă trăgaciul pentru a ancora graful.","Folosește două ciupiri pentru a schimba scala.","URL HTTPS pentru puntea Obsidian","Tokenul punții","Cloudflare Access (opțional)","Construiește graful direct din vault, fără Blender sau glTF","Număr maxim de noduri vizibile (800–1200)","Fundal panoramic 360° (opțional)","Fără fișier: passthrough. Recomandat WebP sau AVIF equirectangular 4096×2048.","Salvează accesul la note","Se verifică compatibilitatea…","Se încarcă Space.gltf…","Se estimează…","Găsește o suprafață și ciupește pentru a plasa graful.","Repoziționează","Numele notei","Caută","Închide","Notă"]
     };
-    const UI_KEYS=["language","title","intro","step1","step2","step3","bridgeUrl","bridgeToken","access","dynamic","limit","panorama","panoramaHint","save","checking","loading","estimating","surface","reposition","noteName","search","close","note"];
+    const REAL_GLASS_LABELS = {
+      en:"Real glass blur (experimental, WebGL only)",
+      pt:"Desfoque de vidro real (experimental, somente WebGL)",
+      es:"Desenfoque de vidrio real (experimental, solo WebGL)",
+      fr:"Flou de verre réel (expérimental, WebGL uniquement)",
+      it:"Sfocatura vetro reale (sperimentale, solo WebGL)",
+      ro:"Estompare sticlă reală (experimental, doar WebGL)"
+    };    const UI_KEYS=["language","title","intro","step1","step2","step3","bridgeUrl","bridgeToken","access","dynamic","limit","panorama","panoramaHint","save","checking","loading","estimating","surface","reposition","noteName","search","close","note"];
     function applyUiLanguage(code) {
       code = UI_TRANSLATIONS[code] ? code : "en"; const values=UI_TRANSLATIONS[code]; const messages=Object.fromEntries(UI_KEYS.map((key,index)=>[key,values[index]]));
       document.documentElement.lang=code; languageSelect.value=code;
+      document.querySelector("#real-glass-label").textContent=REAL_GLASS_LABELS[code];
       document.querySelectorAll("[data-i18n]").forEach((el)=>{if(messages[el.dataset.i18n])el.textContent=messages[el.dataset.i18n]});
       document.querySelectorAll("[data-i18n-placeholder]").forEach((el)=>{el.placeholder=messages[el.dataset.i18nPlaceholder]||el.placeholder});
       localStorage.setItem(LANGUAGE_STORAGE_KEY,code);
@@ -771,6 +784,7 @@
     const saveBridgeButton = document.querySelector("#save-bridge");
     const dynamicGraphToggle = document.querySelector("#dynamic-graph");
     const graphNodeLimitInput = document.querySelector("#graph-node-limit");
+    const realGlassBlurToggle = document.querySelector("#real-glass-blur");
     const background360Input = document.querySelector("#background-360");
     const bridgeFeedback = document.querySelector("#bridge-feedback");
     const notePanel = document.querySelector("#note-panel");
@@ -1427,6 +1441,17 @@
     let arSearchQuery = "";
     let arSearchDisplay = null;
     let arSearchSuggestionGroup = null;
+    let arSearchRealGlassPanel = null;
+    let realGlassCaptureTarget = null;
+    let realGlassBlurTargets = null;
+    let realGlassPassScene = null;
+    let realGlassPassCamera = null;
+    let realGlassPassQuad = null;
+    let realGlassPassMaterial = null;
+    let realGlassFrameCounter = 0;
+    let realGlassPreviousFrameAt = 0;
+    let realGlassSlowFrames = 0;
+    let realGlassSuspended = false;
     let noteAudioTracks = [];
     let noteVideoTracks = [];
     let activeNoteAudio = null;
@@ -4515,6 +4540,8 @@
       }
       dynamicGraphToggle.checked =
         localStorage.getItem(DYNAMIC_GRAPH_STORAGE_KEY) !== "false";
+      realGlassBlurToggle.checked =
+        localStorage.getItem(REAL_GLASS_BLUR_STORAGE_KEY) === "true";
       renderedNodeLimit = normalizeRenderedNodeLimit(
         localStorage.getItem(GRAPH_NODE_LIMIT_STORAGE_KEY) ?? DEFAULT_RENDERED_NODES
       );
@@ -4693,6 +4720,124 @@
       return texture;
     }
 
+    const KAWASE_VERTEX_SHADER = `
+      varying vec2 vUv;
+      void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
+    `;
+    const KAWASE_FRAGMENT_SHADER = `
+      uniform sampler2D tDiffuse;
+      uniform vec2 texelSize;
+      uniform float offset;
+      varying vec2 vUv;
+      void main() {
+        vec2 delta = texelSize * offset;
+        gl_FragColor = 0.25 * (
+          texture2D(tDiffuse, vUv + vec2(delta.x, delta.y)) +
+          texture2D(tDiffuse, vUv + vec2(-delta.x, delta.y)) +
+          texture2D(tDiffuse, vUv + vec2(delta.x, -delta.y)) +
+          texture2D(tDiffuse, vUv - delta)
+        );
+      }
+    `;
+
+    function createRealGlassTarget(depthBuffer = false) {
+      const target = new THREE.WebGLRenderTarget(384, 320, {
+        minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+        format: THREE.RGBAFormat, depthBuffer, stencilBuffer: false
+      });
+      target.texture.generateMipmaps = false;
+      return target;
+    }
+
+    function ensureRealGlassBlur() {
+      if (realGlassCaptureTarget) return true;
+      try {
+        realGlassCaptureTarget = createRealGlassTarget(true);
+        realGlassBlurTargets = [createRealGlassTarget(), createRealGlassTarget()];
+        realGlassPassMaterial = new THREE.ShaderMaterial({
+          uniforms: { tDiffuse: { value: null }, texelSize: { value: new THREE.Vector2(1 / 384, 1 / 320) }, offset: { value: 1.5 } },
+          vertexShader: KAWASE_VERTEX_SHADER, fragmentShader: KAWASE_FRAGMENT_SHADER,
+          depthTest: false, depthWrite: false, toneMapped: false
+        });
+        realGlassPassQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), realGlassPassMaterial);
+        realGlassPassQuad.frustumCulled = false;
+        realGlassPassScene = new THREE.Scene();
+        realGlassPassScene.add(realGlassPassQuad);
+        realGlassPassCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        return true;
+      } catch (error) {
+        console.warn("Real glass blur indisponível; mantendo frosted glass.", error);
+        realGlassSuspended = true;
+        return false;
+      }
+    }
+
+    function disposeRealGlassBlur() {
+      if (arSearchRealGlassPanel?.material) arSearchRealGlassPanel.material.map = null;
+      realGlassCaptureTarget?.dispose();
+      for (const target of realGlassBlurTargets ?? []) target.dispose();
+      realGlassPassQuad?.geometry?.dispose();
+      realGlassPassMaterial?.dispose();
+      realGlassCaptureTarget = null;
+      realGlassBlurTargets = null;
+      realGlassPassScene = null;
+      realGlassPassCamera = null;
+      realGlassPassQuad = null;
+      realGlassPassMaterial = null;
+      arSearchRealGlassPanel = null;
+      realGlassFrameCounter = 0;
+      realGlassPreviousFrameAt = 0;
+      realGlassSlowFrames = 0;
+    }
+
+    function updateRealGlassBlur(time) {
+      if (!realGlassBlurToggle.checked || realGlassSuspended || !arSearchKeyboardActive || !arSearchRealGlassPanel) return;
+      const frameDelta = realGlassPreviousFrameAt ? time - realGlassPreviousFrameAt : 0;
+      realGlassPreviousFrameAt = time;
+      if (frameDelta > 26) realGlassSlowFrames += 1;
+      else realGlassSlowFrames = Math.max(0, realGlassSlowFrames - 1);
+      if (realGlassSlowFrames >= 3) {
+        realGlassSuspended = true;
+        arSearchRealGlassPanel.visible = false;
+        setXrMessage("Real glass blur suspenso para preservar a taxa de quadros.");
+        return;
+      }
+      realGlassFrameCounter = (realGlassFrameCounter + 1) % 3;
+      if (realGlassFrameCounter || !ensureRealGlassBlur()) return;
+      const previousTarget = renderer.getRenderTarget();
+      const xrWasEnabled = renderer.xr.enabled;
+      const keyboardWasVisible = arNoteGroup.visible;
+      const xrCamera = renderer.xr.getCamera(camera);
+      const captureCamera = xrCamera.cameras?.[0] ?? camera;
+      try {
+        arNoteGroup.visible = false;
+        renderer.xr.enabled = false;
+        renderer.setRenderTarget(realGlassCaptureTarget);
+        renderer.clear();
+        renderer.render(scene, captureCamera);
+        realGlassPassMaterial.uniforms.tDiffuse.value = realGlassCaptureTarget.texture;
+        realGlassPassMaterial.uniforms.offset.value = 1.5;
+        renderer.setRenderTarget(realGlassBlurTargets[0]);
+        renderer.clear();
+        renderer.render(realGlassPassScene, realGlassPassCamera);
+        realGlassPassMaterial.uniforms.tDiffuse.value = realGlassBlurTargets[0].texture;
+        realGlassPassMaterial.uniforms.offset.value = 3.5;
+        renderer.setRenderTarget(realGlassBlurTargets[1]);
+        renderer.clear();
+        renderer.render(realGlassPassScene, realGlassPassCamera);
+        arSearchRealGlassPanel.material.map = realGlassBlurTargets[1].texture;
+        arSearchRealGlassPanel.material.needsUpdate = true;
+        arSearchRealGlassPanel.visible = true;
+      } catch (error) {
+        console.warn("Real glass blur falhou; usando frosted glass.", error);
+        realGlassSuspended = true;
+        arSearchRealGlassPanel.visible = false;
+      } finally {
+        renderer.setRenderTarget(previousTarget);
+        renderer.xr.enabled = xrWasEnabled;
+        arNoteGroup.visible = keyboardWasVisible;
+      }
+    }
     function updateArSearchDisplay() {
       if (!arSearchDisplay) return;
       arSearchDisplay.material.map?.dispose();
@@ -4813,6 +4958,7 @@
       });
     }
     function closeKeyboardSearch() {
+      disposeRealGlassBlur();
       xrSearch.classList.remove("visible");
       xrSearchInput.blur();
       if (arSearchKeyboardActive) disposeArNote();
@@ -4854,6 +5000,20 @@
       background.position.z = -0.002;
       background.renderOrder = 1000;
       arNoteGroup.add(background);
+
+      if (realGlassBlurToggle.checked && !realGlassSuspended) {
+        arSearchRealGlassPanel = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.704, 0.604),
+          new THREE.MeshBasicMaterial({
+            color: 0xdcefff, transparent: true, opacity: 0.46,
+            depthTest: false, depthWrite: false, toneMapped: false
+          })
+        );
+        arSearchRealGlassPanel.position.z = -0.001;
+        arSearchRealGlassPanel.renderOrder = 1001;
+        arSearchRealGlassPanel.visible = false;
+        arNoteGroup.add(arSearchRealGlassPanel);
+      }
 
       arSearchDisplay = new THREE.Mesh(
         new THREE.PlaneGeometry(0.64, 0.065),
@@ -6221,6 +6381,7 @@
       noteWarmupCancelled = true;
       noteWarmupRunId += 1;
       cancelNoteCapture();
+      realGlassSuspended = false;
       enterButton.disabled = true;
       try {
 
@@ -7440,6 +7601,7 @@
           previousUiUpdate = time;
         }
       }
+      updateRealGlassBlur(time);
       renderer.render(scene, camera);
     }
 
@@ -7516,6 +7678,15 @@
       );
       bridgeFeedback.textContent =
         "Modo alterado. Recarregue a página para trocar a origem do grafo.";
+      bridgeFeedback.className = "bridge-feedback success";
+    });
+    realGlassBlurToggle.addEventListener("change", () => {
+      localStorage.setItem(REAL_GLASS_BLUR_STORAGE_KEY, String(realGlassBlurToggle.checked));
+      realGlassSuspended = false;
+      if (!realGlassBlurToggle.checked) disposeRealGlassBlur();
+      bridgeFeedback.textContent = realGlassBlurToggle.checked
+        ? "Real glass blur ativado. O frosted glass continua como fallback automático."
+        : "Real glass blur desativado.";
       bridgeFeedback.className = "bridge-feedback success";
     });
     graphNodeLimitInput.addEventListener("change", () => {

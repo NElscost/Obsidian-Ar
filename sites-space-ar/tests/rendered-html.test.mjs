@@ -440,6 +440,13 @@ test("mantém a busca digitada dentro da sessão WebXR", async () => {
   assert.match(html, /function frostedKeyboardTexture/);
   assert.match(html, /map: frostedKeyboardTexture\(\)/);
   assert.match(html, /no extra render pass/);
+  assert.match(html, /id="real-glass-blur"/);
+  assert.match(html, /function updateRealGlassBlur/);
+  assert.match(html, /new THREE\.WebGLRenderTarget\(384, 320/);
+  assert.match(html, /realGlassFrameCounter = \(realGlassFrameCounter \+ 1\) % 3/);
+  assert.match(html, /offset\.value = 3\.5/);
+  assert.match(html, /realGlassSlowFrames >= 3/);
+  assert.match(html, /function disposeRealGlassBlur/);
   assert.match(html, /function addArSearchKey/);
   assert.match(html, /aspect: width \/ 0\.052/);
   assert.match(html, /arNoteGroup\.scale\.setScalar\(keyboardWindowPinned \? 0\.62 : 0\.78\)/);
