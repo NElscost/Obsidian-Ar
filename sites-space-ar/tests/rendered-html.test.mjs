@@ -421,7 +421,8 @@ test("configuração pública não depende dos metadados privados do Sites", asy
   assert.doesNotMatch(viteConfig, /import hostingConfig/);
   assert.doesNotMatch(viteConfig, /\.\/build\/sites-vite-plugin/);
   assert.match(viteConfig, /\.\/sites-vite-plugin/);
-  assert.match(viteConfig, /space-ar\.shares\.zrok\.io/);
+  assert.match(viteConfig, /\.shares\.zrok\.io/);
+  assert.match(viteConfig, /\.ngrok-free\.app/);
   assert.match(viteConfig, /SPACE_ALLOWED_DEV_HOSTS/);
   assert.match(sitesPlugin, /Public clones can build without/);
 });
@@ -433,6 +434,9 @@ test("mantém a busca digitada dentro da sessão WebXR", async () => {
   assert.match(html, /function updateJointDoubleThumbTap/);
   assert.match(html, /thumbTapGestureStates/);
   assert.match(html, /function keyboardTexture/);
+  assert.ok(html.includes('[..."1234567890"]'));
+  assert.ok(html.includes('["@", "#", "&", "(", ")", "+", "/", "="]'));
+  assert.ok(html.includes('new THREE.PlaneGeometry(0.72, 0.62)'));
   assert.match(html, /function addArSearchKey/);
   assert.match(html, /aspect: width \/ 0\.052/);
   assert.match(html, /arNoteGroup\.scale\.setScalar\(keyboardWindowPinned \? 0\.62 : 0\.78\)/);
