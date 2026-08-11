@@ -1611,6 +1611,9 @@
     const keyboardAnchorPosition = new THREE.Vector3();
     const keyboardAnchorQuaternion = new THREE.Quaternion();
     let keyboardAnchorPoseValid = false;
+    let keyboardSurfacePlacementArmed = false;
+    const keyboardTouchState = new Map();
+    const keyboardTouchLocal = new THREE.Vector3();
     let waveformDragInputSource = null;
 
     function releaseActiveMedia() {
@@ -4150,6 +4153,8 @@
         if (keyboard) {
           keyboardWindowAnchor = null;
           keyboardWindowPinned = false;
+      keyboardSurfacePlacementArmed = false;
+      keyboardTouchState.clear();
           keyboardAnchorPoseValid = false;
         } else {
           noteWindowAnchor = null;
@@ -5050,6 +5055,8 @@
       // Never enlarge the actual raycast surface: adjacent rows are only 9 mm
       // apart, so scaling the key could overlap and commit a different letter.
       key.userData.highlightScale = false;
+      key.userData.touchWidth = width;
+      key.userData.touchHeight = 0.052;
       arNoteControls.push(key);
       arNoteGroup.add(key);
       return key;
@@ -5206,6 +5213,7 @@
       arSearchDisplay.renderOrder = 1001;
       arNoteGroup.add(arSearchDisplay);
       updateArSearchDisplay();
+      addArSearchKey("SURF", "search-surface", -0.286, 0.245, 0.074, "#315d70");
       addArSearchKey("PIN", "search-pin", 0.294, 0.245, 0.064, "#72572a");
 
       const rows = [
@@ -5229,7 +5237,7 @@
       addArSearchKey("BUSCAR", "search-submit", 0.116, -0.225, 0.15, "#167c68");
       addArSearchKey("×", "search-close", 0.278, -0.225, 0.07, "#8b3040");
       arNoteGroup.visible = true;
-      setXrMessage("Busca 3D aberta. Aponte com a palma e faça pinça para digitar.");
+      setXrMessage("Busca 3D aberta. Toque nas teclas ou aponte com a palma e faça pinça.");
     }
 
     function submitKeyboardSearch(event) {
@@ -5270,6 +5278,16 @@
         void requestNote(node.id);
         return;
       }
+      if (action === "search-surface") {
+        keyboardSurfacePlacementArmed = true;
+        if (keyboardWindowAnchor?.delete) keyboardWindowAnchor.delete();
+        keyboardWindowAnchor = null;
+        keyboardWindowPinned = false;
+        keyboardTouchState.clear();
+        keyboardAnchorPoseValid = false;
+        setXrMessage("Aponte para uma superfície e faça pinça para posicionar o teclado.");
+        return;
+      }
       if (action === "search-pin") {
         void toggleNoteWindowPin(event).then(() => {
           if (arSearchKeyboardActive) {
@@ -5284,6 +5302,80 @@
       updateArSearchDisplay();
     }
 
+    function updateKeyboardTouch(frame, time) {
+      if (!arSearchKeyboardActive || !arNoteGroup.visible || !referenceSpace) {
+        keyboardTouchState.clear();
+        return;
+      }
+      const keys = arNoteControls.filter((control) =>
+        control.userData?.noteAction?.startsWith("search-")
+        && Number.isFinite(control.userData.touchWidth)
+      );
+      for (const inputSource of xrSession?.inputSources ?? []) {
+        if (!inputSource.hand) continue;
+        const tip = inputSource.hand.get("index-finger-tip");
+        if (!jointPosition(frame, tip, pointerTipPosition)) continue;
+        let touched = null;
+        let nearestDepth = Infinity;
+        for (const key of keys) {
+          key.updateWorldMatrix(true, false);
+          key.worldToLocal(keyboardTouchLocal.copy(pointerTipPosition));
+          const depth = Math.abs(keyboardTouchLocal.z);
+          if (
+            depth <= 0.018
+            && Math.abs(keyboardTouchLocal.x) <= key.userData.touchWidth * 0.46
+            && Math.abs(keyboardTouchLocal.y) <= key.userData.touchHeight * 0.42
+            && depth < nearestDepth
+          ) {
+            touched = key;
+            nearestDepth = depth;
+          }
+        }
+        const handKey = inputSource.handedness || String(inputSource);
+        const previous = keyboardTouchState.get(handKey);
+        if (touched && previous?.key !== touched && time - (previous?.at ?? 0) > 180) {
+          keyboardTouchState.set(handKey, { key: touched, at: time });
+          activateArSearchKey(touched.userData.noteAction, null);
+          inputSource.gamepad?.hapticActuators?.[0]?.pulse?.(0.25, 25);
+        } else if (!touched) {
+          keyboardTouchState.delete(handKey);
+        }
+      }
+    }
+
+    async function placeKeyboardAtHit(hitResult, event) {
+      if (!referenceSpace) return;
+      const pose = hitResult.getPose(referenceSpace);
+      if (!pose) return;
+      workingMatrix.fromArray(pose.transform.matrix);
+      workingMatrix.decompose(keyboardAnchorPosition, keyboardAnchorQuaternion, workingScale);
+      keyboardAnchorPosition.y += 0.015;
+      keyboardAnchorQuaternion.multiply(
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2)
+      );
+      scene.attach(arNoteGroup);
+      arNoteGroup.position.copy(keyboardAnchorPosition);
+      arNoteGroup.quaternion.copy(keyboardAnchorQuaternion);
+      arNoteGroup.scale.setScalar(0.62);
+      keyboardWindowPinned = true;
+      keyboardAnchorPoseValid = true;
+      keyboardSurfacePlacementArmed = false;
+      reticle.visible = false;
+      if (event?.frame?.createAnchor) {
+        try {
+          keyboardWindowAnchor = await event.frame.createAnchor(
+            new XRRigidTransform(
+              { x: keyboardAnchorPosition.x, y: keyboardAnchorPosition.y, z: keyboardAnchorPosition.z },
+              { x: keyboardAnchorQuaternion.x, y: keyboardAnchorQuaternion.y, z: keyboardAnchorQuaternion.z, w: keyboardAnchorQuaternion.w }
+            ),
+            referenceSpace
+          );
+        } catch (error) {
+          console.warn("Anchor do teclado indisponível; mantendo pose fixa.", error);
+        }
+      }
+      setXrMessage("Teclado posicionado na superfície. Toque ou use a pinça para digitar.");
+    }
     function registerDoubleThumbTap(state, time) {
       const repeated = time - (state.lastThumbTapAt ?? 0) <= 650;
       state.lastThumbTapAt = repeated ? 0 : time;
@@ -6653,6 +6745,11 @@
         const controlInstanceId = usesPointedControl
           ? pointedNoteControlInstanceId
           : hit?.instanceId;
+        if (!control && keyboardSurfacePlacementArmed && latestHitResult) {
+          void placeKeyboardAtHit(latestHitResult, event);
+          resetGestureState("await-release");
+          return;
+        }
         if (control) {
           activateNoteControl(control.userData.noteAction, event, {
             ratio: controlUv?.x,
@@ -7733,7 +7830,7 @@
         }
       }
 
-      if (isPlaced || !hitTestSource || !referenceSpace) {
+      if ((isPlaced && !keyboardSurfacePlacementArmed) || !hitTestSource || !referenceSpace) {
         latestHitResult = null;
         if (!isPlaced) reticle.visible = false;
         return;
@@ -7772,6 +7869,7 @@
           environment360Mesh.position.copy(environment360Position);
         }
         updatePlacement(frame);
+        updateKeyboardTouch(frame, time);
         updateSpatialNoteAudio();
         updateVideoPresentation(time);
         updateAudioWaveformProgress();
@@ -7824,6 +7922,8 @@
       keyboardWindowAnchor = null;
       noteWindowPinned = false;
       keyboardWindowPinned = false;
+      keyboardSurfacePlacementArmed = false;
+      keyboardTouchState.clear();
       keyboardAnchorPoseValid = false;
       xrSession = null;
       weatherField.visible = false;
