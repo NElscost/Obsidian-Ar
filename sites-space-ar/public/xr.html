@@ -648,7 +648,7 @@
         <details class="panorama-options" open>
           <summary data-i18n="panorama">360° panoramic background (optional)</summary>
           <input id="background-360" type="file" accept="image/avif,image/webp,image/jpeg,image/png">
-          <small data-i18n="panoramaHint">No file: passthrough. Recommended: 4096×2048 equirectangular WebP or AVIF.</small>
+          <small data-i18n="panoramaHint">No file: passthrough. Recommended: 8192×4096 equirectangular WebP or AVIF.</small>
         </details>
         <button id="save-bridge" type="button" data-i18n="save">Save note access</button>
         <p id="bridge-feedback" class="bridge-feedback" role="status"></p>
@@ -734,16 +734,16 @@
     const NODE_PICK_INTERVAL_SMALL_MS = 34;
     const NODE_PICK_INTERVAL_LARGE_MS = 66;
     const RECENT_NOTES_STORAGE_KEY = "space-ar-recent-notes";
-    const MAX_BACKGROUND_360_WIDTH = 4096;
-    const MAX_BACKGROUND_360_HEIGHT = 2048;
+    const MAX_BACKGROUND_360_WIDTH = 8192;
+    const MAX_BACKGROUND_360_HEIGHT = 4096;
     const LANGUAGE_STORAGE_KEY = "space-ar-language";
     const UI_TRANSLATIONS = {
-      en:["Language","Space in augmented reality.","Place your knowledge graph in the real world with passthrough, spatial anchors, and hand tracking.","Look at a surface until the marker appears.","Pinch or press the trigger to anchor the graph.","Use two pinches and move your hands apart or together to change the scale.","Obsidian bridge HTTPS URL","Bridge token","Cloudflare Access (optional)","Build the graph directly from the vault, without Blender or glTF","Maximum visible nodes (800–1200)","360° panoramic background (optional)","No file: passthrough. Recommended: 4096×2048 equirectangular WebP or AVIF.","Save note access","Checking compatibility…","Loading Space.gltf…","Estimating…","Find a surface and pinch to place the graph.","Reposition","Note name","Search","Close","Note"],
-      pt:["Idioma","Espaço em realidade aumentada.","Posicione seu grafo no ambiente real com passthrough, âncoras espaciais e rastreamento das mãos.","Olhe para uma superfície até o marcador aparecer.","Faça uma pinça ou pressione o gatilho para ancorar o grafo.","Use duas pinças e afaste ou aproxime as mãos para mudar a escala.","URL HTTPS da ponte do Obsidian","Token da ponte","Cloudflare Access (opcional)","Gerar o grafo diretamente do vault, sem Blender ou glTF","Máximo de nós visíveis (800–1200)","Fundo panorâmico 360° (opcional)","Sem arquivo: passthrough. Recomendado: WebP ou AVIF equiretangular 4096×2048.","Salvar acesso às notas","Verificando compatibilidade…","Carregando Space.gltf…","Estimando…","Procure uma superfície e faça uma pinça para posicionar.","Reposicionar","Nome da nota","Buscar","Fechar","Nota"],
-      es:["Idioma","Espacio en realidad aumentada.","Coloca tu grafo en el mundo real con passthrough, anclajes espaciales y seguimiento de manos.","Mira una superficie hasta que aparezca el marcador.","Haz una pinza o pulsa el gatillo para anclar el grafo.","Usa dos pinzas para cambiar la escala.","URL HTTPS del puente de Obsidian","Token del puente","Cloudflare Access (opcional)","Crear el grafo directamente desde el vault, sin Blender ni glTF","Máximo de nodos visibles (800–1200)","Fondo panorámico 360° (opcional)","Sin archivo: passthrough. Recomendado: WebP o AVIF equirectangular 4096×2048.","Guardar acceso a notas","Comprobando compatibilidad…","Cargando Space.gltf…","Estimando…","Busca una superficie y haz una pinza para colocar el grafo.","Reposicionar","Nombre de la nota","Buscar","Cerrar","Nota"],
-      fr:["Langue","Espace en réalité augmentée.","Placez votre graphe dans le monde réel avec passthrough, ancres spatiales et suivi des mains.","Regardez une surface jusqu’à l’apparition du marqueur.","Pincez ou appuyez sur la gâchette pour ancrer le graphe.","Utilisez deux pincements pour changer l’échelle.","URL HTTPS du pont Obsidian","Jeton du pont","Cloudflare Access (facultatif)","Créer le graphe directement depuis le coffre, sans Blender ni glTF","Nombre maximal de nœuds visibles (800–1200)","Arrière-plan panoramique 360° (facultatif)","Sans fichier : passthrough. WebP ou AVIF équirectangulaire 4096×2048 recommandé.","Enregistrer l’accès aux notes","Vérification de la compatibilité…","Chargement de Space.gltf…","Estimation…","Trouvez une surface et pincez pour placer le graphe.","Repositionner","Nom de la note","Rechercher","Fermer","Note"],
-      it:["Lingua","Spazio in realtà aumentata.","Posiziona il grafo nel mondo reale con passthrough, ancoraggi spaziali e tracciamento delle mani.","Guarda una superficie finché non appare il marcatore.","Esegui una pinza o premi il grilletto per ancorare il grafo.","Usa due pinze per modificare la scala.","URL HTTPS del bridge Obsidian","Token del bridge","Cloudflare Access (opzionale)","Crea il grafo direttamente dal vault, senza Blender o glTF","Massimo di nodi visibili (800–1200)","Sfondo panoramico 360° (opzionale)","Nessun file: passthrough. Consigliato WebP o AVIF equirettangolare 4096×2048.","Salva accesso alle note","Verifica compatibilità…","Caricamento di Space.gltf…","Stima…","Trova una superficie ed esegui una pinza per posizionare il grafo.","Riposiziona","Nome della nota","Cerca","Chiudi","Nota"],
-      ro:["Limbă","Spațiu în realitate augmentată.","Plasează graful în lumea reală cu passthrough, ancore spațiale și urmărirea mâinilor.","Privește o suprafață până apare marcajul.","Fă o ciupire sau apasă trăgaciul pentru a ancora graful.","Folosește două ciupiri pentru a schimba scala.","URL HTTPS pentru puntea Obsidian","Tokenul punții","Cloudflare Access (opțional)","Construiește graful direct din vault, fără Blender sau glTF","Număr maxim de noduri vizibile (800–1200)","Fundal panoramic 360° (opțional)","Fără fișier: passthrough. Recomandat WebP sau AVIF equirectangular 4096×2048.","Salvează accesul la note","Se verifică compatibilitatea…","Se încarcă Space.gltf…","Se estimează…","Găsește o suprafață și ciupește pentru a plasa graful.","Repoziționează","Numele notei","Caută","Închide","Notă"]
+      en:["Language","Space in augmented reality.","Place your knowledge graph in the real world with passthrough, spatial anchors, and hand tracking.","Look at a surface until the marker appears.","Pinch or press the trigger to anchor the graph.","Use two pinches and move your hands apart or together to change the scale.","Obsidian bridge HTTPS URL","Bridge token","Cloudflare Access (optional)","Build the graph directly from the vault, without Blender or glTF","Maximum visible nodes (800–1200)","360° panoramic background (optional)","No file: passthrough. Recommended: 8192×4096 equirectangular WebP or AVIF.","Save note access","Checking compatibility…","Loading Space.gltf…","Estimating…","Find a surface and pinch to place the graph.","Reposition","Note name","Search","Close","Note"],
+      pt:["Idioma","Espaço em realidade aumentada.","Posicione seu grafo no ambiente real com passthrough, âncoras espaciais e rastreamento das mãos.","Olhe para uma superfície até o marcador aparecer.","Faça uma pinça ou pressione o gatilho para ancorar o grafo.","Use duas pinças e afaste ou aproxime as mãos para mudar a escala.","URL HTTPS da ponte do Obsidian","Token da ponte","Cloudflare Access (opcional)","Gerar o grafo diretamente do vault, sem Blender ou glTF","Máximo de nós visíveis (800–1200)","Fundo panorâmico 360° (opcional)","Sem arquivo: passthrough. Recomendado: WebP ou AVIF equiretangular 8192×4096.","Salvar acesso às notas","Verificando compatibilidade…","Carregando Space.gltf…","Estimando…","Procure uma superfície e faça uma pinça para posicionar.","Reposicionar","Nome da nota","Buscar","Fechar","Nota"],
+      es:["Idioma","Espacio en realidad aumentada.","Coloca tu grafo en el mundo real con passthrough, anclajes espaciales y seguimiento de manos.","Mira una superficie hasta que aparezca el marcador.","Haz una pinza o pulsa el gatillo para anclar el grafo.","Usa dos pinzas para cambiar la escala.","URL HTTPS del puente de Obsidian","Token del puente","Cloudflare Access (opcional)","Crear el grafo directamente desde el vault, sin Blender ni glTF","Máximo de nodos visibles (800–1200)","Fondo panorámico 360° (opcional)","Sin archivo: passthrough. Recomendado: WebP o AVIF equirectangular 8192×4096.","Guardar acceso a notas","Comprobando compatibilidad…","Cargando Space.gltf…","Estimando…","Busca una superficie y haz una pinza para colocar el grafo.","Reposicionar","Nombre de la nota","Buscar","Cerrar","Nota"],
+      fr:["Langue","Espace en réalité augmentée.","Placez votre graphe dans le monde réel avec passthrough, ancres spatiales et suivi des mains.","Regardez une surface jusqu’à l’apparition du marqueur.","Pincez ou appuyez sur la gâchette pour ancrer le graphe.","Utilisez deux pincements pour changer l’échelle.","URL HTTPS du pont Obsidian","Jeton du pont","Cloudflare Access (facultatif)","Créer le graphe directement depuis le coffre, sans Blender ni glTF","Nombre maximal de nœuds visibles (800–1200)","Arrière-plan panoramique 360° (facultatif)","Sans fichier : passthrough. WebP ou AVIF équirectangulaire 8192×4096 recommandé.","Enregistrer l’accès aux notes","Vérification de la compatibilité…","Chargement de Space.gltf…","Estimation…","Trouvez une surface et pincez pour placer le graphe.","Repositionner","Nom de la note","Rechercher","Fermer","Note"],
+      it:["Lingua","Spazio in realtà aumentata.","Posiziona il grafo nel mondo reale con passthrough, ancoraggi spaziali e tracciamento delle mani.","Guarda una superficie finché non appare il marcatore.","Esegui una pinza o premi il grilletto per ancorare il grafo.","Usa due pinze per modificare la scala.","URL HTTPS del bridge Obsidian","Token del bridge","Cloudflare Access (opzionale)","Crea il grafo direttamente dal vault, senza Blender o glTF","Massimo di nodi visibili (800–1200)","Sfondo panoramico 360° (opzionale)","Nessun file: passthrough. Consigliato WebP o AVIF equirettangolare 8192×4096.","Salva accesso alle note","Verifica compatibilità…","Caricamento di Space.gltf…","Stima…","Trova una superficie ed esegui una pinza per posizionare il grafo.","Riposiziona","Nome della nota","Cerca","Chiudi","Nota"],
+      ro:["Limbă","Spațiu în realitate augmentată.","Plasează graful în lumea reală cu passthrough, ancore spațiale și urmărirea mâinilor.","Privește o suprafață până apare marcajul.","Fă o ciupire sau apasă trăgaciul pentru a ancora graful.","Folosește două ciupiri pentru a schimba scala.","URL HTTPS pentru puntea Obsidian","Tokenul punții","Cloudflare Access (opțional)","Construiește graful direct din vault, fără Blender sau glTF","Număr maxim de noduri vizibile (800–1200)","Fundal panoramic 360° (opțional)","Fără fișier: passthrough. Recomandat WebP sau AVIF equirectangular 8192×4096.","Salvează accesul la note","Se verifică compatibilitatea…","Se încarcă Space.gltf…","Se estimează…","Găsește o suprafață și ciupește pentru a plasa graful.","Repoziționează","Numele notei","Caută","Închide","Notă"]
     };
     const REAL_GLASS_LABELS = {
       en:"Real glass blur (experimental, WebGL only)",
@@ -1193,33 +1193,109 @@
       environment360Bitmap = null;
     }
 
+    function assertPanoramaDimensions(width, height) {
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1) {
+        throw new Error("Não foi possível identificar as dimensões da panorâmica.");
+      }
+      if (width > MAX_BACKGROUND_360_WIDTH || height > MAX_BACKGROUND_360_HEIGHT) {
+        throw new Error(
+          `Panorâmica ${width}×${height} excede o limite de ` +
+          `${MAX_BACKGROUND_360_WIDTH}×${MAX_BACKGROUND_360_HEIGHT}.`
+        );
+      }
+    }
+
+    function panoramaRenderDimensions(sourceWidth, sourceHeight) {
+      const maxTextureSize = Math.max(2048, renderer.capabilities.maxTextureSize || 4096);
+      const isQuest = /OculusBrowser|Meta Quest|Quest\b/i.test(navigator.userAgent);
+      const deviceMemory = Number(navigator.deviceMemory) || 4;
+      const memoryLimit = isQuest ? 4096 : deviceMemory >= 8 ? 8192 : deviceMemory >= 6 ? 6144 : 4096;
+      const widthLimit = Math.min(MAX_BACKGROUND_360_WIDTH, maxTextureSize, memoryLimit);
+      const heightLimit = Math.min(MAX_BACKGROUND_360_HEIGHT, maxTextureSize, Math.round(widthLimit / 2));
+      const scale = Math.min(1, widthLimit / sourceWidth, heightLimit / sourceHeight);
+      return {
+        width: Math.max(1, Math.round(sourceWidth * scale)),
+        height: Math.max(1, Math.round(sourceHeight * scale)),
+        optimized: scale < 0.999
+      };
+    }
+
+    async function decodePanoramaWithWebCodecs(file) {
+      if (!("ImageDecoder" in window) || !file.type || !ImageDecoder.isTypeSupported) return null;
+      if (!(await ImageDecoder.isTypeSupported(file.type))) return null;
+      let probe = null;
+      let decoder = null;
+      let frame = null;
+      try {
+        probe = new ImageDecoder({ data: file.stream(), type: file.type, preferAnimation: false });
+        await probe.tracks.ready;
+        const track = probe.tracks.selectedTrack;
+        const sourceWidth = track?.codedWidth;
+        const sourceHeight = track?.codedHeight;
+        assertPanoramaDimensions(sourceWidth, sourceHeight);
+        const target = panoramaRenderDimensions(sourceWidth, sourceHeight);
+        probe.close();
+        probe = null;
+
+        decoder = new ImageDecoder({
+          data: file.stream(), type: file.type, preferAnimation: false,
+          desiredWidth: target.width, desiredHeight: target.height
+        });
+        const decoded = await decoder.decode({ frameIndex: 0, completeFramesOnly: true });
+        frame = decoded.image;
+        const bitmap = await createImageBitmap(frame, {
+          imageOrientation: "flipY",
+          premultiplyAlpha: "none"
+        });
+        return { bitmap, sourceWidth, sourceHeight, ...target, decoder: "webcodecs" };
+      } catch (error) {
+        console.warn("WebCodecs não decodificou a panorâmica; usando ImageBitmap.", error);
+        return null;
+      } finally {
+        frame?.close?.();
+        probe?.close?.();
+        decoder?.close?.();
+      }
+    }
+
+    async function decodePanoramaWithImageBitmap(file) {
+      const sourceBitmap = await createImageBitmap(file, {
+        imageOrientation: "flipY",
+        premultiplyAlpha: "none"
+      });
+      try {
+        const sourceWidth = sourceBitmap.width;
+        const sourceHeight = sourceBitmap.height;
+        assertPanoramaDimensions(sourceWidth, sourceHeight);
+        const target = panoramaRenderDimensions(sourceWidth, sourceHeight);
+        if (!target.optimized) {
+          return { bitmap: sourceBitmap, sourceWidth, sourceHeight, ...target, decoder: "image-bitmap" };
+        }
+        const bitmap = await createImageBitmap(sourceBitmap, {
+          resizeWidth: target.width,
+          resizeHeight: target.height,
+          resizeQuality: "high"
+        });
+        sourceBitmap.close?.();
+        return { bitmap, sourceWidth, sourceHeight, ...target, decoder: "image-bitmap-resized" };
+      } catch (error) {
+        sourceBitmap.close?.();
+        throw error;
+      }
+    }
+
     async function prepareEnvironment360() {
       disposeEnvironment360();
       const file = background360Input.files?.[0];
       if (!file) return false;
 
-      // WebGL ignores Texture.flipY for ImageBitmap in some browsers. Decode
-      // already flipped so equirectangular panoramas keep north at the top.
-      const sourceBitmap = await createImageBitmap(file, {
-        imageOrientation: "flipY",
-        premultiplyAlpha: "none"
-      });
-      const sourceAspect = sourceBitmap.width / Math.max(1, sourceBitmap.height);
-      let width = Math.min(sourceBitmap.width, MAX_BACKGROUND_360_WIDTH);
-      let height = Math.min(sourceBitmap.height, MAX_BACKGROUND_360_HEIGHT);
-      if (width / height > sourceAspect) width = Math.round(height * sourceAspect);
-      else height = Math.round(width / sourceAspect);
-
-      if (width !== sourceBitmap.width || height !== sourceBitmap.height) {
-        environment360Bitmap = await createImageBitmap(sourceBitmap, {
-          resizeWidth: width,
-          resizeHeight: height,
-          resizeQuality: "high"
-        });
-        sourceBitmap.close?.();
-      } else {
-        environment360Bitmap = sourceBitmap;
-      }
+      const decoded = await decodePanoramaWithWebCodecs(file)
+        ?? await decodePanoramaWithImageBitmap(file);
+      environment360Bitmap = decoded.bitmap;
+      console.info(
+        `Panorâmica ${decoded.sourceWidth}×${decoded.sourceHeight} carregada como ` +
+        `${decoded.width}×${decoded.height} via ${decoded.decoder}.`
+      );
 
       environment360Texture = new THREE.Texture(environment360Bitmap);
       environment360Texture.flipY = false;

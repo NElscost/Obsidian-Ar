@@ -22,7 +22,15 @@ test("declara os recursos WebXR necessários", async () => {
   assert.match(html, /class="panorama-options" open/);
   assert.match(html, /max-height:\s*calc\(100dvh - 20px\)/);
   assert.match(html, /function prepareEnvironment360/);
-  assert.match(html, /MAX_BACKGROUND_360_WIDTH\s*=\s*4096/);
+  assert.match(html, /MAX_BACKGROUND_360_WIDTH\s*=\s*8192/);
+  assert.match(html, /MAX_BACKGROUND_360_HEIGHT\s*=\s*4096/);
+  assert.match(html, /function panoramaRenderDimensions/);
+  assert.match(html, /renderer\.capabilities\.maxTextureSize/);
+  assert.match(html, /const isQuest = \/OculusBrowser\|Meta Quest\|Quest/);
+  assert.match(html, /isQuest \? 4096/);
+  assert.match(html, /function decodePanoramaWithWebCodecs/);
+  assert.match(html, /desiredWidth: target\.width/);
+  assert.match(html, /decodePanoramaWithImageBitmap/);
   assert.match(html, /imageOrientation:\s*"flipY"/);
   assert.match(html, /environment360Texture\.flipY = false/);
   assert.match(html, /environment360Texture\.generateMipmaps = false/);

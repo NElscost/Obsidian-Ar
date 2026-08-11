@@ -7,7 +7,7 @@ local Rust bridge, creates an HTTPS tunnel, and displays a QR code for pairing.
 ## Features
 
 - graph generated directly from vault notes and links, without Blender;
-- passthrough or an optional equirectangular 360° panorama;
+- passthrough or an optional equirectangular 360° panorama up to 8192×4096, adaptively downsampled for Quest GPU memory;
 - WebXR hit testing and anchors;
 - hand gestures for placement, scale, rotation, selection, and pagination;
 - fuzzy keyboard search with selectable 3D suggestions;
