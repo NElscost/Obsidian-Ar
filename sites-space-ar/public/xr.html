@@ -1619,6 +1619,7 @@
     const keyboardSurfaceBasis = new THREE.Matrix4();
     const keyboardTouchState = new Map();
     const keyboardTouchLocal = new THREE.Vector3();
+    let lastKeyboardTouchScanAt = 0;
     let waveformDragInputSource = null;
 
     function releaseActiveMedia() {
@@ -4156,18 +4157,20 @@
       if (pinned) {
         if (anchor?.delete) anchor.delete();
         if (keyboard) {
-        keyboardWindowPinned = true;
-        keyboardOnSurface = false;
-        keyboardAnchorPosition.copy(arNoteGroup.position);
-        keyboardAnchorQuaternion.copy(arNoteGroup.quaternion);
-        keyboardAnchorPoseValid = true;
-      } else {
+          keyboardWindowAnchor = null;
+          keyboardWindowPinned = false;
+          keyboardOnSurface = false;
+          keyboardSurfacePlacementArmed = false;
+          keyboardTouchState.clear();
+          keyboardAnchorPoseValid = false;
+        } else {
           noteWindowAnchor = null;
           noteWindowPinned = false;
         }
         camera.add(arNoteGroup);
         arNoteGroup.position.set(0, keyboard ? -0.02 : 0, keyboard ? -0.78 : -0.82);
         arNoteGroup.quaternion.identity();
+        if (keyboard) applySearchSuggestionPose();
         setXrMessage(label + " solto: acompanhará sua visão.");
         return;
       }
@@ -4176,10 +4179,11 @@
       scene.attach(arNoteGroup);
       if (keyboard) {
         keyboardWindowPinned = true;
-      keyboardOnSurface = true;
+        keyboardOnSurface = false;
         keyboardAnchorPosition.copy(arNoteGroup.position);
         keyboardAnchorQuaternion.copy(arNoteGroup.quaternion);
         keyboardAnchorPoseValid = true;
+        applySearchSuggestionPose();
       } else {
         noteWindowPinned = true;
       }
@@ -4205,7 +4209,6 @@
         setXrMessage(label + " fixado nesta posição.");
       }
     }
-
     function activateNoteControl(action, event, options = {}) {
       if (action.startsWith("search-")) { activateArSearchKey(action, event); return; }
       if (action === "close") {
@@ -5326,6 +5329,8 @@
         keyboardTouchState.clear();
         return;
       }
+      if (time - lastKeyboardTouchScanAt < 32) return;
+      lastKeyboardTouchScanAt = time;
       const keys = arNoteControls.filter((control) =>
         control.userData?.noteAction?.startsWith("search-")
         && Number.isFinite(control.userData.touchWidth)
@@ -5334,6 +5339,9 @@
         if (!inputSource.hand) continue;
         const tip = inputSource.hand.get("index-finger-tip");
         if (!jointPosition(frame, tip, pointerTipPosition)) continue;
+        arNoteGroup.updateWorldMatrix(true, false);
+        arNoteGroup.worldToLocal(keyboardTouchLocal.copy(pointerTipPosition));
+        if (Math.abs(keyboardTouchLocal.x) > 0.82 || Math.abs(keyboardTouchLocal.y) > 0.55 || Math.abs(keyboardTouchLocal.z) > 0.55) continue;
         let touched = null;
         let nearestDepth = Infinity;
         for (const key of keys) {

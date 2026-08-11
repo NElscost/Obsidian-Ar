@@ -535,6 +535,8 @@ test("mantém o alvo destacado pela palma durante a pinça", async () => {
   assert.match(html, /\? pointedNoteControlInstanceId/);
   assert.match(html, /key\.userData\.highlightScale = false/);
   assert.match(html, /function updateKeyboardTouch/);
+  assert.match(html, /time - lastKeyboardTouchScanAt < 32/);
+  assert.match(html, /keyboardOnSurface = false/);
   assert.match(html, /touchWidth = width/);
   assert.match(html, /function placeKeyboardAtHit/);
   assert.match(html, /keyboardSurfaceBasis\.makeBasis/);
