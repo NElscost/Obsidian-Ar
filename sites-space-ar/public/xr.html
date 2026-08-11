@@ -649,7 +649,7 @@
           <summary data-i18n="panorama">360° panoramic background (optional)</summary>
           <input id="background-360" type="file" accept="image/avif,image/webp,image/jpeg,image/png">
           <small data-i18n="panoramaHint">No file: passthrough. Recommended: 8192×4096 equirectangular WebP or AVIF.</small>
-          <label class="graph-mode"><input id="gpu-snow" type="checkbox"><span>GPU snow (optional)</span></label>
+          <label class="graph-budget"><span>Weather effect</span><select id="weather-effect"><option value="none">None</option><option value="snow">Snow</option><option value="rain">Rain</option></select></label>
         </details>
         <button id="save-bridge" type="button" data-i18n="save">Save note access</button>
         <p id="bridge-feedback" class="bridge-feedback" role="status"></p>
@@ -723,7 +723,7 @@
     const GRAPH_LAYOUT_STORAGE_KEY = "space-ar-graph-layout-v1";
     const GRAPH_NODE_LIMIT_STORAGE_KEY = "space-ar-graph-node-limit";
     const REAL_GLASS_BLUR_STORAGE_KEY = "space-ar-real-glass-blur";
-const GPU_SNOW_STORAGE_KEY = "space-ar-gpu-snow";
+    const WEATHER_EFFECT_STORAGE_KEY = "space-ar-weather-effect";
     const LARGE_GRAPH_NODE_THRESHOLD = 5000;
     const HUGE_GRAPH_NODE_THRESHOLD = 9000;
     const MAX_DYNAMIC_LABELS = 384;
@@ -788,7 +788,7 @@ const GPU_SNOW_STORAGE_KEY = "space-ar-gpu-snow";
     const graphNodeLimitInput = document.querySelector("#graph-node-limit");
     const realGlassBlurToggle = document.querySelector("#real-glass-blur");
     const background360Input = document.querySelector("#background-360");
-    const gpuSnowToggle = document.querySelector("#gpu-snow");
+    const weatherEffectSelect = document.querySelector("#weather-effect");
     const bridgeFeedback = document.querySelector("#bridge-feedback");
     const notePanel = document.querySelector("#note-panel");
     const noteTitle = document.querySelector("#note-title");
@@ -1483,27 +1483,29 @@ const GPU_SNOW_STORAGE_KEY = "space-ar-gpu-snow";
     keyLight.position.set(2, 4, 2);
     scene.add(keyLight);
 
-    const snowCount = 256;
-    const snowPositions = new Float32Array(snowCount * 3);
-    for (let i = 0; i < snowCount; i += 1) {
-      snowPositions[i * 3] = ((i * 73) % 101) / 101 * 8 - 4;
-      snowPositions[i * 3 + 1] = ((i * 47) % 97) / 97 * 5 - 2.5;
-      snowPositions[i * 3 + 2] = ((i * 31) % 89) / 89 * 8 - 4;
+    const weatherParticleCount = 320;
+    const weatherPositions = new Float32Array(weatherParticleCount * 3);
+    for (let i = 0; i < weatherParticleCount; i += 1) {
+      weatherPositions[i * 3] = ((i * 73) % 101) / 101 * 8 - 4;
+      weatherPositions[i * 3 + 1] = ((i * 47) % 97) / 97 * 5 - 2.5;
+      weatherPositions[i * 3 + 2] = ((i * 31) % 89) / 89 * 8 - 4;
     }
-    const snowGeometry = new THREE.BufferGeometry();
-    snowGeometry.setAttribute("position", new THREE.BufferAttribute(snowPositions, 3));
-    const snowMaterial = new THREE.ShaderMaterial({
-      uniforms: { time: { value: 0 } },
-      vertexShader: "uniform float time; void main(){ vec3 p=position; p.y=mod(p.y-time*0.22+2.5,5.0)-2.5; p.x+=sin(time*0.45+position.y*2.1)*0.10; vec4 mv=modelViewMatrix*vec4(p,1.0); gl_PointSize=clamp(7.0/-mv.z,1.2,5.0); gl_Position=projectionMatrix*mv; }",
-      fragmentShader: "void main(){ vec2 p=gl_PointCoord-0.5; float d=length(p); float alpha=(1.0-smoothstep(0.18,0.5,d))*0.72; gl_FragColor=vec4(vec3(0.88,0.94,1.0),alpha); }",
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false
+    const weatherGeometry = new THREE.BufferGeometry();
+    weatherGeometry.setAttribute("position", new THREE.BufferAttribute(weatherPositions, 3));
+    weatherGeometry.computeBoundingSphere();
+    const weatherMaterial = new THREE.ShaderMaterial({
+      uniforms: { time: { value: 0 }, mode: { value: 1 } },
+      vertexShader: "uniform float time; uniform float mode; void main(){ vec3 p=position; float speed=mix(0.22,1.35,step(1.5,mode)); p.y=mod(p.y-time*speed+2.5,5.0)-2.5; p.x+=sin(time*0.45+position.y*2.1)*mix(0.10,0.025,step(1.5,mode)); vec4 mv=modelViewMatrix*vec4(p,1.0); gl_PointSize=clamp(mix(7.0,10.0,step(1.5,mode))/-mv.z,1.2,7.0); gl_Position=projectionMatrix*mv; }",
+      fragmentShader: "uniform float mode; void main(){ vec2 p=gl_PointCoord-0.5; float snow=(1.0-smoothstep(0.18,0.5,length(p)))*0.72; float rain=(1.0-smoothstep(0.05,0.14,abs(p.x)))*smoothstep(0.5,0.08,abs(p.y))*0.58; float alpha=mix(snow,rain,step(1.5,mode)); gl_FragColor=vec4(mix(vec3(0.88,0.94,1.0),vec3(0.55,0.76,1.0),step(1.5,mode)),alpha); }",
+      transparent: true, depthTest: true, depthWrite: false,
+      blending: THREE.AdditiveBlending, toneMapped: false
     });
-    const snowField = new THREE.Points(snowGeometry, snowMaterial);
-    snowField.frustumCulled = false;
-    snowField.visible = false;
-    scene.add(snowField);
-    const snowCenter = new THREE.Vector3();
-
+    const weatherField = new THREE.Points(weatherGeometry, weatherMaterial);
+    weatherField.frustumCulled = true;
+    weatherField.visible = false;
+    weatherField.renderOrder = -10;
+    scene.add(weatherField);
+    const weatherCenter = new THREE.Vector3();
     const placementRoot = new THREE.Group();
     placementRoot.visible = false;
     scene.add(placementRoot);
@@ -3587,7 +3589,7 @@ const GPU_SNOW_STORAGE_KEY = "space-ar-gpu-snow";
             }
           },
           vertexShader: "varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }",
-          fragmentShader: "uniform vec3 topColor; uniform vec3 rightColor; uniform vec3 bottomColor; uniform vec3 leftColor; uniform vec2 innerHalfSize; varying vec2 vUv; void main(){ vec2 centered=abs(vUv-0.5); vec2 normalized=centered/max(innerHalfSize,vec2(0.001)); vec2 edge=max(normalized-1.0,0.0); float outside=length(edge)+min(max(normalized.x-1.0,normalized.y-1.0),0.0); float outerGlow=(1.0-smoothstep(0.0,0.82,outside))*smoothstep(-0.08,0.025,outside); float nearGlow=(1.0-smoothstep(0.0,0.28,outside))*smoothstep(-0.035,0.012,outside); float environmentFade=1.0-smoothstep(0.0,0.82,outside); environmentFade*=environmentFade; float noteSideFade=1.0-smoothstep(0.70,0.99,vUv.x); float horizontal=smoothstep(0.12,0.88,vUv.x); float vertical=smoothstep(0.12,0.88,vUv.y); vec3 side=mix(leftColor,rightColor,horizontal); vec3 cap=mix(bottomColor,topColor,vertical); float sideWeight=smoothstep(-0.08,0.08,normalized.x-normalized.y); vec3 c=mix(cap,side,sideWeight); float luminance=max(c.r,max(c.g,c.b)); vec3 softened=mix(vec3(luminance),c,0.82); float alpha=(outerGlow*0.22+nearGlow*0.34+environmentFade*0.16)*(0.72+0.28*luminance)*noteSideFade; gl_FragColor=vec4(softened*(1.10+0.34*luminance),alpha); }",
+          fragmentShader: "uniform vec3 topColor; uniform vec3 rightColor; uniform vec3 bottomColor; uniform vec3 leftColor; uniform vec2 innerHalfSize; varying vec2 vUv; void main(){ vec2 centered=abs(vUv-0.5); vec2 normalized=centered/max(innerHalfSize,vec2(0.001)); vec2 edge=max(normalized-1.0,0.0); float outside=length(edge)+min(max(normalized.x-1.0,normalized.y-1.0),0.0); float outerGlow=(1.0-smoothstep(0.0,0.82,outside))*smoothstep(-0.08,0.025,outside); float nearGlow=(1.0-smoothstep(0.0,0.28,outside))*smoothstep(-0.035,0.012,outside); float environmentFade=1.0-smoothstep(0.0,0.82,outside); environmentFade*=environmentFade; float noteSideFade=1.0-smoothstep(0.70,0.99,vUv.x); float borderDistance=min(min(vUv.x,1.0-vUv.x),min(vUv.y,1.0-vUv.y)); float planeFade=smoothstep(0.0,0.16,borderDistance); float horizontal=smoothstep(0.12,0.88,vUv.x); float vertical=smoothstep(0.12,0.88,vUv.y); vec3 side=mix(leftColor,rightColor,horizontal); vec3 cap=mix(bottomColor,topColor,vertical); float sideWeight=smoothstep(-0.08,0.08,normalized.x-normalized.y); vec3 c=mix(cap,side,sideWeight); float luminance=max(c.r,max(c.g,c.b)); vec3 softened=mix(vec3(luminance),c,0.82); float alpha=(outerGlow*0.22+nearGlow*0.34+environmentFade*0.16)*(0.72+0.28*luminance)*noteSideFade*planeFade; gl_FragColor=vec4(softened*(1.10+0.34*luminance),alpha); }",
           transparent: true,
           blending: THREE.AdditiveBlending,
           depthTest: false,
@@ -4690,8 +4692,8 @@ const GPU_SNOW_STORAGE_KEY = "space-ar-gpu-snow";
         localStorage.getItem(DYNAMIC_GRAPH_STORAGE_KEY) !== "false";
       realGlassBlurToggle.checked =
         localStorage.getItem(REAL_GLASS_BLUR_STORAGE_KEY) === "true";
-      gpuSnowToggle.checked = localStorage.getItem(GPU_SNOW_STORAGE_KEY) === "true";
-      snowField.visible = gpuSnowToggle.checked;
+      weatherEffectSelect.value = localStorage.getItem(WEATHER_EFFECT_STORAGE_KEY) ?? (localStorage.getItem("space-ar-gpu-snow") === "true" ? "snow" : "none");
+      weatherField.visible = weatherEffectSelect.value !== "none";
       renderedNodeLimit = normalizeRenderedNodeLimit(
         localStorage.getItem(GRAPH_NODE_LIMIT_STORAGE_KEY) ?? DEFAULT_RENDERED_NODES
       );
@@ -7719,10 +7721,11 @@ const GPU_SNOW_STORAGE_KEY = "space-ar-gpu-snow";
 
     function render(time, frame) {
       updateVirtualHands(time);
-      if (snowField.visible) {
-        snowMaterial.uniforms.time.value = time * 0.001;
-        renderer.xr.getCamera(camera).getWorldPosition(snowCenter);
-        snowField.position.copy(snowCenter);
+      if (weatherField.visible) {
+        weatherMaterial.uniforms.time.value = time * 0.001;
+        weatherMaterial.uniforms.mode.value = weatherEffectSelect.value === "rain" ? 2 : 1;
+        renderer.xr.getCamera(camera).getWorldPosition(weatherCenter);
+        weatherField.position.copy(weatherCenter);
       }
       if (isPlaced) synapsePulseTime.value = time * 0.001;
       updateVideoAmbilight(time);
@@ -7835,9 +7838,10 @@ const GPU_SNOW_STORAGE_KEY = "space-ar-gpu-snow";
         "Modo alterado. Recarregue a página para trocar a origem do grafo.";
       bridgeFeedback.className = "bridge-feedback success";
     });
-    gpuSnowToggle.addEventListener("change", () => {
-      localStorage.setItem(GPU_SNOW_STORAGE_KEY, String(gpuSnowToggle.checked));
-      snowField.visible = gpuSnowToggle.checked;
+    weatherEffectSelect.addEventListener("change", () => {
+      localStorage.setItem(WEATHER_EFFECT_STORAGE_KEY, weatherEffectSelect.value);
+      weatherField.visible = weatherEffectSelect.value !== "none";
+      weatherMaterial.uniforms.mode.value = weatherEffectSelect.value === "rain" ? 2 : 1;
     });
     realGlassBlurToggle.addEventListener("change", () => {
       localStorage.setItem(REAL_GLASS_BLUR_STORAGE_KEY, String(realGlassBlurToggle.checked));
