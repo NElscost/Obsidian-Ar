@@ -2386,6 +2386,20 @@
     function attachNoteMediaHotspots(pages) {
       if (!Array.isArray(pages) || !pages.length) return;
       const noteBounds = noteContent.getBoundingClientRect();
+      // Persistent cache entries created before hotspot metadata only contain
+      // canvases. Rebuild their page ranges from the live rendered note so
+      // video/audio cards remain selectable after a page reload.
+      const ranges = calculateNotePageRanges();
+      for (let index = 0; index < pages.length; index += 1) {
+        const page = pages[index];
+        const range = ranges[index];
+        if (!Number.isFinite(page.top)) {
+          page.top = range?.top ?? index * NOTE_PAGE_HEIGHT;
+        }
+        if (!Number.isFinite(page.bottom)) {
+          page.bottom = range?.bottom ?? page.top + NOTE_PAGE_HEIGHT;
+        }
+      }
       for (const page of pages) page.mediaHotspots = [];
       for (const element of noteContent.querySelectorAll(
         ".note-audio-card, .note-video-card"
@@ -3521,16 +3535,22 @@
       );
       activeNoteVideoGroup.rotation.y = videoArcAngle;
       const videoBackdrop = new THREE.Mesh(
-        curvedPanelGeometry(AR_VIDEO_WIDTH + 0.045, AR_VIDEO_HEIGHT + 0.045, 0.024),
+        curvedPanelGeometry(AR_VIDEO_WIDTH + 0.18, AR_VIDEO_HEIGHT + 0.18, 0.032, 24),
         new THREE.ShaderMaterial({
           uniforms: {
             topColor: { value: new THREE.Color(0x18243a) },
             rightColor: { value: new THREE.Color(0x18243a) },
             bottomColor: { value: new THREE.Color(0x18243a) },
-            leftColor: { value: new THREE.Color(0x18243a) }
+            leftColor: { value: new THREE.Color(0x18243a) },
+            innerHalfSize: {
+              value: new THREE.Vector2(
+                (AR_VIDEO_WIDTH - 0.012) / (2 * (AR_VIDEO_WIDTH + 0.18)),
+                (AR_VIDEO_HEIGHT - 0.012) / (2 * (AR_VIDEO_HEIGHT + 0.18))
+              )
+            }
           },
           vertexShader: "varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }",
-          fragmentShader: "uniform vec3 topColor; uniform vec3 rightColor; uniform vec3 bottomColor; uniform vec3 leftColor; varying vec2 vUv; void main(){ float edgeDistance=min(min(vUv.x,1.0-vUv.x),min(vUv.y,1.0-vUv.y)); float border=(1.0-smoothstep(0.045,0.115,edgeDistance))*smoothstep(0.0,0.016,edgeDistance); float horizontal=smoothstep(0.18,0.82,vUv.x); float vertical=smoothstep(0.18,0.82,vUv.y); vec3 side=mix(leftColor,rightColor,horizontal); vec3 cap=mix(bottomColor,topColor,vertical); float sideWeight=smoothstep(0.0,0.2,abs(vUv.x-0.5)-abs(vUv.y-0.5)+0.5); vec3 c=mix(cap,side,sideWeight); float l=max(c.r,max(c.g,c.b)); gl_FragColor=vec4(c*(1.08+0.35*l),border*0.36); }",
+          fragmentShader: "uniform vec3 topColor; uniform vec3 rightColor; uniform vec3 bottomColor; uniform vec3 leftColor; uniform vec2 innerHalfSize; varying vec2 vUv; void main(){ vec2 centered=abs(vUv-0.5); vec2 normalized=centered/max(innerHalfSize,vec2(0.001)); float outside=max(normalized.x,normalized.y)-1.0; float outerGlow=(1.0-smoothstep(0.0,0.82,outside))*smoothstep(-0.08,0.025,outside); float nearGlow=(1.0-smoothstep(0.0,0.28,outside))*smoothstep(-0.035,0.012,outside); float horizontal=smoothstep(0.12,0.88,vUv.x); float vertical=smoothstep(0.12,0.88,vUv.y); vec3 side=mix(leftColor,rightColor,horizontal); vec3 cap=mix(bottomColor,topColor,vertical); float sideWeight=smoothstep(-0.08,0.08,normalized.x-normalized.y); vec3 c=mix(cap,side,sideWeight); float luminance=max(c.r,max(c.g,c.b)); float alpha=(outerGlow*0.22+nearGlow*0.28)*(0.72+0.28*luminance); gl_FragColor=vec4(c*(1.12+0.42*luminance),alpha); }",
           transparent: true,
           blending: THREE.AdditiveBlending,
           depthTest: false,

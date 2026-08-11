@@ -216,6 +216,8 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /MP4 com H\.264 \+ AAC/);
   assert.match(html, /async function toggleNoteAudio\(requestedTrack = null\)/);
   assert.match(html, /function attachNoteMediaHotspots/);
+  assert.match(html, /const ranges = calculateNotePageRanges\(\)/);
+  assert.match(html, /if \(!Number\.isFinite\(page\.top\)\)/);
   assert.match(html, /function activateNoteMediaAtUv/);
   assert.match(html, /noteAction = "note-media"/);
   assert.match(html, /pointedNoteControlRatioY/);
@@ -504,8 +506,10 @@ test("oferece ambilight e YouTube no overlay WebXR", async () => {
   assert.match(html, /topColor: \{ value: new THREE\.Color/);
   assert.match(html, /function prepareVideoAmbilight/);
   assert.match(html, /function updateVideoAmbilight/);
-  assert.match(html, /float edgeDistance=/);
-  assert.match(html, /border\*0\.36/);
+  assert.match(html, /AR_VIDEO_WIDTH \+ 0\.18/);
+  assert.match(html, /innerHalfSize/);
+  assert.match(html, /float outerGlow=/);
+  assert.match(html, /outerGlow\*0\.22\+nearGlow\*0\.28/);
 });
 
 test("mantém o alvo destacado pela palma durante a pinça", async () => {
@@ -534,5 +538,5 @@ test("restaura a pose ancorada do teclado antes de exibi-lo", async () => {
   assert.match(html, /const keyboardAnchorPosition = new THREE\.Vector3/);
   assert.match(html, /arNoteGroup\.position\.copy\(keyboardAnchorPosition\)/);
   assert.match(html, /arNoteGroup\.visible = true;[\s\S]{0,100}setXrMessage\("Busca 3D aberta/);
-  assert.match(html, /smoothstep\(0\.045,0\.115,edgeDistance\)/);
+  assert.match(html, /smoothstep\(0\.0,0\.82,outside\)/);
 });
