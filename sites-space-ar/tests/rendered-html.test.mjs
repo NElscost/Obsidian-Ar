@@ -516,6 +516,9 @@ test("oferece ambilight e YouTube no overlay WebXR", async () => {
   assert.match(html, /AR_VIDEO_GAP = 0\.085/);
   assert.match(html, /float environmentFade=/);
   assert.match(html, /float noteSideFade=/);
+  assert.match(html, /vec2 edge=max\(normalized-1\.0,0\.0\)/);
+  assert.match(html, /const snowCount = 256/);
+  assert.match(html, /GPU_SNOW_STORAGE_KEY/);
   assert.match(html, /youtubeVideoId\(track\.source\)/);
 });
 

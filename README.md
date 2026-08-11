@@ -167,7 +167,9 @@ bookmark. Local and YouTube videos use one GPU-only ambilight mesh driven by
 tiny 24x14 edge-color samples generated once per second by the Rust bridge. For
 YouTube, the bridge reuses the same cached 720p MP4 prepared for playback, so no
 second download is required. The halo uses a soft environmental gradient and
-fades on the side facing the reading panel. YouTube links written as Markdown
+fades on the side facing the reading panel. Its rounded distance field avoids a
+rectangular glow edge. An optional 256-particle snow field runs in one GPU draw
+call and is disabled by default. YouTube links written as Markdown
 links, embeds, or plain URLs become selectable media cards. The
 preprocessing queue prioritizes notes containing video, fenced code blocks, and
 LaTeX so their first open is less likely to interrupt XR.
