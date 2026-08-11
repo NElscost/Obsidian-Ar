@@ -521,6 +521,10 @@ test("oferece ambilight e YouTube no overlay WebXR", async () => {
   assert.match(html, /WEATHER_EFFECT_STORAGE_KEY/);
   assert.match(html, /float planeFade=/);
   assert.match(html, /depthTest: true, depthWrite: false/);
+  assert.match(html, /function syncAmbientAudio/);
+  assert.match(html, /ambientAudio\.loop = true/);
+  assert.match(html, /colorWrite: false, depthWrite: true, depthTest: true/);
+  assert.match(html, /weatherField\.visible = Boolean\(xrSession\)/);
   assert.match(html, /youtubeVideoId\(track\.source\)/);
 });
 

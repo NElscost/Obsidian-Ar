@@ -169,7 +169,9 @@ YouTube, the bridge reuses the same cached 720p MP4 prepared for playback, so no
 second download is required. The halo uses a soft environmental gradient and
 fades on the side facing the reading panel. Its rounded distance field avoids a
 rectangular glow edge. Optional snow and rain share a 320-particle GPU field, one draw call, depth
-occlusion, and frustum culling; weather remains disabled by default. YouTube links written as Markdown
+occlusion, and frustum culling; weather remains disabled by default and only runs
+inside AR. A user-selected ambient audio file loops during reading, pauses while
+note audio or video is playing, and resumes afterward. YouTube links written as Markdown
 links, embeds, or plain URLs become selectable media cards. The
 preprocessing queue prioritizes notes containing video, fenced code blocks, and
 LaTeX so their first open is less likely to interrupt XR.

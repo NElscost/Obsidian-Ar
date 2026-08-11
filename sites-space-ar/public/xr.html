@@ -650,6 +650,7 @@
           <input id="background-360" type="file" accept="image/avif,image/webp,image/jpeg,image/png">
           <small data-i18n="panoramaHint">No file: passthrough. Recommended: 8192×4096 equirectangular WebP or AVIF.</small>
           <label class="graph-budget"><span>Weather effect</span><select id="weather-effect"><option value="none">None</option><option value="snow">Snow</option><option value="rain">Rain</option></select></label>
+          <label class="graph-budget"><span>Ambient sound</span><input id="ambient-audio" type="file" accept="audio/*"></label>
         </details>
         <button id="save-bridge" type="button" data-i18n="save">Save note access</button>
         <p id="bridge-feedback" class="bridge-feedback" role="status"></p>
@@ -789,6 +790,11 @@
     const realGlassBlurToggle = document.querySelector("#real-glass-blur");
     const background360Input = document.querySelector("#background-360");
     const weatherEffectSelect = document.querySelector("#weather-effect");
+    const ambientAudioInput = document.querySelector("#ambient-audio");
+    const ambientAudio = new Audio();
+    ambientAudio.loop = true;
+    ambientAudio.volume = 0.35;
+    let ambientAudioObjectUrl = "";
     const bridgeFeedback = document.querySelector("#bridge-feedback");
     const notePanel = document.querySelector("#note-panel");
     const noteTitle = document.querySelector("#note-title");
@@ -3610,6 +3616,11 @@
           depthTest: false
         })
       );
+      const videoWeatherOccluder = new THREE.Mesh(curvedPanelGeometry(AR_VIDEO_WIDTH, AR_VIDEO_HEIGHT), new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true, depthTest: true }));
+      videoWeatherOccluder.position.z = 0.001;
+      videoWeatherOccluder.renderOrder = -20;
+      videoWeatherOccluder.raycast = () => {};
+      activeNoteVideoGroup.add(videoWeatherOccluder);
       activeNoteVideoSurface.position.set(0, 0, 0.002);
       activeNoteVideoSurface.renderOrder = 1000;
       activeNoteVideoSurface.raycast = () => {};
@@ -3900,6 +3911,15 @@
       setXrMessage("YouTube aberto no painel do navegador.");
     }
 
+    function syncAmbientAudio() {
+      const noteMediaPlaying = Boolean(activeNoteAudio && !activeNoteAudio.paused && !activeNoteAudio.ended);
+      if (!xrSession || !ambientAudio.src || noteMediaPlaying) {
+        ambientAudio.pause();
+        return;
+      }
+      void ambientAudio.play().catch(() => {});
+    }
+
     function clearActiveNoteMediaForSwitch() {
       if (activeNoteAudio) {
         activeNoteAudio.pause();
@@ -4088,11 +4108,12 @@
             });
           }
           activeNoteAudio.addEventListener("ended", () => {
+            syncAmbientAudio();
             updateAudioControlColor();
             setXrMessage(`${isVideo ? "Vídeo" : "Áudio"} concluído: ${track.label}.`);
           });
-          activeNoteAudio.addEventListener("pause", updateAudioControlColor);
-          activeNoteAudio.addEventListener("play", updateAudioControlColor);
+          activeNoteAudio.addEventListener("pause", () => { updateAudioControlColor(); syncAmbientAudio(); });
+          activeNoteAudio.addEventListener("play", () => { updateAudioControlColor(); ambientAudio.pause(); });
           activeNoteAudio.addEventListener("loadedmetadata", () => {
             if (pendingNoteAudioSeek === null) return;
             activeNoteAudio.currentTime = Math.min(pendingNoteAudioSeek, activeNoteAudio.duration);
@@ -4429,6 +4450,11 @@
           toneMapped: false
         })
       );
+      const noteWeatherOccluder = new THREE.Mesh(curvedPanelGeometry(width, height), new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true, depthTest: true }));
+      noteWeatherOccluder.position.z = -0.001;
+      noteWeatherOccluder.renderOrder = -20;
+      noteWeatherOccluder.raycast = () => {};
+      arNoteGroup.add(noteWeatherOccluder);
       arNoteSurface.renderOrder = 1000;
       arNoteSurface.userData.noteAction = "note-media";
       arNoteSurface.userData.highlightScale = false;
@@ -4693,7 +4719,7 @@
       realGlassBlurToggle.checked =
         localStorage.getItem(REAL_GLASS_BLUR_STORAGE_KEY) === "true";
       weatherEffectSelect.value = localStorage.getItem(WEATHER_EFFECT_STORAGE_KEY) ?? (localStorage.getItem("space-ar-gpu-snow") === "true" ? "snow" : "none");
-      weatherField.visible = weatherEffectSelect.value !== "none";
+      weatherField.visible = false;
       renderedNodeLimit = normalizeRenderedNodeLimit(
         localStorage.getItem(GRAPH_NODE_LIMIT_STORAGE_KEY) ?? DEFAULT_RENDERED_NODES
       );
@@ -5149,6 +5175,11 @@
           toneMapped: false
         })
       );
+      const keyboardWeatherOccluder = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.62), new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true, depthTest: true }));
+      keyboardWeatherOccluder.position.z = -0.003;
+      keyboardWeatherOccluder.renderOrder = -20;
+      keyboardWeatherOccluder.raycast = () => {};
+      arNoteGroup.add(keyboardWeatherOccluder);
       background.position.z = -0.002;
       background.renderOrder = 1000;
       arNoteGroup.add(background);
@@ -6544,6 +6575,8 @@
         });
 
         await renderer.xr.setSession(xrSession);
+        weatherField.visible = weatherEffectSelect.value !== "none";
+        syncAmbientAudio();
         void initializeVirtualHands();
         let environment360Ready = false;
         try {
@@ -7721,7 +7754,7 @@
 
     function render(time, frame) {
       updateVirtualHands(time);
-      if (weatherField.visible) {
+      if (xrSession && weatherField.visible) {
         weatherMaterial.uniforms.time.value = time * 0.001;
         weatherMaterial.uniforms.mode.value = weatherEffectSelect.value === "rain" ? 2 : 1;
         renderer.xr.getCamera(camera).getWorldPosition(weatherCenter);
@@ -7793,6 +7826,8 @@
       keyboardWindowPinned = false;
       keyboardAnchorPoseValid = false;
       xrSession = null;
+      weatherField.visible = false;
+      ambientAudio.pause();
       virtualHandFrameTime = 0;
       virtualHandStyleCheckAt = 0;
       graphIntroPulseStartedAt = null;
@@ -7840,8 +7875,16 @@
     });
     weatherEffectSelect.addEventListener("change", () => {
       localStorage.setItem(WEATHER_EFFECT_STORAGE_KEY, weatherEffectSelect.value);
-      weatherField.visible = weatherEffectSelect.value !== "none";
+      weatherField.visible = Boolean(xrSession) && weatherEffectSelect.value !== "none";
       weatherMaterial.uniforms.mode.value = weatherEffectSelect.value === "rain" ? 2 : 1;
+    });
+    ambientAudioInput.addEventListener("change", () => {
+      if (ambientAudioObjectUrl) URL.revokeObjectURL(ambientAudioObjectUrl);
+      ambientAudioObjectUrl = ambientAudioInput.files?.[0] ? URL.createObjectURL(ambientAudioInput.files[0]) : "";
+      ambientAudio.pause();
+      ambientAudio.src = ambientAudioObjectUrl;
+      if (ambientAudioObjectUrl) ambientAudio.load();
+      syncAmbientAudio();
     });
     realGlassBlurToggle.addEventListener("change", () => {
       localStorage.setItem(REAL_GLASS_BLUR_STORAGE_KEY, String(realGlassBlurToggle.checked));
