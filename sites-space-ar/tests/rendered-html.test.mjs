@@ -537,6 +537,9 @@ test("mantém o alvo destacado pela palma durante a pinça", async () => {
   assert.match(html, /function updateKeyboardTouch/);
   assert.match(html, /touchWidth = width/);
   assert.match(html, /function placeKeyboardAtHit/);
+  assert.match(html, /keyboardSurfaceBasis\.makeBasis/);
+  assert.match(html, /function applySearchSuggestionPose/);
+  assert.match(html, /result\.userData\.touchWidth = 0\.29/);
   assert.match(html, /search-surface/);
 });
 

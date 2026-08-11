@@ -180,6 +180,7 @@ The viewer starts in English and includes a language selector for Portuguese, Sp
 
 During AR, use the keyboard search to find notes by title. Selecting a suggested result with a pinch opens the note through the same cached bridge path used by the main graph.
 Keyboard keys support both fingertip touch and palm-ray pinch. The SURF control arms hit-test placement on a real surface, while PIN keeps the existing free-space anchor workflow.
+Surface placement aligns the keyboard to the camera without mirroring; its results panel remains upright and accepts fingertip touch.
 
 The local note graph is deliberately bounded to 27 neighbors. It uses one
 instanced node mesh, one line geometry, and one text atlas, without starting a
