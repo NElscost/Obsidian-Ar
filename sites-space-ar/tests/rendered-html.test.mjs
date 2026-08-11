@@ -216,6 +216,10 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /MP4 com H\.264 \+ AAC/);
   assert.match(html, /async function toggleNoteAudio\(requestedTrack = null\)/);
   assert.match(html, /function attachNoteMediaHotspots/);
+  assert.match(html, /space-ar-note-cache-v5/);
+  assert.match(html, /pageMeta: pages\.map/);
+  assert.match(html, /hasMediaHotspotMetadata/);
+  assert.match(html, /if \(isVideo\) void prepareVideoAmbilight\(track, arNotePath\)/);
   assert.match(html, /const ranges = calculateNotePageRanges\(\)/);
   assert.match(html, /if \(!Number\.isFinite\(page\.top\)\)/);
   assert.match(html, /function activateNoteMediaAtUv/);
@@ -259,7 +263,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function setNoteControlIcon/);
   assert.match(html, /new THREE\.PlaneGeometry\(0\.024, 0\.024\)/);
   assert.match(html, /activeNoteAudio\.currentTime = 0/);
-  assert.match(html, /space-ar-note-cache-v4/);
+  assert.match(html, /space-ar-note-cache-v5/);
 });
 
 test("remove a captura de voz e preserva a busca local", async () => {
@@ -509,7 +513,7 @@ test("oferece ambilight e YouTube no overlay WebXR", async () => {
   assert.match(html, /AR_VIDEO_WIDTH \+ 0\.18/);
   assert.match(html, /innerHalfSize/);
   assert.match(html, /float outerGlow=/);
-  assert.match(html, /outerGlow\*0\.22\+nearGlow\*0\.28/);
+  assert.match(html, /outerGlow\*0\.34\+nearGlow\*0\.42/);
 });
 
 test("mantém o alvo destacado pela palma durante a pinça", async () => {

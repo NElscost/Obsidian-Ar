@@ -1798,7 +1798,7 @@
     const NOTE_CACHE_MAX_BYTES = 48 * 1024 * 1024;
     const NOTE_PERSISTENT_CACHE_MAX_ENTRIES = 12;
     const NOTE_PERSISTENT_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
-    const NOTE_CACHE_DB = "space-ar-note-cache-v4";
+    const NOTE_CACHE_DB = "space-ar-note-cache-v5";
     const NOTE_CACHE_STORE = "rendered-notes";
     let noteCacheDbPromise = null;
     let highlightCorePromise = null;
@@ -2000,6 +2000,11 @@
           title,
           source,
           pages: blobs,
+          pageMeta: pages.map((page) => ({
+            top: page.top,
+            bottom: page.bottom,
+            mediaHotspots: page.mediaHotspots ?? []
+          })),
           savedAt: Date.now()
         });
         transaction.oncomplete = resolve;
@@ -2024,8 +2029,15 @@
         return null;
       }
       const pages = [];
-      for (const blob of stored.pages) {
-        pages.push({ canvas: await cacheBlobToCanvas(blob), status: "ready" });
+      for (let index = 0; index < stored.pages.length; index += 1) {
+        const metadata = stored.pageMeta?.[index] ?? {};
+        pages.push({
+          canvas: await cacheBlobToCanvas(stored.pages[index]),
+          status: "ready",
+          top: metadata.top,
+          bottom: metadata.bottom,
+          mediaHotspots: metadata.mediaHotspots ?? []
+        });
       }
       const entry = {
         title: stored.title,
@@ -3550,7 +3562,7 @@
             }
           },
           vertexShader: "varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }",
-          fragmentShader: "uniform vec3 topColor; uniform vec3 rightColor; uniform vec3 bottomColor; uniform vec3 leftColor; uniform vec2 innerHalfSize; varying vec2 vUv; void main(){ vec2 centered=abs(vUv-0.5); vec2 normalized=centered/max(innerHalfSize,vec2(0.001)); float outside=max(normalized.x,normalized.y)-1.0; float outerGlow=(1.0-smoothstep(0.0,0.82,outside))*smoothstep(-0.08,0.025,outside); float nearGlow=(1.0-smoothstep(0.0,0.28,outside))*smoothstep(-0.035,0.012,outside); float horizontal=smoothstep(0.12,0.88,vUv.x); float vertical=smoothstep(0.12,0.88,vUv.y); vec3 side=mix(leftColor,rightColor,horizontal); vec3 cap=mix(bottomColor,topColor,vertical); float sideWeight=smoothstep(-0.08,0.08,normalized.x-normalized.y); vec3 c=mix(cap,side,sideWeight); float luminance=max(c.r,max(c.g,c.b)); float alpha=(outerGlow*0.22+nearGlow*0.28)*(0.72+0.28*luminance); gl_FragColor=vec4(c*(1.12+0.42*luminance),alpha); }",
+          fragmentShader: "uniform vec3 topColor; uniform vec3 rightColor; uniform vec3 bottomColor; uniform vec3 leftColor; uniform vec2 innerHalfSize; varying vec2 vUv; void main(){ vec2 centered=abs(vUv-0.5); vec2 normalized=centered/max(innerHalfSize,vec2(0.001)); float outside=max(normalized.x,normalized.y)-1.0; float outerGlow=(1.0-smoothstep(0.0,0.82,outside))*smoothstep(-0.08,0.025,outside); float nearGlow=(1.0-smoothstep(0.0,0.28,outside))*smoothstep(-0.035,0.012,outside); float horizontal=smoothstep(0.12,0.88,vUv.x); float vertical=smoothstep(0.12,0.88,vUv.y); vec3 side=mix(leftColor,rightColor,horizontal); vec3 cap=mix(bottomColor,topColor,vertical); float sideWeight=smoothstep(-0.08,0.08,normalized.x-normalized.y); vec3 c=mix(cap,side,sideWeight); float luminance=max(c.r,max(c.g,c.b)); float alpha=(outerGlow*0.34+nearGlow*0.42)*(0.76+0.24*luminance); gl_FragColor=vec4(c*(1.18+0.48*luminance),alpha); }",
           transparent: true,
           blending: THREE.AdditiveBlending,
           depthTest: false,
@@ -3956,6 +3968,7 @@
     async function toggleNoteAudio(requestedTrack = null) {
       const track = requestedTrack ?? activeNoteTrack ?? noteVideoTracks[0] ?? noteAudioTracks[0];
       if (!track) return;
+      const isVideo = track.kind === "video" || track.kind === "youtube";
       const switchingTrack = activeNoteTrack?.source !== track.source
         || activeNoteMediaPath !== arNotePath;
       if (switchingTrack) {
@@ -3964,12 +3977,13 @@
         activeNoteMediaPath = arNotePath;
         audioWaveformGeneration += 1;
         void prepareAudioWaveform(track, arNotePath, AR_NOTE_WIDTH, AR_NOTE_HEIGHT);
+        if (isVideo) void prepareVideoAmbilight(track, arNotePath);
       } else {
         activeNoteTrack = track;
         if (!activeNoteMediaPath) activeNoteMediaPath = arNotePath;
       }
       closeYouTubeOverlay();
-      const isVideo = track.kind === "video" || track.kind === "youtube";
+
       try {
         const activeMediaMatches = Boolean(
           activeNoteAudio
@@ -4348,7 +4362,15 @@
       let progressiveCapture = null;
       if (cachedPages) {
         arNotePages = cachedPages;
-        attachNoteMediaHotspots(arNotePages);
+        const hasMediaHotspotMetadata = arNotePages.every((page) =>
+          Array.isArray(page?.mediaHotspots)
+        );
+        if (!hasMediaHotspotMetadata) {
+          // Legacy/session entries without metadata are rebuilt once from this
+          // note's DOM instead of inheriting the previously opened note.
+          await renderNoteMarkdown(source);
+          attachNoteMediaHotspots(arNotePages);
+        }
       } else {
         try {
           progressiveCapture = await captureRenderedNotePages();
