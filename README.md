@@ -163,11 +163,12 @@ startup cost, encode attachments as MP4/H.264/AAC or WebM/VP9/Opus.
 
 Audio and video attachments share the same seek bar. Point and pinch to jump to
 a position, keep the pinch held while moving to scrub, and release to store a
-bookmark. Local videos use a GPU-only ambilight shader that reuses the existing
-video texture. YouTube links written as Markdown links, embeds, or plain URLs
-become selectable media cards and open the official privacy-enhanced YouTube
-player in the WebXR DOM overlay. Because YouTube is cross-origin, it cannot be
-copied into a Three.js texture; its player remains browser-managed. The
+bookmark. Local and YouTube videos use one GPU-only ambilight mesh driven by
+tiny 24x14 edge-color samples generated once per second by the Rust bridge. For
+YouTube, the bridge reuses the same cached 720p MP4 prepared for playback, so no
+second download is required. The halo uses a soft environmental gradient and
+fades on the side facing the reading panel. YouTube links written as Markdown
+links, embeds, or plain URLs become selectable media cards. The
 preprocessing queue prioritizes notes containing video, fenced code blocks, and
 LaTeX so their first open is less likely to interrupt XR.
 

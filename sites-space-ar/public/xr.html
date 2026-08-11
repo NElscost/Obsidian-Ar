@@ -1490,7 +1490,7 @@
     camera.add(arNoteGroup);
     const AR_NOTE_WIDTH = 0.62;
     const AR_NOTE_HEIGHT = 0.465;
-    const AR_VIDEO_GAP = 0.035;
+    const AR_VIDEO_GAP = 0.085;
     const AR_VIDEO_WIDTH = AR_NOTE_WIDTH;
     const AR_VIDEO_HEIGHT = AR_NOTE_HEIGHT;
     const AR_VIDEO_CENTER_X = -(
@@ -3333,7 +3333,8 @@
     }
 
     async function prepareAudioWaveform(track, notePath, panelWidth, panelHeight) {
-      if (!track || isNetworkSource(track.source) || isBrowserLocalSource(track.source)) return;
+      if (!track || isBrowserLocalSource(track.source)) return;
+      if (isNetworkSource(track.source) && !youtubeVideoId(track.source)) return;
       const config = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
       if (!config?.url || !config?.token) return;
       const generation = audioWaveformGeneration;
@@ -3562,7 +3563,7 @@
             }
           },
           vertexShader: "varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }",
-          fragmentShader: "uniform vec3 topColor; uniform vec3 rightColor; uniform vec3 bottomColor; uniform vec3 leftColor; uniform vec2 innerHalfSize; varying vec2 vUv; void main(){ vec2 centered=abs(vUv-0.5); vec2 normalized=centered/max(innerHalfSize,vec2(0.001)); float outside=max(normalized.x,normalized.y)-1.0; float outerGlow=(1.0-smoothstep(0.0,0.82,outside))*smoothstep(-0.08,0.025,outside); float nearGlow=(1.0-smoothstep(0.0,0.28,outside))*smoothstep(-0.035,0.012,outside); float horizontal=smoothstep(0.12,0.88,vUv.x); float vertical=smoothstep(0.12,0.88,vUv.y); vec3 side=mix(leftColor,rightColor,horizontal); vec3 cap=mix(bottomColor,topColor,vertical); float sideWeight=smoothstep(-0.08,0.08,normalized.x-normalized.y); vec3 c=mix(cap,side,sideWeight); float luminance=max(c.r,max(c.g,c.b)); float alpha=(outerGlow*0.34+nearGlow*0.42)*(0.76+0.24*luminance); gl_FragColor=vec4(c*(1.18+0.48*luminance),alpha); }",
+          fragmentShader: "uniform vec3 topColor; uniform vec3 rightColor; uniform vec3 bottomColor; uniform vec3 leftColor; uniform vec2 innerHalfSize; varying vec2 vUv; void main(){ vec2 centered=abs(vUv-0.5); vec2 normalized=centered/max(innerHalfSize,vec2(0.001)); float outside=max(normalized.x,normalized.y)-1.0; float outerGlow=(1.0-smoothstep(0.0,0.82,outside))*smoothstep(-0.08,0.025,outside); float nearGlow=(1.0-smoothstep(0.0,0.28,outside))*smoothstep(-0.035,0.012,outside); float environmentFade=1.0-smoothstep(0.0,0.82,outside); environmentFade*=environmentFade; float noteSideFade=1.0-smoothstep(0.70,0.99,vUv.x); float horizontal=smoothstep(0.12,0.88,vUv.x); float vertical=smoothstep(0.12,0.88,vUv.y); vec3 side=mix(leftColor,rightColor,horizontal); vec3 cap=mix(bottomColor,topColor,vertical); float sideWeight=smoothstep(-0.08,0.08,normalized.x-normalized.y); vec3 c=mix(cap,side,sideWeight); float luminance=max(c.r,max(c.g,c.b)); vec3 softened=mix(vec3(luminance),c,0.82); float alpha=(outerGlow*0.22+nearGlow*0.34+environmentFade*0.16)*(0.72+0.28*luminance)*noteSideFade; gl_FragColor=vec4(softened*(1.10+0.34*luminance),alpha); }",
           transparent: true,
           blending: THREE.AdditiveBlending,
           depthTest: false,
@@ -3670,7 +3671,8 @@
     }
 
     async function prepareVideoAmbilight(track, notePath) {
-      if (!track || isNetworkSource(track.source) || isBrowserLocalSource(track.source)) return;
+      if (!track || isBrowserLocalSource(track.source)) return;
+      if (isNetworkSource(track.source) && !youtubeVideoId(track.source)) return;
       const config = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
       if (!config?.url || !config?.token) return;
       const cacheKey = notePath + "\n" + track.source;
@@ -3687,7 +3689,9 @@
           timeline = result;
           videoAmbilightCache.set(cacheKey, timeline);
         }
-        if (arNotePath === notePath) activeNoteAmbilightTimeline = timeline;
+        if (arNotePath === notePath && activeNoteTrack?.source === track.source) {
+          activeNoteAmbilightTimeline = timeline;
+        }
       } catch (error) {
         console.warn("Ambilight pré-processado indisponível; usando borda neutra.", error);
       }
@@ -3713,6 +3717,7 @@
       const cached = preparedVideoSessionCache.get(cacheKey);
       if (cached && cached.expiresAt > Date.now()) {
         preparedNoteVideo = { source: cached.source, objectUrl: null, track, notePath, streaming: cached.streaming };
+        void prepareVideoAmbilight(track, notePath);
         if (cached.waveform) {
           audioWaveformCache.set(notePath + "\n" + track.source, cached.waveform);
           createArAudioWaveform(cached.waveform, AR_NOTE_WIDTH, AR_NOTE_HEIGHT);
@@ -3769,6 +3774,7 @@
             return;
           }
           preparedNoteVideo = { source, objectUrl, track, notePath, streaming };
+          void prepareVideoAmbilight(track, notePath);
           if (!objectUrl) {
             preparedVideoSessionCache.set(cacheKey, {
               source, streaming, waveform: preparedWaveform,
@@ -3977,7 +3983,7 @@
         activeNoteMediaPath = arNotePath;
         audioWaveformGeneration += 1;
         void prepareAudioWaveform(track, arNotePath, AR_NOTE_WIDTH, AR_NOTE_HEIGHT);
-        if (isVideo) void prepareVideoAmbilight(track, arNotePath);
+        if (isVideo && track.kind !== "youtube") void prepareVideoAmbilight(track, arNotePath);
       } else {
         activeNoteTrack = track;
         if (!activeNoteMediaPath) activeNoteMediaPath = arNotePath;

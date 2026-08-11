@@ -219,7 +219,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /space-ar-note-cache-v5/);
   assert.match(html, /pageMeta: pages\.map/);
   assert.match(html, /hasMediaHotspotMetadata/);
-  assert.match(html, /if \(isVideo\) void prepareVideoAmbilight\(track, arNotePath\)/);
+  assert.match(html, /if \(isVideo && track\.kind !== "youtube"\) void prepareVideoAmbilight\(track, arNotePath\)/);
   assert.match(html, /const ranges = calculateNotePageRanges\(\)/);
   assert.match(html, /if \(!Number\.isFinite\(page\.top\)\)/);
   assert.match(html, /function activateNoteMediaAtUv/);
@@ -513,7 +513,10 @@ test("oferece ambilight e YouTube no overlay WebXR", async () => {
   assert.match(html, /AR_VIDEO_WIDTH \+ 0\.18/);
   assert.match(html, /innerHalfSize/);
   assert.match(html, /float outerGlow=/);
-  assert.match(html, /outerGlow\*0\.34\+nearGlow\*0\.42/);
+  assert.match(html, /AR_VIDEO_GAP = 0\.085/);
+  assert.match(html, /float environmentFade=/);
+  assert.match(html, /float noteSideFade=/);
+  assert.match(html, /youtubeVideoId\(track\.source\)/);
 });
 
 test("mantém o alvo destacado pela palma durante a pinça", async () => {

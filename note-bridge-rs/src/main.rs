@@ -1300,26 +1300,37 @@ async fn read_video_ambilight(
     if !matches!(note_is_allowed(&state, &note_path).await, Ok(true)) {
         return error(StatusCode::NOT_FOUND, "Nota não permitida.");
     }
-    let path = match resolve_asset(&state, &note_path, &payload.asset_path).await {
-        Ok(path)
-            if compatibility_video_candidate(&path)
-                || matches!(
-                    path.extension()
-                        .and_then(|value| value.to_str())
-                        .map(str::to_ascii_lowercase)
-                        .as_deref(),
-                    Some("webm" | "ogv")
-                ) =>
-        {
-            path
+    let path = if youtube_video_url_allowed(&payload.asset_path) {
+        let downloaded = match prepare_youtube_video(&payload.asset_path).await {
+            Ok(path) => path,
+            Err(err) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
+        };
+        match compatible_video_asset(&state, &downloaded).await {
+            Ok(path) => path,
+            Err(err) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
         }
-        Ok(_) => {
-            return error(
-                StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                "O arquivo solicitado não é um vídeo.",
-            )
+    } else {
+        match resolve_asset(&state, &note_path, &payload.asset_path).await {
+            Ok(path)
+                if compatibility_video_candidate(&path)
+                    || matches!(
+                        path.extension()
+                            .and_then(|value| value.to_str())
+                            .map(str::to_ascii_lowercase)
+                            .as_deref(),
+                        Some("webm" | "ogv")
+                    ) =>
+            {
+                path
+            }
+            Ok(_) => {
+                return error(
+                    StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                    "O arquivo solicitado não é um vídeo.",
+                )
+            }
+            Err(err) => return error(StatusCode::NOT_FOUND, err.to_string()),
         }
-        Err(err) => return error(StatusCode::NOT_FOUND, err.to_string()),
     };
     let metadata = match tokio::fs::metadata(&path).await {
         Ok(metadata) => metadata,
