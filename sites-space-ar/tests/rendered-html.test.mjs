@@ -216,7 +216,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /MP4 com H\.264 \+ AAC/);
   assert.match(html, /async function toggleNoteAudio\(requestedTrack = null\)/);
   assert.match(html, /function attachNoteMediaHotspots/);
-  assert.match(html, /space-ar-note-cache-v5/);
+  assert.match(html, /space-ar-note-cache-v6/);
   assert.match(html, /pageMeta: pages\.map/);
   assert.match(html, /hasMediaHotspotMetadata/);
   assert.match(html, /if \(isVideo && track\.kind !== "youtube"\) void prepareVideoAmbilight\(track, arNotePath\)/);
@@ -263,7 +263,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function setNoteControlIcon/);
   assert.match(html, /new THREE\.PlaneGeometry\(0\.024, 0\.024\)/);
   assert.match(html, /activeNoteAudio\.currentTime = 0/);
-  assert.match(html, /space-ar-note-cache-v5/);
+  assert.match(html, /space-ar-note-cache-v6/);
 });
 
 test("remove a captura de voz e preserva a busca local", async () => {
@@ -564,4 +564,14 @@ test("restaura a pose ancorada do teclado antes de exibi-lo", async () => {
   assert.match(html, /arNoteGroup\.position\.copy\(keyboardAnchorPosition\)/);
   assert.match(html, /arNoteGroup\.visible = true;[\s\S]{0,100}setXrMessage\("Busca 3D aberta/);
   assert.match(html, /smoothstep\(0\.0,0\.82,outside\)/);
+});
+test("supports Timestamp Notes markers and lazy SMILES structures", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /function extractNoteTimestamps/);
+  assert.match(html, /data-note-timestamp/);
+  assert.match(html, /async function activateNoteTimestamp/);
+  assert.match(html, /marker\.userData\.noteAction = "timestamp"/);
+  assert.match(html, /smiles-drawer@2\.1\.7/);
+  assert.match(html, /async function renderSmilesBlocks/);
+  assert.match(html, /compactDrawing: true/);
 });

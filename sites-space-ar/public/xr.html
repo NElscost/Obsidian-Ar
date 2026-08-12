@@ -506,7 +506,8 @@
     .note-content .callout-example { --callout-rgb:164,108,226; } .note-content .callout-quote { --callout-rgb:150,160,175; }
 
     .note-content .note-audio-card,
-    .note-content .note-video-card {
+    .note-content .note-video-card,
+    .note-content .note-timestamp-card {
       display: flex;
       align-items: center;
       min-height: 48px;
@@ -518,6 +519,9 @@
       color: #dce8ff;
       break-inside: avoid;
     }
+    .note-content .note-timestamp-card { border-color:rgba(99,230,190,.5); background:rgba(99,230,190,.12); color:#d9fff3; }
+    .note-content .note-smiles { margin:10px 0; padding:8px; border-radius:10px; background:#f7f9fc; break-inside:avoid; overflow:hidden; }
+    .note-content .note-smiles canvas { position:static; inset:auto; display:block; width:100%; height:auto; max-height:300px; object-fit:contain; }
     .note-content .note-video-card {
       min-height: 92px;
       background: rgba(99, 230, 190, 0.1);
@@ -1036,13 +1040,107 @@
       return `<div class="note-video-card note-youtube-card" data-note-video-source="${encodeURIComponent(source)}">▶ YouTube: ${escapeNoteHtml(label || source)}</div>`;
     }
 
+
+    let smilesDrawerPromise = null;
+
+    function parseTimestampSeconds(value) {
+      const parts = String(value ?? "").trim().split(":").map(Number);
+      if (!parts.length || parts.some((part) => !Number.isFinite(part))) return null;
+      return parts.reduce((total, part) => total * 60 + part, 0);
+    }
+
+    function timestampLabelFromPrefix(prefix) {
+      const candidates = [];
+      for (const match of String(prefix).matchAll(/^#{1,6}\s+(.+)$/gm)) candidates.push({ index: match.index, label: match[1].trim() });
+      for (const match of String(prefix).matchAll(/^>\s*\[![^\]]+\][+-]?\s*(.+)$/gm)) candidates.push({ index: match.index, label: match[1].trim() });
+      candidates.sort((left, right) => right.index - left.index);
+      return candidates[0]?.label || "Timestamp";
+    }
+
+    function extractNoteTimestamps(source) {
+      const markdown = String(source ?? "");
+      const timestamps = [];
+      let mediaSource = "";
+      const pattern = /\x60\x60\x60(timestamp-url|timestamp)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi;
+      for (const match of markdown.matchAll(pattern)) {
+        const kind = match[1].toLowerCase();
+        const body = match[2].trim();
+        if (kind === "timestamp-url") {
+          mediaSource = body.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
+          continue;
+        }
+        const range = body.match(/(\d{1,2}(?::\d{1,2}){1,2})(?:\s*(?:-|–|—|to)\s*(\d{1,2}(?::\d{1,2}){1,2}))?/i);
+        const start = parseTimestampSeconds(range?.[1]);
+        if (start === null) continue;
+        timestamps.push({ start, end: parseTimestampSeconds(range?.[2]), source: mediaSource, label: timestampLabelFromPrefix(markdown.slice(0, match.index)), raw: body });
+      }
+      return timestamps;
+    }
+
+    function preprocessNotePluginBlocks(source) {
+      const markdown = String(source ?? "");
+      let mediaSource = "";
+      return markdown.replace(/\x60\x60\x60(timestamp-url|timestamp|smiles)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi,
+        (whole, rawKind, rawBody, offset) => {
+          const kind = rawKind.toLowerCase();
+          const body = rawBody.trim();
+          if (kind === "smiles") return '<div class="note-smiles" data-note-smiles="' + encodeURIComponent(body) + '">SMILES: ' + escapeNoteHtml(body) + '</div>';
+          if (kind === "timestamp-url") {
+            mediaSource = body.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
+            return youtubeVideoId(mediaSource) ? youtubeCardHtml(mediaSource, "Timestamp video") : videoCardHtml(mediaSource, "Timestamp video");
+          }
+          const range = body.match(/(\d{1,2}(?::\d{1,2}){1,2})(?:\s*(?:-|–|—|to)\s*(\d{1,2}(?::\d{1,2}){1,2}))?/i);
+          const start = parseTimestampSeconds(range?.[1]);
+          if (start === null) return whole;
+          const end = parseTimestampSeconds(range?.[2]);
+          const label = timestampLabelFromPrefix(markdown.slice(0, offset));
+          return '<div class="note-timestamp-card" data-note-timestamp="1" data-timestamp-source="' + encodeURIComponent(mediaSource) + '" data-timestamp-start="' + start + '" data-timestamp-end="' + (end ?? "") + '" data-timestamp-label="' + encodeURIComponent(label) + '">⏱ ' + escapeNoteHtml(body) + ' · ' + escapeNoteHtml(label) + '</div>';
+        });
+    }
+
+    function loadSmilesDrawer() {
+      if (window.SmilesDrawer) return Promise.resolve(window.SmilesDrawer);
+      if (!smilesDrawerPromise) smilesDrawerPromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "https://cdn.jsdelivr.net/npm/smiles-drawer@2.1.7/dist/smiles-drawer.min.js";
+        script.async = true;
+        script.onload = () => resolve(window.SmilesDrawer);
+        script.onerror = () => reject(new Error("SMILES Drawer failed to load."));
+        document.head.appendChild(script);
+      });
+      return smilesDrawerPromise;
+    }
+
+    async function renderSmilesBlocks() {
+      const blocks = [...noteContent.querySelectorAll("[data-note-smiles]")];
+      if (!blocks.length) return;
+      try {
+        const SmilesDrawer = await loadSmilesDrawer();
+        if (!SmilesDrawer?.Drawer || !SmilesDrawer?.parse) throw new Error("Invalid SMILES Drawer API.");
+        for (const [index, block] of blocks.entries()) {
+          let smiles = block.dataset.noteSmiles || "";
+          try { smiles = decodeURIComponent(smiles); } catch {}
+          const canvas = document.createElement("canvas");
+          canvas.width = 900;
+          canvas.height = 300;
+          canvas.id = "note-smiles-" + Date.now() + "-" + index;
+          block.replaceChildren(canvas);
+          await new Promise((resolve) => SmilesDrawer.parse(smiles, (tree) => {
+            try { new SmilesDrawer.Drawer({ width: 900, height: 300, compactDrawing: true, bondThickness: 1.2 }).draw(tree, canvas, "light", false); }
+            catch (error) { block.textContent = "SMILES: " + smiles; console.warn("SMILES drawing failed.", error); }
+            resolve();
+          }, () => { block.textContent = "SMILES: " + smiles; resolve(); }));
+        }
+      } catch (error) { console.warn("SMILES renderer unavailable; preserving source.", error); }
+    }
+
     async function renderNoteMarkdown(source) {
       const math = [];
       const stashMath = (latex, displayMode) => {
         const index = math.push({ latex, displayMode }) - 1;
         return `<span data-note-math="${index}"></span>`;
       };
-      let markdown = String(source ?? "")
+      let markdown = preprocessNotePluginBlocks(source)
         .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
         .replace(/%%[\s\S]*?%%/g, "")
         .replace(/^(```|~~~)\[([^\]\r\n]+)\]\s*$/gm, "$1$2")
@@ -1177,6 +1275,7 @@
         card.textContent = `▶ Vídeo: ${video.getAttribute("title") || source}`;
         video.replaceWith(card);
       }
+      await renderSmilesBlocks();
       noteContent.scrollTop = 0;
     }
 
@@ -1562,6 +1661,7 @@
     let realGlassSuspended = false;
     let noteAudioTracks = [];
     let noteVideoTracks = [];
+    let noteTimestamps = [];
     let activeNoteAudio = null;
     let activeNoteTrack = null;
     let activeNoteMediaPath = "";
@@ -1725,6 +1825,7 @@
       }
       noteAudioTracks = [];
       noteVideoTracks = [];
+      noteTimestamps = [];
       arNoteGroup.visible = false;
       arNoteGroup.traverse((object) => {
         if (!object.isMesh) return;
@@ -1839,7 +1940,7 @@
     const NOTE_CACHE_MAX_BYTES = 48 * 1024 * 1024;
     const NOTE_PERSISTENT_CACHE_MAX_ENTRIES = 12;
     const NOTE_PERSISTENT_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
-    const NOTE_CACHE_DB = "space-ar-note-cache-v5";
+    const NOTE_CACHE_DB = "space-ar-note-cache-v6";
     const NOTE_CACHE_STORE = "rendered-notes";
     let noteCacheDbPromise = null;
     let highlightCorePromise = null;
@@ -2393,7 +2494,7 @@
       const contentHeight = Math.max(1, noteContent.scrollHeight);
       const atoms = [];
       for (const element of noteContent.querySelectorAll(
-        "img, table, .note-video-card, .note-audio-card, .obsidian-callout"
+        "img, table, .note-video-card, .note-timestamp-card, .note-smiles, .note-audio-card, .obsidian-callout"
       )) {
         const bounds = element.getBoundingClientRect();
         const height = bounds.height;
@@ -2455,7 +2556,7 @@
       }
       for (const page of pages) page.mediaHotspots = [];
       for (const element of noteContent.querySelectorAll(
-        ".note-audio-card, .note-video-card"
+        ".note-audio-card, .note-video-card, .note-timestamp-card"
       )) {
         const bounds = element.getBoundingClientRect();
         const top = bounds.top - noteBounds.top;
@@ -2465,15 +2566,20 @@
           return middle >= candidate.top && middle < candidate.bottom;
         });
         if (!page) continue;
-        const kind = element.matches(".note-video-card") ? "video" : "audio";
-        const encoded = element.dataset[
-          kind === "video" ? "noteVideoSource" : "noteAudioSource"
-        ];
+        const kind = element.matches(".note-timestamp-card")
+          ? "timestamp"
+          : element.matches(".note-video-card") ? "video" : "audio";
+        const encoded = kind === "timestamp"
+          ? element.dataset.timestampSource
+          : element.dataset[kind === "video" ? "noteVideoSource" : "noteAudioSource"];
         let source = encoded || "";
         try { source = decodeURIComponent(source); } catch {}
         page.mediaHotspots.push({
           kind,
           source,
+          start: kind === "timestamp" ? Number(element.dataset.timestampStart) : null,
+          end: kind === "timestamp" ? Number(element.dataset.timestampEnd) : null,
+          label: kind === "timestamp" ? decodeURIComponent(element.dataset.timestampLabel || "") : "",
           x1: THREE.MathUtils.clamp((62 + bounds.left - noteBounds.left) / 1024, 0, 1),
           x2: THREE.MathUtils.clamp((62 + bounds.right - noteBounds.left) / 1024, 0, 1),
           y1: THREE.MathUtils.clamp(1 - (108 + bottom - page.top) / 768, 0, 1),
@@ -3275,6 +3381,30 @@
       audioWaveformGroup.add(surface, audioWaveformPlayhead);
       placeAudioWaveformGroup(panelHeight);
       arNoteControls.push(surface);
+      const timestamps = noteTimestamps.filter((item) => !item.source || item.source === activeNoteTrack?.source);
+      if (timestamps.length && audioWaveformDuration > 0) {
+        for (const timestamp of timestamps.slice(0, 24)) {
+          const ratio = THREE.MathUtils.clamp(timestamp.start / audioWaveformDuration, 0, 1);
+          const marker = new THREE.Mesh(new THREE.PlaneGeometry(0.003, 0.048), new THREE.MeshBasicMaterial({ color: 0x63e6be, depthTest: false, toneMapped: false }));
+          marker.position.set(-audioWaveformWidth / 2 + audioWaveformWidth * ratio, 0, 0.005);
+          marker.renderOrder = 1004;
+          marker.userData.noteAction = "timestamp";
+          marker.userData.timestamp = timestamp;
+          audioWaveformGroup.add(marker);
+          arNoteControls.push(marker);
+        }
+        const first = timestamps[0];
+        const labelCanvas = document.createElement("canvas");
+        labelCanvas.width = 768; labelCanvas.height = 64;
+        const labelContext = labelCanvas.getContext("2d");
+        labelContext.fillStyle = "rgba(9,15,27,.9)"; labelContext.fillRect(0, 0, 768, 64);
+        labelContext.fillStyle = "#d9fff3"; labelContext.font = "24px system-ui"; labelContext.textAlign = "center"; labelContext.textBaseline = "middle";
+        const range = first.end > first.start ? formatAudioTime(first.start) + "–" + formatAudioTime(first.end) : formatAudioTime(first.start);
+        labelContext.fillText(range + " · " + first.label, 384, 32, 740);
+        const labelTexture = new THREE.CanvasTexture(labelCanvas); labelTexture.colorSpace = THREE.SRGBColorSpace; labelTexture.minFilter = THREE.LinearFilter; labelTexture.generateMipmaps = false;
+        const labelMesh = new THREE.Mesh(new THREE.PlaneGeometry(audioWaveformWidth, 0.027), new THREE.MeshBasicMaterial({ map: labelTexture, transparent: true, depthTest: false, toneMapped: false }));
+        labelMesh.position.set(0, -0.034, 0.002); labelMesh.renderOrder = 1002; labelMesh.raycast = () => {}; audioWaveformGroup.add(labelMesh);
+      }
       rebuildAudioBookmarkMeshes();
     }
 
@@ -4011,12 +4141,30 @@
       return tracks.find((track) => track.source === hotspot.source) ?? null;
     }
 
+
+    async function activateNoteTimestamp(timestamp) {
+      if (!timestamp || !Number.isFinite(timestamp.start)) return;
+      const tracks = [...noteVideoTracks, ...noteAudioTracks];
+      const track = tracks.find((item) => item.source === timestamp.source) ?? tracks[0];
+      if (!track) { setXrMessage("No media found for this timestamp."); return; }
+      const switching = activeNoteTrack?.source !== track.source || activeNoteMediaPath !== arNotePath;
+      if (switching || !activeNoteAudio) {
+        pendingNoteAudioSeek = timestamp.start;
+        await toggleNoteAudio(track);
+      } else {
+        seekNoteAudio(timestamp.start);
+        if (activeNoteAudio.paused) await activeNoteAudio.play();
+      }
+      setXrMessage((timestamp.label || "Timestamp") + ": " + formatAudioTime(timestamp.start) + ".");
+    }
+
     function activateNoteMediaAtUv(uv) {
       if (!uv || !Number.isFinite(uv.x) || !Number.isFinite(uv.y)) return;
       const hotspots = arNotePages[arNotePage]?.mediaHotspots ?? [];
       const hotspot = hotspots.find((item) =>
         uv.x >= item.x1 && uv.x <= item.x2 && uv.y >= item.y1 && uv.y <= item.y2
       );
+      if (hotspot?.kind === "timestamp") { void activateNoteTimestamp(hotspot); return; }
       const track = noteTrackForHotspot(hotspot);
       if (track) {
         setXrMessage(`Mídia selecionada: ${track.label}. Preparando reprodução…`);
@@ -4245,6 +4393,7 @@
         addAudioBookmark(options.ratio);
         return;
       }
+      if (action === "timestamp") { void activateNoteTimestamp(options.timestamp); return; }
       if (action === "bookmark") {
         const seconds = seekNoteAudio(options.seconds);
         setXrMessage(`Marcador selecionado: ${formatAudioTime(seconds)}.`);
@@ -4419,6 +4568,7 @@
       disposeArNote({ preserveVideo });
       noteAudioTracks = audioTracks;
       noteVideoTracks = videoTracks;
+      noteTimestamps = extractNoteTimestamps(source);
       arNotePath = path;
       const plainWords = String(source ?? "").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, " ").replace(/<[^>]+>|!\?\[\[[^\]]+\]\]|\[[^\]]*\]\([^)]+\)|[#>*_~=|$\\{}\[\]()-]/g, " ");
       arNoteWordCount = plainWords.match(/[\p{L}\p{N}]+(?:['’.-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
@@ -6796,6 +6946,7 @@
             ratio: controlUv?.x,
             uv: controlUv,
             seconds: control.userData.bookmarkSeconds,
+            timestamp: control.userData.timestamp,
             path: control.userData.localGraphNodes?.[controlInstanceId]?.id
           });
           resetGestureState("await-release");
