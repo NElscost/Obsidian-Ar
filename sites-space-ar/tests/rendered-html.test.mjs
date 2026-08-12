@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const xrUrl = new URL("../public/xr.html", import.meta.url);
@@ -590,4 +591,17 @@ test("serializes YouTube preparation, shows XR loading, and renders Avatar block
   assert.match(html, /activeNoteVideoLoadingSpinner.rotation.z/);
   assert.match(html, /timestamp-url|timestamp|smiles|avatar/);
   assert.match(html, /note-avatar-body/);
+});
+
+test("inline WebXR module has valid JavaScript syntax", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  const marker = '<script type="module">';
+  const start = html.indexOf(marker) + marker.length;
+  const source = html.slice(start, html.indexOf('</script>', start));
+  const checked = spawnSync(process.execPath, ["--input-type=module", "--check"], {
+    input: source,
+    encoding: "utf8"
+  });
+  assert.equal(checked.status, 0, checked.stderr);
+  assert.ok(source.includes("body.split(/\\r?\\n/)"));
 });

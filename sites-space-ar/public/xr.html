@@ -1091,9 +1091,8 @@
           const body = rawBody.trim();
           if (kind === "avatar") {
             const fields = {};
-            for (const line of body.split(/?
-/)) {
-              const match = line.match(/^([A-Za-z]+):s*(.*)$/);
+            for (const line of body.split(/\r?\n/)) {
+              const match = line.match(/^([A-Za-z]+):\s*(.*)$/);
               if (match) fields[match[1].toLowerCase()] = match[2].trim();
             }
             const sizes = { small:180, medium:240, large:320 };
@@ -4138,6 +4137,7 @@
           }
         } catch (error) {
           if (generation !== noteVideoPreparationGeneration) return;
+          removeArVideoLoadingWindow();
           noteVideoPreparationError = error;
           if (pendingPreparedVideoAutoplayKey === cacheKey) {
             pendingPreparedVideoAutoplayKey = "";

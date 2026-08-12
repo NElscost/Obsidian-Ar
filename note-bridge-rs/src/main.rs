@@ -4,7 +4,7 @@ use std::{
     env, fs,
     hash::{DefaultHasher, Hash, Hasher},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{Duration, Instant, SystemTime},
 };
 
@@ -40,6 +40,12 @@ use tower_http::{
 use walkdir::WalkDir;
 
 static YOUTUBE_DOWNLOAD_LOCK: Mutex<()> = Mutex::const_new(());
+static YOUTUBE_FAILURE_CACHE: OnceLock<RwLock<HashMap<String, (Instant, String)>>> =
+    OnceLock::new();
+
+fn youtube_failure_cache() -> &'static RwLock<HashMap<String, (Instant, String)>> {
+    YOUTUBE_FAILURE_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
 
 #[derive(Clone)]
 struct AppState {
@@ -1513,6 +1519,11 @@ fn youtube_video_url_allowed(value: &str) -> bool {
 }
 
 async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
+    if let Some((until, message)) = youtube_failure_cache().read().await.get(url).cloned() {
+        if until > Instant::now() {
+            bail!("{message}");
+        }
+    }
     let mut hasher = DefaultHasher::new();
     "youtube-video-v6-atomic".hash(&mut hasher);
     url.hash(&mut hasher);
@@ -1557,7 +1568,15 @@ async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
             "yt-dlp não está disponível. Instale-o para reproduzir YouTube dentro da janela 3D.",
         )?;
     if !status.success() {
-        bail!("yt-dlp não conseguiu preparar o vídeo do YouTube.");
+        let message = "O YouTube recusou o download temporariamente (limite ou verificação anti-bot). Aguarde alguns minutos e tente novamente.".to_string();
+        youtube_failure_cache().write().await.insert(
+            url.to_string(),
+            (
+                Instant::now() + Duration::from_secs(10 * 60),
+                message.clone(),
+            ),
+        );
+        bail!("{message}");
     }
     let metadata = tokio::fs::metadata(&partial_path)
         .await
@@ -1569,6 +1588,7 @@ async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
     tokio::fs::rename(&partial_path, &output_path)
         .await
         .context("Não foi possível finalizar o vídeo do YouTube no cache.")?;
+    youtube_failure_cache().write().await.remove(url);
     Ok(output_path)
 }
 
