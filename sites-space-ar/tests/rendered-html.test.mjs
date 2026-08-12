@@ -222,7 +222,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /space-ar-note-cache-v9/);
   assert.match(html, /pageMeta: pages\.map/);
   assert.match(html, /hasMediaHotspotMetadata/);
-  assert.match(html, /if \(isVideo && track\.kind !== "youtube"\) void prepareVideoAmbilight\(track, arNotePath\)/);
+  assert.match(html, /if \(isVideo\) void prepareVideoAmbilight\(track, arNotePath\)/);
   assert.match(html, /const ranges = calculateNotePageRanges\(\)/);
   assert.match(html, /if \(!Number\.isFinite\(page\.top\)\)/);
   assert.match(html, /function activateNoteMediaAtUv/);

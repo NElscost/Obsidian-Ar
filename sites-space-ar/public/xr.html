@@ -1115,7 +1115,7 @@
 
     function fallbackSmilesSvg(smiles) {
       const source = String(smiles ?? "").replace(/\s+/g, "");
-      const atomPattern = /\[([^\]]+)\]|Br|Cl|Si|Na|Ca|Li|Mg|Al|[BCNOFPSIHK]/g;
+      const atomPattern = /\[([^\]]+)\]|Br|Cl|Si|Na|Ca|Li|Mg|Al|se|as|[BCNOFPSIHKbcnops]/g;
       const atoms = [];
       const bonds = [];
       const branches = [];
@@ -1131,19 +1131,22 @@
         if (character === "=") { pendingBond = 2; cursor += 1; continue; }
         if (character === "#") { pendingBond = 3; cursor += 1; continue; }
         if (/\d/.test(character)) {
-          if (rings.has(character) && current >= 0) bonds.push({ from: rings.get(character), to: current, order: pendingBond });
+          if (rings.has(character) && current >= 0) bonds.push({ from: rings.get(character), to: current, order: pendingBond, ring: character });
           else if (current >= 0) rings.set(character, current);
           pendingBond = 1; cursor += 1; continue;
         }
         atomPattern.lastIndex = cursor;
         const match = atomPattern.exec(source);
         if (!match || match.index !== cursor) { cursor += 1; continue; }
-        const label = (match[1] || match[0]).match(/[A-Z][a-z]?/)?.[0] || match[0];
+        const rawAtom = match[1] || match[0];
+        const aromatic = /^(?:[bcnops]|se|as)$/.test(rawAtom);
+        const labelMatch = rawAtom.match(/[A-Z][a-z]?|se|as|[bcnops]/)?.[0] || rawAtom;
+        const label = aromatic ? labelMatch[0].toUpperCase() + labelMatch.slice(1) : labelMatch;
         const previous = current;
         const index = atoms.length;
         const column = previous >= 0 ? atoms[previous].column + 1 : 0;
         const direction = branchDepth ? (branches.length % 2 ? -1 : 1) : (column % 2 ? 0.35 : -0.35);
-        atoms.push({ label, column, row: previous >= 0 ? atoms[previous].row + direction * (branchDepth ? 1.8 : 1) : 0 });
+        atoms.push({ label, aromatic, column, row: previous >= 0 ? atoms[previous].row + direction * (branchDepth ? 1.8 : 1) : 0 });
         current = index;
         if (previous >= 0) bonds.push({ from: previous, to: current, order: pendingBond });
         pendingBond = 1;
@@ -1165,12 +1168,22 @@
           return '<line x1="' + (a.x + ox * shift) + '" y1="' + (a.y + oy * shift) + '" x2="' + (b.x + ox * shift) + '" y2="' + (b.y + oy * shift) + '" />';
         }).join("");
       }).join("");
+      const aromaticRings = bonds.filter((bond) => bond.ring).map((closingBond) => {
+        const low = Math.min(closingBond.from, closingBond.to);
+        const high = Math.max(closingBond.from, closingBond.to);
+        const members = atoms.slice(low, high + 1);
+        if (members.length < 5 || members.length > 7 || !members.every((atom) => atom.aromatic)) return "";
+        const points = members.map(point);
+        const cx = points.reduce((sum, p) => sum + p.x, 0) / points.length;
+        const cy = points.reduce((sum, p) => sum + p.y, 0) / points.length;
+        const radius = Math.max(9, Math.min(...points.map((p) => Math.hypot(p.x - cx, p.y - cy))) * 0.48);
+        return '<circle cx="' + cx + '" cy="' + cy + '" r="' + radius + '" fill="none" stroke="#ffd166" stroke-width="1.8"/>';
+      }).join("");
       const labels = atoms.map((atom) => {
-        if (atom.label === "C") return "";
         const p = point(atom);
         return '<circle cx="' + p.x + '" cy="' + p.y + '" r="10"/><text x="' + p.x + '" y="' + (p.y + 5) + '">' + atom.label + '</text>';
       }).join("");
-      return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + width + ' ' + height + '" width="' + width + '" height="' + height + '"><rect width="100%" height="100%" rx="12" fill="#09111d"/><g stroke="#dce8ff" stroke-width="2.2" stroke-linecap="round">' + lines + '</g><g fill="#09111d" stroke="#63e6be" stroke-width="1.2">' + labels + '</g><g fill="#f1f5fb" stroke="none" font-family="system-ui,sans-serif" font-size="14" font-weight="700" text-anchor="middle">' + atoms.map((atom) => { if (atom.label === "C") return ""; const p = point(atom); return '<text x="' + p.x + '" y="' + (p.y + 5) + '">' + atom.label + '</text>'; }).join("") + '</g></svg>';
+      return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + width + ' ' + height + '" width="' + width + '" height="' + height + '"><rect width="100%" height="100%" rx="12" fill="#09111d"/><g stroke="#dce8ff" stroke-width="2.2" stroke-linecap="round">' + lines + '</g><g>' + aromaticRings + '</g><g fill="#09111d" stroke="#63e6be" stroke-width="1.2">' + labels + '</g><g fill="#f1f5fb" stroke="none" font-family="system-ui,sans-serif" font-size="14" font-weight="700" text-anchor="middle">' + atoms.map((atom) => { const p = point(atom); return '<text x="' + p.x + '" y="' + (p.y + 5) + '">' + atom.label + '</text>'; }).join("") + '</g></svg>';
     }
 
     function showFallbackSmiles(block, smiles, error) {
@@ -4289,13 +4302,6 @@
       const track = requestedTrack ?? activeNoteTrack ?? noteVideoTracks[0] ?? noteAudioTracks[0];
       if (!track) return;
       const isVideo = track.kind === "video" || track.kind === "youtube";
-      if (track.kind === "youtube") {
-        activeNoteTrack = track;
-        activeNoteMediaPath = arNotePath;
-        openYouTubeOverlay(track);
-        ambientAudio.pause();
-        return;
-      }
       const switchingTrack = activeNoteTrack?.source !== track.source
         || activeNoteMediaPath !== arNotePath;
       if (switchingTrack) {
@@ -4304,7 +4310,7 @@
         activeNoteMediaPath = arNotePath;
         audioWaveformGeneration += 1;
         void prepareAudioWaveform(track, arNotePath, AR_NOTE_WIDTH, AR_NOTE_HEIGHT);
-        if (isVideo && track.kind !== "youtube") void prepareVideoAmbilight(track, arNotePath);
+        if (isVideo) void prepareVideoAmbilight(track, arNotePath);
       } else {
         activeNoteTrack = track;
         if (!activeNoteMediaPath) activeNoteMediaPath = arNotePath;
