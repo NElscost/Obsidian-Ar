@@ -1205,26 +1205,32 @@
       if (!blocks.length) return;
       try {
         const SmilesDrawer = await loadSmilesDrawer();
-        if (!SmilesDrawer?.SvgDrawer || !SmilesDrawer?.parse) {
-          throw new Error("Invalid SMILES Drawer SVG API.");
+        if (!SmilesDrawer?.Drawer || !SmilesDrawer?.parse) {
+          throw new Error("Invalid SMILES Drawer canvas API.");
         }
         for (const block of blocks) {
           let smiles = block.dataset.noteSmiles || "";
           try { smiles = decodeURIComponent(smiles); } catch {}
           await new Promise((resolve) => SmilesDrawer.parse(smiles, (tree) => {
             try {
-              const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-              svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-              svg.setAttribute("width", "900");
-              svg.setAttribute("height", "300");
-              svg.setAttribute("viewBox", "0 0 900 300");
-              block.replaceChildren(svg);
-              new SmilesDrawer.SvgDrawer({
+              const canvas = document.createElement("canvas");
+              canvas.width = 900;
+              canvas.height = 300;
+              canvas.setAttribute("role", "img");
+              canvas.setAttribute("aria-label", "Chemical structure");
+              block.replaceChildren(canvas);
+              new SmilesDrawer.Drawer({
                 width: 900,
                 height: 300,
-                compactDrawing: true,
-                bondThickness: 1.2
-              }).draw(tree, svg, "dark", false);
+                compactDrawing: false,
+                bondThickness: 1.7,
+                bondLength: 36,
+                shortBondLength: 0.82,
+                fontSizeLarge: 18,
+                fontSizeSmall: 11,
+                terminalCarbons: true,
+                explicitHydrogens: true
+              }).draw(tree, canvas, "dark", false);
               resolve();
 
             } catch (error) {
@@ -3359,6 +3365,11 @@
         context.fill();
       } else if (action === "audio" && active) {
         context.fillRect(20, 20, 24, 24);
+      } else if (action === "captions") {
+        context.font = "900 24px system-ui, sans-serif";
+        context.textAlign = "center";
+        context.textBaseline = "middle";
+        context.fillText("CC", 32, 33);
       } else if (action === "audio") {
         context.moveTo(23, 17);
         context.lineTo(48, 32);
@@ -3902,6 +3913,24 @@
       activeNoteVideoCloseControl = videoClose;
       activeNoteVideoGroup.add(videoBackdrop, activeNoteVideoSurface, videoClose);
       arNoteControls.push(videoClose);
+      if (activeNoteTrack?.kind === "youtube") {
+        const captions = new THREE.Mesh(
+          new THREE.CircleGeometry(0.019, 14),
+          new THREE.MeshBasicMaterial({ color: 0xf1f5fb, transparent: true, depthTest: false, toneMapped: false })
+        );
+        captions.position.set(AR_VIDEO_WIDTH / 2 - 0.076, AR_VIDEO_HEIGHT / 2 - 0.03, 0.034);
+        captions.renderOrder = 1003;
+        captions.userData.noteAction = "video-captions";
+        const captionsIcon = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.029, 0.029),
+          new THREE.MeshBasicMaterial({ map: noteControlIconTexture("captions"), transparent: true, depthTest: false, toneMapped: false })
+        );
+        captionsIcon.position.z = 0.003;
+        captionsIcon.raycast = () => {};
+        captions.add(captionsIcon);
+        activeNoteVideoGroup.add(captions);
+        arNoteControls.push(captions);
+      }
       arNoteGroup.add(activeNoteVideoGroup);
       placeAudioWaveformGroup(AR_VIDEO_HEIGHT);
       const resize = () => {
@@ -4493,6 +4522,11 @@
       }
       if (action === "video-close") {
         closeActiveVideo();
+        return;
+      }
+      if (action === "video-captions") {
+        if (activeNoteTrack?.kind === "youtube") openYouTubeOverlay(activeNoteTrack);
+        else setXrMessage("Este vídeo não possui uma faixa de legenda selecionável.");
         return;
       }
       if (action === "audio") {
@@ -7971,6 +8005,8 @@
             ? "fechar"
             : action === "video-close"
               ? "fechar o vídeo"
+            : action === "video-captions"
+              ? "selecionar legendas"
             : action === "pin"
               ? (noteWindowPinned ? "soltar a janela" : "fixar a janela")
               : action === "note-media"

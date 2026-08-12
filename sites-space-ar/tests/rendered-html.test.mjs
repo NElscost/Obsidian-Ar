@@ -576,9 +576,11 @@ test("supports Timestamp Notes markers and lazy SMILES structures", async () => 
   assert.match(html, /marker\.userData\.noteAction = "timestamp"/);
   assert.ok(html.includes("/vendor/smiles-drawer/smiles-drawer.min.js"));
   assert.match(html, /async function renderSmilesBlocks/);
-  assert.match(html, /compactDrawing: true/);
+  assert.match(html, /compactDrawing: false/);
   assert.match(html, /function fallbackSmilesSvg/);
   assert.match(html, /showFallbackSmiles/);
-  assert.match(html, /new SmilesDrawer\.SvgDrawer/);
+  assert.match(html, /new SmilesDrawer\.Drawer/);
+  assert.match(html, /terminalCarbons: true/);
+  assert.match(html, /video-captions/);
   assert.match(html, /document\.importNode\(documentSvg\.documentElement, true\)/);
 });
