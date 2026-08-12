@@ -1112,6 +1112,81 @@
       return smilesDrawerPromise;
     }
 
+
+    function fallbackSmilesSvg(smiles) {
+      const source = String(smiles ?? "").replace(/\s+/g, "");
+      const atomPattern = /\[([^\]]+)\]|Br|Cl|Si|Na|Ca|Li|Mg|Al|[BCNOFPSIHK]/g;
+      const atoms = [];
+      const bonds = [];
+      const branches = [];
+      const rings = new Map();
+      let current = -1;
+      let pendingBond = 1;
+      let branchDepth = 0;
+      let cursor = 0;
+      while (cursor < source.length) {
+        const character = source[cursor];
+        if (character === "(") { branches.push(current); branchDepth += 1; cursor += 1; continue; }
+        if (character === ")") { current = branches.pop() ?? current; branchDepth = Math.max(0, branchDepth - 1); cursor += 1; continue; }
+        if (character === "=") { pendingBond = 2; cursor += 1; continue; }
+        if (character === "#") { pendingBond = 3; cursor += 1; continue; }
+        if (/\d/.test(character)) {
+          if (rings.has(character) && current >= 0) bonds.push({ from: rings.get(character), to: current, order: pendingBond });
+          else if (current >= 0) rings.set(character, current);
+          pendingBond = 1; cursor += 1; continue;
+        }
+        atomPattern.lastIndex = cursor;
+        const match = atomPattern.exec(source);
+        if (!match || match.index !== cursor) { cursor += 1; continue; }
+        const label = (match[1] || match[0]).match(/[A-Z][a-z]?/)?.[0] || match[0];
+        const previous = current;
+        const index = atoms.length;
+        const column = previous >= 0 ? atoms[previous].column + 1 : 0;
+        const direction = branchDepth ? (branches.length % 2 ? -1 : 1) : (column % 2 ? 0.35 : -0.35);
+        atoms.push({ label, column, row: previous >= 0 ? atoms[previous].row + direction * (branchDepth ? 1.8 : 1) : 0 });
+        current = index;
+        if (previous >= 0) bonds.push({ from: previous, to: current, order: pendingBond });
+        pendingBond = 1;
+        cursor = atomPattern.lastIndex;
+      }
+      if (!atoms.length) return null;
+      const minRow = Math.min(...atoms.map((atom) => atom.row));
+      const maxRow = Math.max(...atoms.map((atom) => atom.row));
+      const maxColumn = Math.max(...atoms.map((atom) => atom.column));
+      const width = Math.max(360, (maxColumn + 2) * 44);
+      const height = Math.max(180, (maxRow - minRow + 3) * 42);
+      const point = (atom) => ({ x: 28 + atom.column * 42, y: 42 + (atom.row - minRow + 0.5) * 38 });
+      const lines = bonds.map((bond) => {
+        const a = point(atoms[bond.from]), b = point(atoms[bond.to]);
+        const dx = b.x - a.x, dy = b.y - a.y, length = Math.hypot(dx, dy) || 1;
+        const ox = -dy / length * 3, oy = dx / length * 3;
+        return Array.from({ length: bond.order }, (_, index) => {
+          const shift = (index - (bond.order - 1) / 2);
+          return '<line x1="' + (a.x + ox * shift) + '" y1="' + (a.y + oy * shift) + '" x2="' + (b.x + ox * shift) + '" y2="' + (b.y + oy * shift) + '" />';
+        }).join("");
+      }).join("");
+      const labels = atoms.map((atom) => {
+        if (atom.label === "C") return "";
+        const p = point(atom);
+        return '<circle cx="' + p.x + '" cy="' + p.y + '" r="10"/><text x="' + p.x + '" y="' + (p.y + 5) + '">' + atom.label + '</text>';
+      }).join("");
+      return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + width + ' ' + height + '" width="' + width + '" height="' + height + '"><rect width="100%" height="100%" rx="12" fill="#09111d"/><g stroke="#dce8ff" stroke-width="2.2" stroke-linecap="round">' + lines + '</g><g fill="#09111d" stroke="#63e6be" stroke-width="1.2">' + labels + '</g><g fill="#f1f5fb" stroke="none" font-family="system-ui,sans-serif" font-size="14" font-weight="700" text-anchor="middle">' + atoms.map((atom) => { if (atom.label === "C") return ""; const p = point(atom); return '<text x="' + p.x + '" y="' + (p.y + 5) + '">' + atom.label + '</text>'; }).join("") + '</g></svg>';
+    }
+
+    function showFallbackSmiles(block, smiles, error) {
+      const markup = fallbackSmilesSvg(smiles);
+      if (markup) {
+        const documentSvg = new DOMParser().parseFromString(markup, "image/svg+xml");
+        const svg = document.importNode(documentSvg.documentElement, true);
+        svg.setAttribute("role", "img");
+        svg.setAttribute("aria-label", "Chemical structure");
+        block.replaceChildren(svg);
+      } else {
+        block.textContent = "Invalid SMILES";
+      }
+      if (error) console.warn("Using lightweight SMILES fallback.", error);
+    }
+
     async function renderSmilesBlocks() {
       const blocks = [...noteContent.querySelectorAll("[data-note-smiles]")];
       if (!blocks.length) return;
@@ -1137,25 +1212,23 @@
                 compactDrawing: true,
                 bondThickness: 1.2
               }).draw(tree, svg, "dark", false);
-              const serialized = new XMLSerializer().serializeToString(svg);
-              const image = document.createElement("img");
-              image.alt = "Chemical structure";
-              image.onload = () => { block.replaceChildren(image); resolve(); };
-              image.onerror = () => { block.replaceChildren(svg); resolve(); };
-              image.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(serialized);
+              resolve();
+
             } catch (error) {
-              block.textContent = "SMILES: " + smiles;
-              console.warn("SMILES SVG drawing failed.", error);
+              showFallbackSmiles(block, smiles, error);
               resolve();
             }
           }, (error) => {
-            block.textContent = "SMILES: " + smiles;
-            console.warn("Invalid SMILES source.", error);
+            showFallbackSmiles(block, smiles, error);
             resolve();
           }));
         }
       } catch (error) {
-        console.warn("SMILES renderer unavailable; preserving source.", error);
+        for (const block of blocks) {
+          let smiles = block.dataset.noteSmiles || "";
+          try { smiles = decodeURIComponent(smiles); } catch {}
+          showFallbackSmiles(block, smiles, error);
+        }
       }
     }
     async function renderNoteMarkdown(source) {
@@ -1487,14 +1560,15 @@
             const material = source.clone();
             material.transparent = true;
             material.opacity = 0.56;
-            material.depthWrite = false;
+            material.depthTest = true;
+            material.depthWrite = true;
             material.toneMapped = false;
             material.color?.set(0x000000);
             material.needsUpdate = true;
             return material;
           });
           object.material = materialWasArray ? styledMaterials : styledMaterials[0];
-          object.renderOrder = 1200;
+          object.renderOrder = 4;
         }
         if (object.userData.spaceArOutlineCreated) continue;
         object.userData.spaceArOutlineCreated = true;
@@ -1515,7 +1589,7 @@
           toneMapped: false
         });
         outline.raycast = () => {};
-        outline.renderOrder = 1199;
+        outline.renderOrder = 5;
         object.add(outline);
       }
     }
@@ -1539,7 +1613,7 @@
         object.material = Array.isArray(object.material)
           ? materials.map((material) => material === iwStencilMaterial ? fill : material)
           : fill;
-        object.renderOrder = 1198;
+        object.renderOrder = 4;
       });
     }
 
@@ -1964,7 +2038,7 @@
     const NOTE_CACHE_MAX_BYTES = 48 * 1024 * 1024;
     const NOTE_PERSISTENT_CACHE_MAX_ENTRIES = 12;
     const NOTE_PERSISTENT_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
-    const NOTE_CACHE_DB = "space-ar-note-cache-v8";
+    const NOTE_CACHE_DB = "space-ar-note-cache-v9";
     const NOTE_CACHE_STORE = "rendered-notes";
     let noteCacheDbPromise = null;
     let highlightCorePromise = null;
@@ -4215,6 +4289,13 @@
       const track = requestedTrack ?? activeNoteTrack ?? noteVideoTracks[0] ?? noteAudioTracks[0];
       if (!track) return;
       const isVideo = track.kind === "video" || track.kind === "youtube";
+      if (track.kind === "youtube") {
+        activeNoteTrack = track;
+        activeNoteMediaPath = arNotePath;
+        openYouTubeOverlay(track);
+        ambientAudio.pause();
+        return;
+      }
       const switchingTrack = activeNoteTrack?.source !== track.source
         || activeNoteMediaPath !== arNotePath;
       if (switchingTrack) {
@@ -6897,7 +6978,9 @@
         await renderer.xr.setSession(xrSession);
         weatherField.visible = weatherEffectSelect.value !== "none";
         syncAmbientAudio();
-        void initializeVirtualHands();
+        await initializeVirtualHands();
+        virtualHandFrameTime = 0;
+        updateVirtualHands(performance.now());
         let environment360Ready = false;
         try {
           environment360Ready = await prepareEnvironment360();
