@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -1205,22 +1205,25 @@
       if (!blocks.length) return;
       try {
         const SmilesDrawer = await loadSmilesDrawer();
-        if (!SmilesDrawer?.SvgDrawer || !SmilesDrawer?.parse) throw new Error("Invalid SvgDrawer API.");
-        const drawer = new SmilesDrawer.SvgDrawer({
-          width: 900, height: 300, compactDrawing: false,
-          bondThickness: 1.7, bondLength: 36, shortBondLength: 0.82,
-          fontSizeLarge: 18, fontSizeSmall: 11,
-          terminalCarbons: true, explicitHydrogens: true
-        });
+        if (!SmilesDrawer?.Drawer || !SmilesDrawer?.parse) throw new Error("Invalid Drawer API.");
         for (const block of blocks) {
           let smiles = block.dataset.noteSmiles || "";
           try { smiles = decodeURIComponent(smiles); } catch {}
           await new Promise((resolve) => SmilesDrawer.parse(smiles, (tree) => {
             try {
-              const svg = drawer.draw(tree, null, "dark", null);
-              svg.setAttribute("role", "img");
-              svg.setAttribute("aria-label", "Chemical structure");
-              block.replaceChildren(svg);
+              const canvas = document.createElement("canvas");
+              canvas.width = 900;
+              canvas.height = 300;
+              new SmilesDrawer.Drawer({
+                width: 900, height: 300, compactDrawing: false,
+                bondThickness: 1.7, bondLength: 36, shortBondLength: 0.82,
+                fontSizeLarge: 18, fontSizeSmall: 11,
+                terminalCarbons: true, explicitHydrogens: true
+              }).draw(tree, canvas, "dark", false);
+              const image = new Image();
+              image.alt = "Chemical structure";
+              image.src = canvas.toDataURL("image/png");
+              block.replaceChildren(image);
             } catch (error) { showFallbackSmiles(block, smiles, error); }
             resolve();
           }, (error) => { showFallbackSmiles(block, smiles, error); resolve(); }));
@@ -3348,11 +3351,6 @@
         context.fill();
       } else if (action === "audio" && active) {
         context.fillRect(20, 20, 24, 24);
-      } else if (action === "captions") {
-        context.font = "900 24px system-ui, sans-serif";
-        context.textAlign = "center";
-        context.textBaseline = "middle";
-        context.fillText("CC", 32, 33);
       } else if (action === "audio") {
         context.moveTo(23, 17);
         context.lineTo(48, 32);
@@ -3896,24 +3894,6 @@
       activeNoteVideoCloseControl = videoClose;
       activeNoteVideoGroup.add(videoBackdrop, activeNoteVideoSurface, videoClose);
       arNoteControls.push(videoClose);
-      if (activeNoteTrack?.kind === "youtube") {
-        const captions = new THREE.Mesh(
-          new THREE.CircleGeometry(0.019, 14),
-          new THREE.MeshBasicMaterial({ color: 0xf1f5fb, transparent: true, depthTest: false, toneMapped: false })
-        );
-        captions.position.set(AR_VIDEO_WIDTH / 2 - 0.076, AR_VIDEO_HEIGHT / 2 - 0.03, 0.034);
-        captions.renderOrder = 1003;
-        captions.userData.noteAction = "video-captions";
-        const captionsIcon = new THREE.Mesh(
-          new THREE.PlaneGeometry(0.029, 0.029),
-          new THREE.MeshBasicMaterial({ map: noteControlIconTexture("captions"), transparent: true, depthTest: false, toneMapped: false })
-        );
-        captionsIcon.position.z = 0.003;
-        captionsIcon.raycast = () => {};
-        captions.add(captionsIcon);
-        activeNoteVideoGroup.add(captions);
-        arNoteControls.push(captions);
-      }
       arNoteGroup.add(activeNoteVideoGroup);
       placeAudioWaveformGroup(AR_VIDEO_HEIGHT);
       const resize = () => {
@@ -4184,23 +4164,6 @@
         + "?" + parameters.toString();
       youtubeOverlay.classList.add("visible");
       setXrMessage("YouTube aberto com legendas, quando disponíveis no vídeo.");
-    }
-
-    function cycleVideoCaptionTrack() {
-      const tracks = Array.from(activeNoteAudio?.textTracks ?? []);
-      if (!tracks.length) {
-        setXrMessage("Nenhuma legenda incorporada foi encontrada. Reinicie a ponte para preparar novamente este vídeo.");
-        return;
-      }
-      const current = tracks.findIndex((track) => track.mode === "showing");
-      tracks.forEach((track) => { track.mode = "disabled"; });
-      const next = current + 1;
-      if (next < tracks.length) {
-        tracks[next].mode = "showing";
-        setXrMessage("Legenda: " + (tracks[next].label || tracks[next].language || (next + 1)) + ".");
-      } else {
-        setXrMessage("Legendas desativadas.");
-      }
     }
 
     function syncAmbientAudio() {
@@ -4522,10 +4485,6 @@
       }
       if (action === "video-close") {
         closeActiveVideo();
-        return;
-      }
-      if (action === "video-captions") {
-        cycleVideoCaptionTrack();
         return;
       }
       if (action === "audio") {
@@ -8004,8 +7963,6 @@
             ? "fechar"
             : action === "video-close"
               ? "fechar o vídeo"
-            : action === "video-captions"
-              ? "selecionar legendas"
             : action === "pin"
               ? (noteWindowPinned ? "soltar a janela" : "fixar a janela")
               : action === "note-media"
