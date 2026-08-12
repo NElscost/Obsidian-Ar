@@ -62,6 +62,18 @@ function Stop-ExistingBridge {
 
 Stop-ExistingBridge
 
+# Keep yt-dlp outside Program Files so it can update without administrator rights.
+$toolsDir = Join-Path $workspace ".tools"
+$localYtDlp = Join-Path $toolsDir "yt-dlp.exe"
+if ($env:OS -eq "Windows_NT") {
+  if (-not (Test-Path -LiteralPath $localYtDlp)) {
+    New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
+    Write-Host "Baixando yt-dlp atualizado para o projeto..."
+    Invoke-WebRequest -Uri "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile $localYtDlp
+  }
+  $env:Path = $toolsDir + [IO.Path]::PathSeparator + $env:Path
+}
+
 $cloudflaredCommand = Get-Command cloudflared -ErrorAction SilentlyContinue
 $cloudflared = if ($cloudflaredCommand) {
   $cloudflaredCommand.Source

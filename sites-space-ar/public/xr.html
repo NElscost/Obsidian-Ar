@@ -1205,8 +1205,8 @@
       if (!blocks.length) return;
       try {
         const SmilesDrawer = await loadSmilesDrawer();
-        if (!SmilesDrawer?.SmiDrawer) throw new Error("Invalid SmiDrawer image API.");
-        const drawer = new SmilesDrawer.SmiDrawer({
+        if (!SmilesDrawer?.SvgDrawer || !SmilesDrawer?.parse) throw new Error("Invalid SvgDrawer API.");
+        const drawer = new SmilesDrawer.SvgDrawer({
           width: 900, height: 300, compactDrawing: false,
           bondThickness: 1.7, bondLength: 36, shortBondLength: 0.82,
           fontSizeLarge: 18, fontSizeSmall: 11,
@@ -1215,18 +1215,15 @@
         for (const block of blocks) {
           let smiles = block.dataset.noteSmiles || "";
           try { smiles = decodeURIComponent(smiles); } catch {}
-          await new Promise((resolve) => {
-            const image = new Image();
-            image.alt = "Chemical structure";
-            image.decoding = "async";
-            drawer.draw(smiles, image, "dark", () => {
-              block.replaceChildren(image);
-              resolve();
-            }, (error) => {
-              showFallbackSmiles(block, smiles, error);
-              resolve();
-            });
-          });
+          await new Promise((resolve) => SmilesDrawer.parse(smiles, (tree) => {
+            try {
+              const svg = drawer.draw(tree, null, "dark", null);
+              svg.setAttribute("role", "img");
+              svg.setAttribute("aria-label", "Chemical structure");
+              block.replaceChildren(svg);
+            } catch (error) { showFallbackSmiles(block, smiles, error); }
+            resolve();
+          }, (error) => { showFallbackSmiles(block, smiles, error); resolve(); }));
         }
       } catch (error) {
         for (const block of blocks) {
