@@ -1512,7 +1512,7 @@ fn youtube_video_url_allowed(value: &str) -> bool {
 
 async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
     let mut hasher = DefaultHasher::new();
-    "youtube-video-v1".hash(&mut hasher);
+    "youtube-video-v2-captions".hash(&mut hasher);
     url.hash(&mut hasher);
     let cache_dir = env::temp_dir().join("obsidian-ar-youtube-cache");
     tokio::fs::create_dir_all(&cache_dir).await?;
@@ -1534,6 +1534,11 @@ async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
             "youtube:player_client=android",
             "--max-filesize",
             "256M",
+            "--write-subs",
+            "--write-auto-subs",
+            "--sub-langs",
+            "pt.*,en.*",
+            "--embed-subs",
             "--format",
             "best[ext=mp4][height<=720]",
             "--output",

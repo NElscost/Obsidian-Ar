@@ -1218,7 +1218,6 @@
               canvas.height = 300;
               canvas.setAttribute("role", "img");
               canvas.setAttribute("aria-label", "Chemical structure");
-              block.replaceChildren(canvas);
               new SmilesDrawer.Drawer({
                 width: 900,
                 height: 300,
@@ -1231,6 +1230,11 @@
                 terminalCarbons: true,
                 explicitHydrogens: true
               }).draw(tree, canvas, "dark", false);
+              const image = new Image();
+              image.alt = "Chemical structure";
+              image.decoding = "async";
+              image.src = canvas.toDataURL("image/png");
+              block.replaceChildren(image);
               resolve();
 
             } catch (error) {
@@ -4203,6 +4207,23 @@
       setXrMessage("YouTube aberto com legendas, quando disponíveis no vídeo.");
     }
 
+    function cycleVideoCaptionTrack() {
+      const tracks = Array.from(activeNoteAudio?.textTracks ?? []);
+      if (!tracks.length) {
+        setXrMessage("Nenhuma legenda incorporada foi encontrada. Reinicie a ponte para preparar novamente este vídeo.");
+        return;
+      }
+      const current = tracks.findIndex((track) => track.mode === "showing");
+      tracks.forEach((track) => { track.mode = "disabled"; });
+      const next = current + 1;
+      if (next < tracks.length) {
+        tracks[next].mode = "showing";
+        setXrMessage("Legenda: " + (tracks[next].label || tracks[next].language || (next + 1)) + ".");
+      } else {
+        setXrMessage("Legendas desativadas.");
+      }
+    }
+
     function syncAmbientAudio() {
       const noteMediaPlaying = Boolean(activeNoteAudio && !activeNoteAudio.paused && !activeNoteAudio.ended);
       if (!xrSession || !ambientAudio.src || noteMediaPlaying) {
@@ -4525,8 +4546,7 @@
         return;
       }
       if (action === "video-captions") {
-        if (activeNoteTrack?.kind === "youtube") openYouTubeOverlay(activeNoteTrack);
-        else setXrMessage("Este vídeo não possui uma faixa de legenda selecionável.");
+        cycleVideoCaptionTrack();
         return;
       }
       if (action === "audio") {
