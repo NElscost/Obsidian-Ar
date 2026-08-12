@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -523,6 +523,10 @@
     .note-content .note-timestamp-card { border-color:rgba(99,230,190,.5); background:rgba(99,230,190,.12); color:#d9fff3; }
     .note-content .note-smiles { margin:10px 0; padding:8px; border:1px solid rgba(99,230,190,.25); border-radius:10px; background:rgba(7,11,18,.82); break-inside:avoid; overflow:hidden; }
     .note-content .note-smiles canvas, .note-content .note-smiles svg, .note-content .note-smiles img { position:static; inset:auto; display:block; width:100%; height:auto; max-height:300px; object-fit:contain; }
+    .note-content .note-avatar { display:flex; gap:14px; align-items:center; margin:10px 0; padding:10px; border-radius:14px; background:rgba(20,29,45,.72); break-inside:avoid; }
+    .note-content .note-avatar.right { flex-direction:row-reverse; }
+    .note-content .note-avatar img { flex:0 0 auto; width:var(--avatar-size,180px); height:var(--avatar-size,180px); max-width:42%; border-radius:14px; object-fit:cover; object-position:var(--avatar-position,center); }
+    .note-content .note-avatar-body { min-width:0; flex:1; }
     .note-content .note-video-card {
       min-height: 92px;
       background: rgba(99, 230, 190, 0.1);
@@ -1081,10 +1085,26 @@
     function preprocessNotePluginBlocks(source) {
       const markdown = String(source ?? "");
       let mediaSource = "";
-      return markdown.replace(/\x60\x60\x60(timestamp-url|timestamp|smiles)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi,
+      return markdown.replace(/\x60\x60\x60(timestamp-url|timestamp|smiles|avatar)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi,
         (whole, rawKind, rawBody, offset) => {
           const kind = rawKind.toLowerCase();
           const body = rawBody.trim();
+          if (kind === "avatar") {
+            const fields = {};
+            for (const line of body.split(/?
+/)) {
+              const match = line.match(/^([A-Za-z]+):s*(.*)$/);
+              if (match) fields[match[1].toLowerCase()] = match[2].trim();
+            }
+            const sizes = { small:180, medium:240, large:320 };
+            const size = THREE.MathUtils.clamp(Number(fields.size) || sizes[fields.size?.toLowerCase()] || 240, 96, 360);
+            const side = fields.side?.toLowerCase() === "right" ? "right" : "left";
+            const description = fields.description || "";
+            const image = fields.image
+              ? '<img src="' + escapeNoteHtml(fields.image) + '" alt="Avatar" style="--avatar-position:' + escapeNoteHtml(fields.objectposition || "center") + '">'
+              : '<div aria-hidden="true" style="font-size:42px">👤</div>';
+            return '<div class="note-avatar ' + side + '" style="--avatar-size:' + size + 'px">' + image + '<div class="note-avatar-body">' + escapeNoteHtml(description) + '</div></div>';
+          }
           if (kind === "smiles") return '<div class="note-smiles" data-note-smiles="' + encodeURIComponent(body) + '">SMILES: ' + escapeNoteHtml(body) + '</div>';
           if (kind === "timestamp-url") {
             mediaSource = body.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
@@ -1790,6 +1810,8 @@
     let noteVideoPreparationError = null;
     let pendingPreparedVideoAutoplayKey = "";
     let noteVideoPreparationGeneration = 0;
+    let activeNoteVideoLoadingGroup = null;
+    let activeNoteVideoLoadingSpinner = null;
     let videoFallbackBusy = false;
     let localNoteGraphGroup = null;
     let pointedLocalNotePath = null;
@@ -1854,6 +1876,7 @@
     }
 
     function closeActiveVideo(silent = false) {
+      removeArVideoLoadingWindow();
       if (!activeNoteVideoGroup && !activeNoteAudio?.tagName?.toLowerCase().includes("video")) return;
       const group = activeNoteVideoGroup;
       const waveformOwnedByVideo = Boolean(
@@ -3804,7 +3827,42 @@
       return geometry;
     }
 
+    function removeArVideoLoadingWindow() {
+      if (!activeNoteVideoLoadingGroup) return;
+      activeNoteVideoLoadingGroup.removeFromParent();
+      activeNoteVideoLoadingGroup.traverse((object) => {
+        object.geometry?.dispose?.();
+        object.material?.dispose?.();
+      });
+      activeNoteVideoLoadingGroup = null;
+      activeNoteVideoLoadingSpinner = null;
+    }
+
+    function createArVideoLoadingWindow() {
+      if (activeNoteVideoGroup || activeNoteVideoLoadingGroup) return;
+      const group = new THREE.Group();
+      group.name = "note-video-loading-window";
+      const videoArcAngle = THREE.MathUtils.degToRad(14);
+      const videoArcRadius = Math.abs(AR_VIDEO_CENTER_X) / Math.sin(videoArcAngle);
+      group.position.set(AR_VIDEO_CENTER_X, 0, videoArcRadius * (1 - Math.cos(videoArcAngle)));
+      group.rotation.y = videoArcAngle;
+      const panel = new THREE.Mesh(
+        curvedPanelGeometry(AR_VIDEO_WIDTH, AR_VIDEO_HEIGHT, 0.022, 18),
+        new THREE.MeshBasicMaterial({ color:0x080d17, transparent:true, opacity:0.9, depthTest:false, toneMapped:false })
+      );
+      const spinner = new THREE.Mesh(
+        new THREE.RingGeometry(0.035, 0.046, 32, 1, 0, Math.PI * 1.55),
+        new THREE.MeshBasicMaterial({ color:0x63e6be, transparent:true, opacity:0.95, side:THREE.DoubleSide, depthTest:false, toneMapped:false })
+      );
+      spinner.position.z = 0.01;
+      group.add(panel, spinner);
+      arNoteGroup.add(group);
+      activeNoteVideoLoadingGroup = group;
+      activeNoteVideoLoadingSpinner = spinner;
+    }
+
     function createArVideoSurface(video) {
+      removeArVideoLoadingWindow();
       activeNoteVideoTexture = new THREE.VideoTexture(video);
       activeNoteVideoTexture.colorSpace = THREE.SRGBColorSpace;
       activeNoteVideoTexture.minFilter = THREE.LinearFilter;
@@ -3991,6 +4049,7 @@
       const generation = noteVideoPreparationGeneration;
       const cacheKey = preparedVideoCacheKey(track, notePath);
       if (autoplay) pendingPreparedVideoAutoplayKey = cacheKey;
+      if (autoplay) createArVideoLoadingWindow();
       noteVideoPreparationError = null;
       preparedNoteVideo = null;
       const cached = preparedVideoSessionCache.get(cacheKey);
@@ -8160,6 +8219,7 @@
     }
 
     function render(time, frame) {
+      if (activeNoteVideoLoadingSpinner) activeNoteVideoLoadingSpinner.rotation.z = -time * 0.004;
       updateVirtualHands(time);
       if (xrSession && weatherField.visible) {
         weatherMaterial.uniforms.time.value = time * 0.001;

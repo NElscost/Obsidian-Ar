@@ -29,7 +29,7 @@ use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncSeekExt},
     process::Command,
-    sync::RwLock,
+    sync::{Mutex, RwLock},
 };
 use tokio_util::io::ReaderStream;
 use tower_http::{
@@ -38,6 +38,8 @@ use tower_http::{
     trace::TraceLayer,
 };
 use walkdir::WalkDir;
+
+static YOUTUBE_DOWNLOAD_LOCK: Mutex<()> = Mutex::const_new(());
 
 #[derive(Clone)]
 struct AppState {
@@ -1512,7 +1514,7 @@ fn youtube_video_url_allowed(value: &str) -> bool {
 
 async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
     let mut hasher = DefaultHasher::new();
-    "youtube-video-v5-fast".hash(&mut hasher);
+    "youtube-video-v6-atomic".hash(&mut hasher);
     url.hash(&mut hasher);
     let cache_dir = env::temp_dir().join("obsidian-ar-youtube-cache");
     tokio::fs::create_dir_all(&cache_dir).await?;
@@ -1525,20 +1527,29 @@ async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
         return Ok(output_path);
     }
 
+    let _download_guard = YOUTUBE_DOWNLOAD_LOCK.lock().await;
+    if tokio::fs::metadata(&output_path)
+        .await
+        .map(|metadata| metadata.len() > 0)
+        .unwrap_or(false)
+    {
+        return Ok(output_path);
+    }
+    let partial_path = output_path.with_extension("download.mp4");
+    let _ = tokio::fs::remove_file(&partial_path).await;
+
     println!("[YOUTUBE] preparando vídeo compatível para a janela WebXR: {url}");
     let status = Command::new("yt-dlp")
         .args([
             "--no-playlist",
             "--no-progress",
-            "--extractor-args",
-            "youtube:player_client=android",
             "--max-filesize",
             "256M",
             "--format",
             "22/18/b[ext=mp4][height<=720]/b[height<=720]/best",
             "--output",
         ])
-        .arg(&output_path)
+        .arg(&partial_path)
         .arg(url)
         .status()
         .await
@@ -1548,13 +1559,16 @@ async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
     if !status.success() {
         bail!("yt-dlp não conseguiu preparar o vídeo do YouTube.");
     }
-    let metadata = tokio::fs::metadata(&output_path)
+    let metadata = tokio::fs::metadata(&partial_path)
         .await
         .context("yt-dlp terminou sem criar o arquivo de vídeo.")?;
     if metadata.len() == 0 || metadata.len() > 256 * 1024 * 1024 {
-        let _ = tokio::fs::remove_file(&output_path).await;
+        let _ = tokio::fs::remove_file(&partial_path).await;
         bail!("O vídeo do YouTube está vazio ou excede o limite de 256 MB.");
     }
+    tokio::fs::rename(&partial_path, &output_path)
+        .await
+        .context("Não foi possível finalizar o vídeo do YouTube no cache.")?;
     Ok(output_path)
 }
 

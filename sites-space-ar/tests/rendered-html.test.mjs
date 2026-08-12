@@ -582,3 +582,12 @@ test("supports Timestamp Notes markers and lazy SMILES structures", async () => 
   assert.match(html, /new SmilesDrawer\.Drawer/);
   assert.match(html, /document\.importNode\(documentSvg\.documentElement, true\)/);
 });
+
+
+test("serializes YouTube preparation, shows XR loading, and renders Avatar blocks", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /function createArVideoLoadingWindow/);
+  assert.match(html, /activeNoteVideoLoadingSpinner.rotation.z/);
+  assert.match(html, /timestamp-url|timestamp|smiles|avatar/);
+  assert.match(html, /note-avatar-body/);
+});
