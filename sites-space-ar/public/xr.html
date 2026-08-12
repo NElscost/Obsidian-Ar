@@ -520,8 +520,8 @@
       break-inside: avoid;
     }
     .note-content .note-timestamp-card { border-color:rgba(99,230,190,.5); background:rgba(99,230,190,.12); color:#d9fff3; }
-    .note-content .note-smiles { margin:10px 0; padding:8px; border-radius:10px; background:#f7f9fc; break-inside:avoid; overflow:hidden; }
-    .note-content .note-smiles canvas { position:static; inset:auto; display:block; width:100%; height:auto; max-height:300px; object-fit:contain; }
+    .note-content .note-smiles { margin:10px 0; padding:8px; border:1px solid rgba(99,230,190,.25); border-radius:10px; background:rgba(7,11,18,.82); break-inside:avoid; overflow:hidden; }
+    .note-content .note-smiles canvas, .note-content .note-smiles img { position:static; inset:auto; display:block; width:100%; height:auto; max-height:300px; object-fit:contain; }
     .note-content .note-video-card {
       min-height: 92px;
       background: rgba(99, 230, 190, 0.1);
@@ -1102,7 +1102,7 @@
       if (window.SmilesDrawer) return Promise.resolve(window.SmilesDrawer);
       if (!smilesDrawerPromise) smilesDrawerPromise = new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "https://cdn.jsdelivr.net/npm/smiles-drawer@2.1.7/dist/smiles-drawer.min.js";
+        script.src = "/vendor/smiles-drawer/smiles-drawer.min.js";
         script.async = true;
         script.onload = () => resolve(window.SmilesDrawer);
         script.onerror = () => reject(new Error("SMILES Drawer failed to load."));
@@ -1126,7 +1126,13 @@
           canvas.id = "note-smiles-" + Date.now() + "-" + index;
           block.replaceChildren(canvas);
           await new Promise((resolve) => SmilesDrawer.parse(smiles, (tree) => {
-            try { new SmilesDrawer.Drawer({ width: 900, height: 300, compactDrawing: true, bondThickness: 1.2 }).draw(tree, canvas, "light", false); }
+            try { new SmilesDrawer.Drawer({ width: 900, height: 300, compactDrawing: true, bondThickness: 1.2 }).draw(tree, canvas.id, "dark", false);
+              const image = document.createElement("img");
+              image.alt = "Chemical structure";
+              image.onload = () => { block.replaceChildren(image); resolve(); };
+              image.onerror = () => { block.textContent = "SMILES: " + smiles; resolve(); };
+              image.src = canvas.toDataURL("image/png");
+              return; }
             catch (error) { block.textContent = "SMILES: " + smiles; console.warn("SMILES drawing failed.", error); }
             resolve();
           }, () => { block.textContent = "SMILES: " + smiles; resolve(); }));
@@ -1940,7 +1946,7 @@
     const NOTE_CACHE_MAX_BYTES = 48 * 1024 * 1024;
     const NOTE_PERSISTENT_CACHE_MAX_ENTRIES = 12;
     const NOTE_PERSISTENT_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
-    const NOTE_CACHE_DB = "space-ar-note-cache-v6";
+    const NOTE_CACHE_DB = "space-ar-note-cache-v7";
     const NOTE_CACHE_STORE = "rendered-notes";
     let noteCacheDbPromise = null;
     let highlightCorePromise = null;
@@ -3402,7 +3408,7 @@
         const range = first.end > first.start ? formatAudioTime(first.start) + "–" + formatAudioTime(first.end) : formatAudioTime(first.start);
         labelContext.fillText(range + " · " + first.label, 384, 32, 740);
         const labelTexture = new THREE.CanvasTexture(labelCanvas); labelTexture.colorSpace = THREE.SRGBColorSpace; labelTexture.minFilter = THREE.LinearFilter; labelTexture.generateMipmaps = false;
-        const labelMesh = new THREE.Mesh(new THREE.PlaneGeometry(audioWaveformWidth, 0.027), new THREE.MeshBasicMaterial({ map: labelTexture, transparent: true, depthTest: false, toneMapped: false }));
+        const labelMesh = new THREE.Mesh(new THREE.PlaneGeometry(audioWaveformWidth, audioWaveformWidth / 12), new THREE.MeshBasicMaterial({ map: labelTexture, transparent: true, depthTest: false, toneMapped: false }));
         labelMesh.position.set(0, -0.034, 0.002); labelMesh.renderOrder = 1002; labelMesh.raycast = () => {}; audioWaveformGroup.add(labelMesh);
       }
       rebuildAudioBookmarkMeshes();
