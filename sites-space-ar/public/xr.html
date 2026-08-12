@@ -1205,46 +1205,28 @@
       if (!blocks.length) return;
       try {
         const SmilesDrawer = await loadSmilesDrawer();
-        if (!SmilesDrawer?.Drawer || !SmilesDrawer?.parse) {
-          throw new Error("Invalid SMILES Drawer canvas API.");
-        }
+        if (!SmilesDrawer?.SmiDrawer) throw new Error("Invalid SmiDrawer image API.");
+        const drawer = new SmilesDrawer.SmiDrawer({
+          width: 900, height: 300, compactDrawing: false,
+          bondThickness: 1.7, bondLength: 36, shortBondLength: 0.82,
+          fontSizeLarge: 18, fontSizeSmall: 11,
+          terminalCarbons: true, explicitHydrogens: true
+        });
         for (const block of blocks) {
           let smiles = block.dataset.noteSmiles || "";
           try { smiles = decodeURIComponent(smiles); } catch {}
-          await new Promise((resolve) => SmilesDrawer.parse(smiles, (tree) => {
-            try {
-              const canvas = document.createElement("canvas");
-              canvas.width = 900;
-              canvas.height = 300;
-              canvas.setAttribute("role", "img");
-              canvas.setAttribute("aria-label", "Chemical structure");
-              new SmilesDrawer.Drawer({
-                width: 900,
-                height: 300,
-                compactDrawing: false,
-                bondThickness: 1.7,
-                bondLength: 36,
-                shortBondLength: 0.82,
-                fontSizeLarge: 18,
-                fontSizeSmall: 11,
-                terminalCarbons: true,
-                explicitHydrogens: true
-              }).draw(tree, canvas, "dark", false);
-              const image = new Image();
-              image.alt = "Chemical structure";
-              image.decoding = "async";
-              image.src = canvas.toDataURL("image/png");
+          await new Promise((resolve) => {
+            const image = new Image();
+            image.alt = "Chemical structure";
+            image.decoding = "async";
+            drawer.draw(smiles, image, "dark", () => {
               block.replaceChildren(image);
               resolve();
-
-            } catch (error) {
+            }, (error) => {
               showFallbackSmiles(block, smiles, error);
               resolve();
-            }
-          }, (error) => {
-            showFallbackSmiles(block, smiles, error);
-            resolve();
-          }));
+            });
+          });
         }
       } catch (error) {
         for (const block of blocks) {

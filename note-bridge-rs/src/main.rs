@@ -1512,7 +1512,7 @@ fn youtube_video_url_allowed(value: &str) -> bool {
 
 async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
     let mut hasher = DefaultHasher::new();
-    "youtube-video-v2-captions".hash(&mut hasher);
+    "youtube-video-v3-captions".hash(&mut hasher);
     url.hash(&mut hasher);
     let cache_dir = env::temp_dir().join("obsidian-ar-youtube-cache");
     tokio::fs::create_dir_all(&cache_dir).await?;
@@ -1526,12 +1526,16 @@ async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
     }
 
     println!("[YOUTUBE] preparando vídeo 720p para a janela WebXR: {url}");
-    let status = Command::new("yt-dlp")
+    let mut command = Command::new("yt-dlp");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.as_std_mut().creation_flags(0x08000000);
+    }
+    let output = command
         .args([
             "--no-playlist",
             "--no-progress",
-            "--extractor-args",
-            "youtube:player_client=android",
             "--max-filesize",
             "256M",
             "--write-subs",
@@ -1539,19 +1543,26 @@ async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
             "--sub-langs",
             "pt.*,en.*",
             "--embed-subs",
+            "--merge-output-format",
+            "mp4",
+            "--convert-subs",
+            "srt",
             "--format",
-            "best[ext=mp4][height<=720]",
+            "bv*[height<=720]+ba/b[height<=720]/best",
             "--output",
         ])
         .arg(&output_path)
         .arg(url)
-        .status()
+        .output()
         .await
         .context(
             "yt-dlp não está disponível. Instale-o para reproduzir YouTube dentro da janela 3D.",
         )?;
-    if !status.success() {
-        bail!("yt-dlp não conseguiu preparar o vídeo do YouTube.");
+    if !output.status.success() {
+        bail!(
+            "yt-dlp não conseguiu preparar o vídeo do YouTube: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
     let metadata = tokio::fs::metadata(&output_path)
         .await

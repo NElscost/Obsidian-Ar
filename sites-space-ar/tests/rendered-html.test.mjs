@@ -579,7 +579,7 @@ test("supports Timestamp Notes markers and lazy SMILES structures", async () => 
   assert.match(html, /compactDrawing: false/);
   assert.match(html, /function fallbackSmilesSvg/);
   assert.match(html, /showFallbackSmiles/);
-  assert.match(html, /new SmilesDrawer\.Drawer/);
+  assert.match(html, /new SmilesDrawer\.SmiDrawer/);
   assert.match(html, /terminalCarbons: true/);
   assert.match(html, /video-captions/);
   assert.match(html, /document\.importNode\(documentSvg\.documentElement, true\)/);
