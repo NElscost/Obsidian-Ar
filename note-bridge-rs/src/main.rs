@@ -1511,8 +1511,14 @@ fn youtube_video_url_allowed(value: &str) -> bool {
 }
 
 async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
+    static DOWNLOAD_LOCK: tokio::sync::OnceCell<tokio::sync::Mutex<()>> =
+        tokio::sync::OnceCell::const_new();
+    let lock = DOWNLOAD_LOCK
+        .get_or_init(|| async { tokio::sync::Mutex::new(()) })
+        .await;
+    let _guard = lock.lock().await;
     let mut hasher = DefaultHasher::new();
-    "youtube-video-v3-captions".hash(&mut hasher);
+    "youtube-video-v4-captions".hash(&mut hasher);
     url.hash(&mut hasher);
     let cache_dir = env::temp_dir().join("obsidian-ar-youtube-cache");
     tokio::fs::create_dir_all(&cache_dir).await?;
@@ -1532,38 +1538,44 @@ async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
         use std::os::windows::process::CommandExt;
         command.as_std_mut().creation_flags(0x08000000);
     }
-    let output = command
-        .args([
-            "--no-playlist",
-            "--no-progress",
-            "--max-filesize",
-            "256M",
-            "--write-subs",
-            "--write-auto-subs",
-            "--sub-langs",
-            "pt.*,en.*",
-            "--embed-subs",
-            "--merge-output-format",
-            "mp4",
-            "--convert-subs",
-            "srt",
-            "--format",
-            "bv*[height<=720]+ba/b[height<=720]/best",
-            "--output",
-        ])
-        .arg(&output_path)
-        .arg(url)
-        .output()
-        .await
-        .context(
-            "yt-dlp não está disponível. Instale-o para reproduzir YouTube dentro da janela 3D.",
-        )?;
+    println!("[YOUTUBE] download iniciado; pedidos repetidos aguardarão este resultado.");
+    let output = tokio::time::timeout(
+        Duration::from_secs(180),
+        command
+            .args([
+                "--no-playlist",
+                "--no-progress",
+                "--max-filesize",
+                "256M",
+                "--write-subs",
+                "--write-auto-subs",
+                "--sub-langs",
+                "pt-BR,pt,en",
+                "--embed-subs",
+                "--merge-output-format",
+                "mp4",
+                "--convert-subs",
+                "srt",
+                "--format",
+                "bv*[height<=720]+ba/b[height<=720]/best",
+                "--output",
+            ])
+            .arg(&output_path)
+            .arg(url)
+            .output(),
+    )
+    .await
+    .context("yt-dlp excedeu 3 minutos; tente novamente ou use um vídeo local.")?
+    .context(
+        "yt-dlp não está disponível. Instale-o para reproduzir YouTube dentro da janela 3D.",
+    )?;
     if !output.status.success() {
         bail!(
             "yt-dlp não conseguiu preparar o vídeo do YouTube: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }
+    println!("[YOUTUBE] download concluído: {}", output_path.display());
     let metadata = tokio::fs::metadata(&output_path)
         .await
         .context("yt-dlp terminou sem criar o arquivo de vídeo.")?;
