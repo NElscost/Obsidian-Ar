@@ -4068,10 +4068,23 @@
         setXrMessage("Link do YouTube inválido.");
         return;
       }
+      const uiLanguage = languageSelect?.value || document.documentElement.lang || "en";
+      const captionLanguage = ({ pt:"pt-BR", es:"es", fr:"fr", it:"it", ro:"ro" })[uiLanguage] || "en";
+      const parameters = new URLSearchParams({
+        autoplay: "1",
+        playsinline: "1",
+        enablejsapi: "1",
+        origin: location.origin,
+        cc_load_policy: "1",
+        cc_lang_pref: captionLanguage,
+        hl: captionLanguage,
+        modestbranding: "1",
+        rel: "0"
+      });
       youtubePlayer.src = "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(id)
-        + "?autoplay=1&playsinline=1&enablejsapi=1&origin=" + encodeURIComponent(location.origin);
+        + "?" + parameters.toString();
       youtubeOverlay.classList.add("visible");
-      setXrMessage("YouTube aberto no painel do navegador.");
+      setXrMessage("YouTube aberto com legendas, quando disponíveis no vídeo.");
     }
 
     function syncAmbientAudio() {

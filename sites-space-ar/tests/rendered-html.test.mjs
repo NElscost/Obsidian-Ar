@@ -184,6 +184,8 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function createArVideoSurface/);
   assert.match(html, /ordered\.sort\(\(left, right\) => left\.index - right\.index\)/);
   assert.match(html, /fetchYoutubeMediaTicket/);
+  assert.match(html, /cc_load_policy: "1"/);
+  assert.match(html, /cc_lang_pref: captionLanguage/);
   assert.match(html, /const preparedVideoSessionCache = new Map\(\)/);
   assert.match(html, /PREPARED_VIDEO_CACHE_TTL_MS = 25 \* 60 \* 1000/);
   assert.match(html, /activeNoteMediaPath !== arNotePath/);
