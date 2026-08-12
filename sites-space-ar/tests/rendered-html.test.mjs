@@ -216,7 +216,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /MP4 com H\.264 \+ AAC/);
   assert.match(html, /async function toggleNoteAudio\(requestedTrack = null\)/);
   assert.match(html, /function attachNoteMediaHotspots/);
-  assert.match(html, /space-ar-note-cache-v7/);
+  assert.match(html, /space-ar-note-cache-v8/);
   assert.match(html, /pageMeta: pages\.map/);
   assert.match(html, /hasMediaHotspotMetadata/);
   assert.match(html, /if \(isVideo && track\.kind !== "youtube"\) void prepareVideoAmbilight\(track, arNotePath\)/);
@@ -263,7 +263,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function setNoteControlIcon/);
   assert.match(html, /new THREE\.PlaneGeometry\(0\.024, 0\.024\)/);
   assert.match(html, /activeNoteAudio\.currentTime = 0/);
-  assert.match(html, /space-ar-note-cache-v7/);
+  assert.match(html, /space-ar-note-cache-v8/);
 });
 
 test("remove a captura de voz e preserva a busca local", async () => {
@@ -574,6 +574,6 @@ test("supports Timestamp Notes markers and lazy SMILES structures", async () => 
   assert.ok(html.includes("/vendor/smiles-drawer/smiles-drawer.min.js"));
   assert.match(html, /async function renderSmilesBlocks/);
   assert.match(html, /compactDrawing: true/);
-  assert.match(html, /\.draw\(tree, canvas\.id, "dark", false\)/);
-  assert.ok(html.includes('canvas.toDataURL("image/png")'));
+  assert.match(html, /new SmilesDrawer\.SvgDrawer/);
+  assert.ok(html.includes('new XMLSerializer().serializeToString(svg)'));
 });

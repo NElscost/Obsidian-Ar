@@ -31,6 +31,7 @@
   </script>
   <title>Space AR · Meta Quest</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <script defer src="/vendor/smiles-drawer/smiles-drawer.min.js"></script>
   <style>
     :root {
       color-scheme: dark;
@@ -521,7 +522,7 @@
     }
     .note-content .note-timestamp-card { border-color:rgba(99,230,190,.5); background:rgba(99,230,190,.12); color:#d9fff3; }
     .note-content .note-smiles { margin:10px 0; padding:8px; border:1px solid rgba(99,230,190,.25); border-radius:10px; background:rgba(7,11,18,.82); break-inside:avoid; overflow:hidden; }
-    .note-content .note-smiles canvas, .note-content .note-smiles img { position:static; inset:auto; display:block; width:100%; height:auto; max-height:300px; object-fit:contain; }
+    .note-content .note-smiles canvas, .note-content .note-smiles svg, .note-content .note-smiles img { position:static; inset:auto; display:block; width:100%; height:auto; max-height:300px; object-fit:contain; }
     .note-content .note-video-card {
       min-height: 92px;
       background: rgba(99, 230, 190, 0.1);
@@ -1116,30 +1117,47 @@
       if (!blocks.length) return;
       try {
         const SmilesDrawer = await loadSmilesDrawer();
-        if (!SmilesDrawer?.Drawer || !SmilesDrawer?.parse) throw new Error("Invalid SMILES Drawer API.");
-        for (const [index, block] of blocks.entries()) {
+        if (!SmilesDrawer?.SvgDrawer || !SmilesDrawer?.parse) {
+          throw new Error("Invalid SMILES Drawer SVG API.");
+        }
+        for (const block of blocks) {
           let smiles = block.dataset.noteSmiles || "";
           try { smiles = decodeURIComponent(smiles); } catch {}
-          const canvas = document.createElement("canvas");
-          canvas.width = 900;
-          canvas.height = 300;
-          canvas.id = "note-smiles-" + Date.now() + "-" + index;
-          block.replaceChildren(canvas);
           await new Promise((resolve) => SmilesDrawer.parse(smiles, (tree) => {
-            try { new SmilesDrawer.Drawer({ width: 900, height: 300, compactDrawing: true, bondThickness: 1.2 }).draw(tree, canvas.id, "dark", false);
+            try {
+              const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+              svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+              svg.setAttribute("width", "900");
+              svg.setAttribute("height", "300");
+              svg.setAttribute("viewBox", "0 0 900 300");
+              block.replaceChildren(svg);
+              new SmilesDrawer.SvgDrawer({
+                width: 900,
+                height: 300,
+                compactDrawing: true,
+                bondThickness: 1.2
+              }).draw(tree, svg, "dark", false);
+              const serialized = new XMLSerializer().serializeToString(svg);
               const image = document.createElement("img");
               image.alt = "Chemical structure";
               image.onload = () => { block.replaceChildren(image); resolve(); };
-              image.onerror = () => { block.textContent = "SMILES: " + smiles; resolve(); };
-              image.src = canvas.toDataURL("image/png");
-              return; }
-            catch (error) { block.textContent = "SMILES: " + smiles; console.warn("SMILES drawing failed.", error); }
+              image.onerror = () => { block.replaceChildren(svg); resolve(); };
+              image.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(serialized);
+            } catch (error) {
+              block.textContent = "SMILES: " + smiles;
+              console.warn("SMILES SVG drawing failed.", error);
+              resolve();
+            }
+          }, (error) => {
+            block.textContent = "SMILES: " + smiles;
+            console.warn("Invalid SMILES source.", error);
             resolve();
-          }, () => { block.textContent = "SMILES: " + smiles; resolve(); }));
+          }));
         }
-      } catch (error) { console.warn("SMILES renderer unavailable; preserving source.", error); }
+      } catch (error) {
+        console.warn("SMILES renderer unavailable; preserving source.", error);
+      }
     }
-
     async function renderNoteMarkdown(source) {
       const math = [];
       const stashMath = (latex, displayMode) => {
@@ -1946,7 +1964,7 @@
     const NOTE_CACHE_MAX_BYTES = 48 * 1024 * 1024;
     const NOTE_PERSISTENT_CACHE_MAX_ENTRIES = 12;
     const NOTE_PERSISTENT_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
-    const NOTE_CACHE_DB = "space-ar-note-cache-v7";
+    const NOTE_CACHE_DB = "space-ar-note-cache-v8";
     const NOTE_CACHE_STORE = "rendered-notes";
     let noteCacheDbPromise = null;
     let highlightCorePromise = null;
