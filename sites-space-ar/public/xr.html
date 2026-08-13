@@ -1259,6 +1259,10 @@
       return String(latex ?? "").replace(/\^\\\*/g, "^{*}");
     }
 
+    function requiresKatexMath(latex) {
+      return /\\[{}]/.test(latex) || /\^\\\*/.test(latex);
+    }
+
     async function renderNoteMarkdown(source) {
       const math = [];
       const stashMath = (latex, displayMode) => {
@@ -1337,7 +1341,7 @@
         const item = math[Number(element.dataset.noteMath)];
         if (!item) continue;
         try {
-          if (rustMath) {
+          if (rustMath && !requiresKatexMath(item.latex)) {
             const mathml = item.displayMode
               ? rustMath.display_math_to_mathml(item.latex)
               : rustMath.inline_math_to_mathml(item.latex);
