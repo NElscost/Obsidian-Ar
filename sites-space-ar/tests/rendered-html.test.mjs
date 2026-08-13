@@ -605,3 +605,11 @@ test("inline WebXR module has valid JavaScript syntax", async () => {
   assert.equal(checked.status, 0, checked.stderr);
   assert.ok(source.includes("body.split(/\\r?\\n/)"));
 });
+
+test("normalizes escaped star math and lets graph nodes occlude virtual hands", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /function normalizeNoteLatex/);
+  assert.ok(html.includes('return String(latex ?? "").replace('));
+  assert.ok(html.indexOf("depthTest: true", html.indexOf("localNodeMaterial")) > 0);
+  assert.ok(html.indexOf("depthWrite: true", html.indexOf("const nodeMaterial")) > 0);
+});

@@ -1539,6 +1539,12 @@ async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
     }
 
     let _download_guard = YOUTUBE_DOWNLOAD_LOCK.lock().await;
+    // Recheck after waiting: a preceding request may have failed while this one was queued.
+    if let Some((until, message)) = youtube_failure_cache().read().await.get(url).cloned() {
+        if until > Instant::now() {
+            bail!("{message}");
+        }
+    }
     if tokio::fs::metadata(&output_path)
         .await
         .map(|metadata| metadata.len() > 0)

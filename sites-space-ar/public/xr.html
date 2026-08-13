@@ -1255,10 +1255,14 @@
         }
       }
     }
+    function normalizeNoteLatex(latex) {
+      return String(latex ?? "").replace(/\^\\\*/g, "^{*}");
+    }
+
     async function renderNoteMarkdown(source) {
       const math = [];
       const stashMath = (latex, displayMode) => {
-        const index = math.push({ latex, displayMode }) - 1;
+        const index = math.push({ latex: normalizeNoteLatex(latex), displayMode }) - 1;
         return `<span data-note-math="${index}"></span>`;
       };
       let markdown = preprocessNotePluginBlocks(source)
@@ -4682,7 +4686,8 @@
       const localNodeGeometry = new THREE.SphereGeometry(0.009, 8, 6);
       const localNodeMaterial = new THREE.MeshBasicMaterial({
         color: 0xffffff,
-        depthTest: false,
+        depthTest: true,
+        depthWrite: true,
         toneMapped: false
       });
       const nodes = new THREE.InstancedMesh(localNodeGeometry, localNodeMaterial, localNodes.length);
@@ -4702,16 +4707,17 @@
       }
       nodes.instanceMatrix.needsUpdate = true;
       if (nodes.instanceColor) nodes.instanceColor.needsUpdate = true;
-      nodes.renderOrder = 1000;
+      nodes.renderOrder = 3;
       localNoteGraphGroup.add(nodes);
       arNoteControls.push(nodes);
 
       const labels = createDynamicGraphLabels(localNodes, {
         trackGlobal: false,
         labelScale: 1.15,
-        depthTest: false
+        depthTest: true
       });
-      labels.renderOrder = 1001;
+      labels.material.depthWrite = true;
+      labels.renderOrder = 3;
       labels.raycast = () => {};
       localNoteGraphGroup.add(labels);
 
@@ -4721,8 +4727,9 @@
           true,
           0.42
         );
-        lines.material.depthTest = false;
-        lines.renderOrder = 999;
+        lines.material.depthTest = true;
+        lines.material.depthWrite = true;
+        lines.renderOrder = 2;
         lines.raycast = () => {};
         localNoteGraphGroup.add(lines);
       }
@@ -6010,6 +6017,8 @@
       );
       const nodeMaterial = new THREE.MeshBasicMaterial({
         color: 0xffffff,
+        depthTest: true,
+        depthWrite: true,
         toneMapped: false
       });
       const nodeMesh = new THREE.InstancedMesh(
