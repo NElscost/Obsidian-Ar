@@ -615,3 +615,14 @@ test("normalizes escaped star math and lets graph nodes occlude virtual hands", 
   assert.ok(html.indexOf("depthTest: true", html.indexOf("localNodeMaterial")) > 0);
   assert.ok(html.indexOf("depthWrite: true", html.indexOf("const nodeMaterial")) > 0);
 });
+
+test("shows a live AR reading dashboard with cards, graph, and thumb gesture", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /function createArDashboard/);
+  assert.match(html, /Knowledge dashboard/);
+  assert.match(html, /Reading by area/);
+  assert.match(html, /Recent knowledge graph/);
+  assert.match(html, /recordReadingActivity\(path, "open"\)/);
+  assert.match(html, /if \(arNoteGroup\.visible\) toggleArDashboard\(\)/);
+  assert.match(html, /dashboard-close/);
+});

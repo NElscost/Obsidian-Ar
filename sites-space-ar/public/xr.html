@@ -746,6 +746,7 @@
     const NODE_PICK_INTERVAL_SMALL_MS = 34;
     const NODE_PICK_INTERVAL_LARGE_MS = 66;
     const RECENT_NOTES_STORAGE_KEY = "space-ar-recent-notes";
+    const READING_ACTIVITY_STORAGE_KEY = "space-ar-reading-activity-v1";
     const MAX_BACKGROUND_360_WIDTH = 8192;
     const MAX_BACKGROUND_360_HEIGHT = 4096;
     const LANGUAGE_STORAGE_KEY = "space-ar-language";
@@ -1854,6 +1855,114 @@
     let lastKeyboardTouchScanAt = 0;
     let waveformDragInputSource = null;
 
+    let dashboardVisible = false;
+    let dashboardGroup = null;
+    let dashboardTexture = null;
+    let dashboardCanvas = null;
+    let dashboardLastReadingTick = 0;
+
+    function readReadingActivity() {
+      try { return JSON.parse(localStorage.getItem(READING_ACTIVITY_STORAGE_KEY) ?? "{}") || {}; }
+      catch { return {}; }
+    }
+
+    function recordReadingActivity(path, event = "open", elapsedMs = 0) {
+      if (!path) return;
+      const activity = readReadingActivity();
+      const entry = activity[path] ?? { opens: 0, pages: 0, readingMs: 0, lastReadAt: 0 };
+      if (event === "open") entry.opens += 1;
+      if (event === "page") entry.pages += 1;
+      if (elapsedMs > 0) entry.readingMs += elapsedMs;
+      entry.lastReadAt = Date.now();
+      activity[path] = entry;
+      try { localStorage.setItem(READING_ACTIVITY_STORAGE_KEY, JSON.stringify(activity)); } catch {}
+      if (dashboardVisible) drawArDashboard();
+    }
+
+    function dashboardStats() {
+      const entries = Object.entries(readReadingActivity()).sort((a, b) => b[1].lastReadAt - a[1].lastReadAt);
+      const areas = new Map();
+      let readingMs = 0, opens = 0, pages = 0;
+      for (const [path, value] of entries) {
+        readingMs += value.readingMs || 0; opens += value.opens || 0; pages += value.pages || 0;
+        const area = String(path).replaceAll("\\", "/").split("/")[0] || "Uncategorized";
+        areas.set(area, (areas.get(area) || 0) + (value.readingMs || value.opens * 1000));
+      }
+      return { entries, areas: [...areas.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5), readingMs, opens, pages };
+    }
+
+    function dashboardRoundRect(ctx, x, y, width, height, radius, fill) {
+      ctx.beginPath(); ctx.roundRect(x, y, width, height, radius); ctx.fillStyle = fill; ctx.fill();
+    }
+
+    function drawArDashboard() {
+      if (!dashboardCanvas || !dashboardTexture) return;
+      const ctx = dashboardCanvas.getContext("2d"), stats = dashboardStats();
+      ctx.clearRect(0, 0, 1024, 640);
+      dashboardRoundRect(ctx, 8, 8, 1008, 624, 36, "rgba(7,13,24,.76)");
+      ctx.fillStyle = "#f4f7fb"; ctx.font = "600 34px system-ui"; ctx.fillText("Knowledge dashboard", 44, 64);
+      ctx.fillStyle = "#9fb0c7"; ctx.font = "22px system-ui"; ctx.fillText("Updated from reading activity", 44, 98);
+      [["READ", stats.entries.length], ["SESSIONS", stats.opens], ["MINUTES", Math.round(stats.readingMs / 60000)], ["PAGES", stats.pages]].forEach(([label, value], index) => {
+        const x = 44 + index * 238;
+        dashboardRoundRect(ctx, x, 126, 214, 108, 20, "rgba(255,255,255,.09)");
+        ctx.fillStyle = "#91a4bf"; ctx.font = "18px system-ui"; ctx.fillText(label, x + 18, 158);
+        ctx.fillStyle = "#fff"; ctx.font = "600 42px system-ui"; ctx.fillText(String(value), x + 18, 211);
+      });
+      ctx.fillStyle = "#f4f7fb"; ctx.font = "600 24px system-ui"; ctx.fillText("Reading by area", 44, 282);
+      const maxArea = Math.max(1, ...stats.areas.map(([, value]) => value));
+      stats.areas.forEach(([area, value], index) => {
+        const y = 312 + index * 46;
+        ctx.fillStyle = "#cbd6e5"; ctx.font = "19px system-ui"; ctx.fillText(area.slice(0, 18), 44, y + 19);
+        dashboardRoundRect(ctx, 242, y, 280, 22, 11, "rgba(255,255,255,.08)");
+        dashboardRoundRect(ctx, 242, y, Math.max(12, 280 * value / maxArea), 22, 11, ["#75a7ff","#63e6be","#c18cff","#ffb86b","#ff7c98"][index]);
+      });
+      ctx.fillStyle = "#f4f7fb"; ctx.font = "600 24px system-ui"; ctx.fillText("Recent knowledge graph", 574, 282);
+      const recent = stats.entries.slice(0, 6), centerX = 785, centerY = 430;
+      ctx.strokeStyle = "rgba(172,190,216,.34)"; ctx.lineWidth = 3;
+      recent.forEach(([, value], index) => {
+        const angle = index / Math.max(1, recent.length) * Math.PI * 2 - Math.PI / 2;
+        const x = centerX + Math.cos(angle) * 145, y = centerY + Math.sin(angle) * 108;
+        ctx.beginPath(); ctx.moveTo(centerX, centerY); ctx.lineTo(x, y); ctx.stroke();
+        ctx.beginPath(); ctx.fillStyle = ["#75a7ff","#63e6be","#c18cff","#ffb86b","#ff7c98","#8dd9ff"][index];
+        ctx.arc(x, y, 15 + Math.min(12, value.opens || 0), 0, Math.PI * 2); ctx.fill();
+      });
+      ctx.beginPath(); ctx.fillStyle = "#eef4ff"; ctx.arc(centerX, centerY, 28, 0, Math.PI * 2); ctx.fill();
+      recent.slice(0, 4).forEach(([path], index) => {
+        const label = path.replace(/\.md$/i, "").split(/[\\/]/).pop();
+        ctx.fillStyle = "#dce6f4"; ctx.font = "17px system-ui"; ctx.fillText(label.slice(0, 24), 574, 550 + index * 22);
+      });
+      dashboardTexture.needsUpdate = true;
+    }
+
+    function disposeArDashboard() {
+      if (!dashboardGroup) return;
+      const owned = new Set(); dashboardGroup.traverse((object) => owned.add(object));
+      arNoteControls = arNoteControls.filter((control) => !owned.has(control));
+      dashboardGroup.removeFromParent();
+      dashboardGroup.traverse((object) => { if (object.isMesh) { object.geometry?.dispose(); object.material?.map?.dispose(); object.material?.dispose(); } });
+      dashboardGroup = dashboardTexture = dashboardCanvas = null;
+    }
+
+    function createArDashboard() {
+      disposeArDashboard();
+      dashboardCanvas = document.createElement("canvas"); dashboardCanvas.width = 1024; dashboardCanvas.height = 640;
+      dashboardTexture = new THREE.CanvasTexture(dashboardCanvas); dashboardTexture.colorSpace = THREE.SRGBColorSpace; dashboardTexture.minFilter = THREE.LinearFilter; dashboardTexture.generateMipmaps = false;
+      dashboardGroup = new THREE.Group(); dashboardGroup.position.set(AR_NOTE_WIDTH + 0.09, 0, 0.015);
+      const surface = new THREE.Mesh(curvedPanelGeometry(AR_NOTE_WIDTH, AR_NOTE_HEIGHT), new THREE.MeshBasicMaterial({ map: dashboardTexture, transparent: true, opacity: .96, depthTest: false, toneMapped: false }));
+      surface.renderOrder = 1000; surface.userData.highlightScale = false; dashboardGroup.add(surface);
+      const close = new THREE.Mesh(new THREE.CircleGeometry(.019, 14), new THREE.MeshBasicMaterial({ color: 0xff6b6b, transparent: true, depthTest: false, toneMapped: false }));
+      close.position.set(AR_NOTE_WIDTH / 2 - .03, AR_NOTE_HEIGHT / 2 - .03, .008); close.renderOrder = 1002; close.userData.noteAction = "dashboard-close";
+      dashboardGroup.add(close); arNoteControls.push(close); arNoteGroup.add(dashboardGroup); drawArDashboard();
+    }
+
+    function toggleArDashboard() {
+      if (!arNoteGroup.visible) return;
+      dashboardVisible = !dashboardVisible;
+      if (dashboardVisible) { createArDashboard(); setXrMessage("Dashboard aberto. Faça dois toques com o polegar para fechar."); }
+      else { disposeArDashboard(); setXrMessage("Dashboard fechado."); }
+    }
+
+
     function releaseActiveMedia() {
       if (activeNoteAudio) {
         activeNoteAudio.pause();
@@ -1930,6 +2039,7 @@
       const preservedVideoCloseControl = preserveVideo ? activeNoteVideoCloseControl : null;
       if (preservedVideoGroup) preservedVideoGroup.removeFromParent();
 
+      disposeArDashboard();
       audioWaveformGeneration += 1;
       noteVideoPreparationGeneration += 1;
       cancelNoteCapture();
@@ -3355,6 +3465,12 @@
       context.lineCap = "round";
       context.lineJoin = "round";
       context.beginPath();
+      if (action === "dashboard-close") {
+        dashboardVisible = false;
+        disposeArDashboard();
+        setXrMessage("Dashboard fechado.");
+        return;
+      }
       if (action === "close") {
         context.moveTo(20, 20); context.lineTo(44, 44);
         context.moveTo(44, 20); context.lineTo(20, 44);
@@ -4367,7 +4483,8 @@
         clearActiveNoteMediaForSwitch();
         activeNoteTrack = track;
         activeNoteMediaPath = arNotePath;
-        audioWaveformGeneration += 1;
+        disposeArDashboard();
+      audioWaveformGeneration += 1;
         void prepareAudioWaveform(track, arNotePath, AR_NOTE_WIDTH, AR_NOTE_HEIGHT);
         if (isVideo) void prepareVideoAmbilight(track, arNotePath);
       } else {
@@ -4542,6 +4659,12 @@
     }
     function activateNoteControl(action, event, options = {}) {
       if (action.startsWith("search-")) { activateArSearchKey(action, event); return; }
+      if (action === "dashboard-close") {
+        dashboardVisible = false;
+        disposeArDashboard();
+        setXrMessage("Dashboard fechado.");
+        return;
+      }
       if (action === "close") {
         closeNote();
         return;
@@ -4591,8 +4714,8 @@
         }
         return;
       }
-      if (action === "previous" && arNotePage > 0) arNotePage -= 1;
-      if (action === "next" && arNotePage < arNotePages.length - 1) arNotePage += 1;
+      if (action === "previous" && arNotePage > 0) { arNotePage -= 1; recordReadingActivity(arNotePath, "page"); }
+      if (action === "next" && arNotePage < arNotePages.length - 1) { arNotePage += 1; recordReadingActivity(arNotePath, "page"); }
       drawArNotePage();
       setXrMessage(`Página ${arNotePage + 1} de ${arNotePages.length}.`);
     }
@@ -4756,6 +4879,7 @@
       noteVideoTracks = videoTracks;
       noteTimestamps = extractNoteTimestamps(source);
       arNotePath = path;
+      recordReadingActivity(path, "open");
       const plainWords = String(source ?? "").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, " ").replace(/<[^>]+>|!\?\[\[[^\]]+\]\]|\[[^\]]*\]\([^)]+\)|[#>*_~=|$\\{}\[\]()-]/g, " ");
       arNoteWordCount = plainWords.match(/[\p{L}\p{N}]+(?:['’.-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
       arNoteCanvas = document.createElement("canvas");
@@ -4841,6 +4965,7 @@
         }
       }
       drawArNotePage();
+      if (dashboardVisible) createArDashboard();
       if (noteWindowPinned) {
         if (arNoteGroup.parent !== scene) scene.attach(arNoteGroup);
       } else {
@@ -5756,7 +5881,10 @@
     function registerDoubleThumbTap(state, time) {
       const repeated = time - (state.lastThumbTapAt ?? 0) <= 650;
       state.lastThumbTapAt = repeated ? 0 : time;
-      if (repeated) openKeyboardSearch();
+      if (repeated) {
+        if (arNoteGroup.visible) toggleArDashboard();
+        else openKeyboardSearch();
+      }
       else setXrMessage("Toque novamente o polegar para abrir a busca 3D.");
     }
 
@@ -7241,7 +7369,7 @@
     }
 
     function updateJointDoubleThumbTap(frame, inputSource, time) {
-      if (!inputSource.hand || arNoteGroup.visible || graphHierarchy?.expandedHubId || arSearchKeyboardActive) return false;
+      if (!inputSource.hand || graphHierarchy?.expandedHubId || arSearchKeyboardActive) return false;
       let state = thumbTapGestureStates.get(inputSource);
       if (!state) {
         state = {
@@ -7312,7 +7440,7 @@
       const rightStarted = rightPressed && !state.rightPressed;
 
       state.pressed = tapPressed || leftPressed || rightPressed;
-      if (tapStarted && !arNoteGroup.visible && !graphHierarchy?.expandedHubId) {
+      if (tapStarted && !graphHierarchy?.expandedHubId) {
         registerDoubleThumbTap(state, time);
       }
       if (state.pressed) state.suppressRayUntil = time + 260;
@@ -8031,7 +8159,9 @@
         }
         if (pointedNoteControl) {
           const action = pointedNoteControl.userData.noteAction;
-          const label = action === "close"
+          const label = action === "dashboard-close"
+            ? "fechar o dashboard"
+            : action === "close"
             ? "fechar"
             : action === "video-close"
               ? "fechar o vídeo"
@@ -8233,6 +8363,10 @@
 
     function render(time, frame) {
       if (activeNoteVideoLoadingSpinner) activeNoteVideoLoadingSpinner.rotation.z = -time * 0.004;
+      if (arNoteGroup.visible && arNotePath && time - dashboardLastReadingTick >= 5000) {
+        recordReadingActivity(arNotePath, "time", dashboardLastReadingTick ? time - dashboardLastReadingTick : 0);
+        dashboardLastReadingTick = time;
+      } else if (!arNoteGroup.visible) dashboardLastReadingTick = time;
       updateVirtualHands(time);
       if (xrSession && weatherField.visible) {
         weatherMaterial.uniforms.time.value = time * 0.001;
