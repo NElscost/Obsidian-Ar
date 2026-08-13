@@ -625,4 +625,7 @@ test("shows a live AR reading dashboard with cards, graph, and thumb gesture", a
   assert.match(html, /recordReadingActivity\(path, "open"\)/);
   assert.match(html, /if \(arNoteGroup\.visible\) toggleArDashboard\(\)/);
   assert.match(html, /dashboard-close/);
+  assert.match(html, /labelHeightScale: 1\.35/);
+  assert.match(html, /degToRad\(15\)/);
+  assert.match(html, /dashboardDrawSignature/);
 });

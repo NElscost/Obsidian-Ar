@@ -1860,6 +1860,7 @@
     let dashboardTexture = null;
     let dashboardCanvas = null;
     let dashboardLastReadingTick = 0;
+    let dashboardDrawSignature = "";
 
     function readReadingActivity() {
       try { return JSON.parse(localStorage.getItem(READING_ACTIVITY_STORAGE_KEY) ?? "{}") || {}; }
@@ -1941,13 +1942,19 @@
       dashboardGroup.removeFromParent();
       dashboardGroup.traverse((object) => { if (object.isMesh) { object.geometry?.dispose(); object.material?.map?.dispose(); object.material?.dispose(); } });
       dashboardGroup = dashboardTexture = dashboardCanvas = null;
+      dashboardDrawSignature = "";
     }
 
     function createArDashboard() {
       disposeArDashboard();
       dashboardCanvas = document.createElement("canvas"); dashboardCanvas.width = 1024; dashboardCanvas.height = 640;
       dashboardTexture = new THREE.CanvasTexture(dashboardCanvas); dashboardTexture.colorSpace = THREE.SRGBColorSpace; dashboardTexture.minFilter = THREE.LinearFilter; dashboardTexture.generateMipmaps = false;
-      dashboardGroup = new THREE.Group(); dashboardGroup.position.set(AR_NOTE_WIDTH + 0.09, 0, 0.015);
+      dashboardGroup = new THREE.Group();
+      const dashboardArcAngle = THREE.MathUtils.degToRad(15);
+      const dashboardCenterY = AR_NOTE_HEIGHT + 0.075;
+      const dashboardArcRadius = dashboardCenterY / Math.sin(dashboardArcAngle);
+      dashboardGroup.position.set(0, dashboardCenterY, dashboardArcRadius * (1 - Math.cos(dashboardArcAngle)));
+      dashboardGroup.rotation.x = -dashboardArcAngle;
       const surface = new THREE.Mesh(curvedPanelGeometry(AR_NOTE_WIDTH, AR_NOTE_HEIGHT), new THREE.MeshBasicMaterial({ map: dashboardTexture, transparent: true, opacity: .96, depthTest: false, toneMapped: false }));
       surface.renderOrder = 1000; surface.userData.highlightScale = false; dashboardGroup.add(surface);
       const close = new THREE.Mesh(new THREE.CircleGeometry(.019, 14), new THREE.MeshBasicMaterial({ color: 0xff6b6b, transparent: true, depthTest: false, toneMapped: false }));
@@ -4841,6 +4848,7 @@
       const labels = createDynamicGraphLabels(localNodes, {
         trackGlobal: false,
         labelScale: 1.15,
+        labelHeightScale: 1.35,
         depthTest: true
       });
       labels.material.depthWrite = true;
@@ -6298,6 +6306,7 @@
     function createDynamicGraphLabels(nodes, options = {}) {
       const cellWidth = 384;
       const cellHeight = 60;
+      const labelHeight = 0.0056 * (options.labelHeightScale ?? 1);
       const columns = 8;
       const rows = Math.ceil(nodes.length / columns);
       const canvas = document.createElement("canvas");
@@ -6341,7 +6350,7 @@
         positions.push(px, py, pz, px, py, pz, px, py, pz, px, py, pz);
         corners.push(-0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5);
         uvs.push(u0, v0, u1, v0, u1, v1, u0, v1);
-        sizes.push(width, 0.0056, width, 0.0056, width, 0.0056, width, 0.0056);
+        sizes.push(width, labelHeight, width, labelHeight, width, labelHeight, width, labelHeight);
         indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
       }
 
