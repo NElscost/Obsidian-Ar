@@ -628,4 +628,8 @@ test("shows a live AR reading dashboard with cards, graph, and thumb gesture", a
   assert.match(html, /labelHeightScale: 1\.35/);
   assert.match(html, /degToRad\(15\)/);
   assert.match(html, /dashboardDrawSignature/);
+  assert.match(html, /dashboardGroup\.rotation\.x = dashboardArcAngle/);
+  assert.match(html, /alphaTest: \.02, depthTest: true, depthWrite: true/);
+  assert.match(html, /labelOffsets/);
+  assert.match(html, /return nodeRadius \+ 0\.008/);
 });

@@ -1954,10 +1954,10 @@
       const dashboardCenterY = AR_NOTE_HEIGHT + 0.075;
       const dashboardArcRadius = dashboardCenterY / Math.sin(dashboardArcAngle);
       dashboardGroup.position.set(0, dashboardCenterY, dashboardArcRadius * (1 - Math.cos(dashboardArcAngle)));
-      dashboardGroup.rotation.x = -dashboardArcAngle;
-      const surface = new THREE.Mesh(curvedPanelGeometry(AR_NOTE_WIDTH, AR_NOTE_HEIGHT), new THREE.MeshBasicMaterial({ map: dashboardTexture, transparent: true, opacity: .96, depthTest: false, toneMapped: false }));
+      dashboardGroup.rotation.x = dashboardArcAngle;
+      const surface = new THREE.Mesh(curvedPanelGeometry(AR_NOTE_WIDTH, AR_NOTE_HEIGHT), new THREE.MeshBasicMaterial({ map: dashboardTexture, transparent: true, opacity: .96, alphaTest: .02, depthTest: true, depthWrite: true, toneMapped: false }));
       surface.renderOrder = 1000; surface.userData.highlightScale = false; dashboardGroup.add(surface);
-      const close = new THREE.Mesh(new THREE.CircleGeometry(.019, 14), new THREE.MeshBasicMaterial({ color: 0xff6b6b, transparent: true, depthTest: false, toneMapped: false }));
+      const close = new THREE.Mesh(new THREE.CircleGeometry(.019, 14), new THREE.MeshBasicMaterial({ color: 0xff6b6b, transparent: true, depthTest: true, depthWrite: true, toneMapped: false }));
       close.position.set(AR_NOTE_WIDTH / 2 - .03, AR_NOTE_HEIGHT / 2 - .03, .008); close.renderOrder = 1002; close.userData.noteAction = "dashboard-close";
       dashboardGroup.add(close); arNoteControls.push(close); arNoteGroup.add(dashboardGroup); drawArDashboard();
     }
@@ -4849,6 +4849,10 @@
         trackGlobal: false,
         labelScale: 1.15,
         labelHeightScale: 1.35,
+        labelYOffset: (node, index) => {
+          const nodeRadius = 0.009 * (index === 0 ? 1.75 : THREE.MathUtils.clamp(Math.sqrt(node.val ?? 1) * 0.55, 0.75, 1.35));
+          return nodeRadius + 0.008;
+        },
         depthTest: true
       });
       labels.material.depthWrite = true;
@@ -6321,6 +6325,7 @@
       const uvs = [];
       const indices = [];
       const sizes = [];
+      const labelOffsets = [];
 
       for (let index = 0; index < nodes.length; index += 1) {
         const node = nodes[index];
@@ -6346,11 +6351,15 @@
         const py = node.y ?? 0;
         const pz = node.z ?? 0;
         const width = THREE.MathUtils.clamp(label.length * 0.00125, 0.016, 0.038);
+        const labelOffset = typeof options.labelYOffset === "function"
+          ? options.labelYOffset(node, index)
+          : (options.labelYOffset ?? 0.0075);
 
         positions.push(px, py, pz, px, py, pz, px, py, pz, px, py, pz);
         corners.push(-0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5);
         uvs.push(u0, v0, u1, v0, u1, v1, u0, v1);
         sizes.push(width, labelHeight, width, labelHeight, width, labelHeight, width, labelHeight);
+        labelOffsets.push(labelOffset, labelOffset, labelOffset, labelOffset);
         indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
       }
 
@@ -6365,6 +6374,7 @@
       geometry.setAttribute("corner", new THREE.Float32BufferAttribute(corners, 2));
       geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
       geometry.setAttribute("labelSize", new THREE.Float32BufferAttribute(sizes, 2));
+      geometry.setAttribute("labelOffset", new THREE.Float32BufferAttribute(labelOffsets, 1));
       geometry.setIndex(indices);
       geometry.computeBoundingSphere();
 
@@ -6376,13 +6386,14 @@
         vertexShader: `
           attribute vec2 corner;
           attribute vec2 labelSize;
+          attribute float labelOffset;
           uniform float labelScale;
           varying vec2 vUv;
           void main() {
             vUv = uv;
             vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
             viewPosition.xy += corner * labelSize * labelScale;
-            viewPosition.y += 0.0075 * labelScale;
+            viewPosition.y += labelOffset * labelScale;
             viewPosition.z += 0.008 * labelScale;
             gl_Position = projectionMatrix * viewPosition;
           }
