@@ -1774,6 +1774,7 @@
     let arNotePage = 0;
     let arNoteTitle = "";
     let arNotePath = "";
+    let arNoteSource = "";
     let arNoteWordCount = 0;
     let arSearchKeyboardActive = false;
     let arSearchQuery = "";
@@ -4879,7 +4880,8 @@
       title,
       source,
       path = "",
-      cachedPages = null
+      cachedPages = null,
+      recordActivity = true
     ) {
       if (!xrSession) return;
       const audioTracks = extractNoteAudioTracks(source);
@@ -4891,7 +4893,8 @@
       noteVideoTracks = videoTracks;
       noteTimestamps = extractNoteTimestamps(source);
       arNotePath = path;
-      recordReadingActivity(path, "open");
+      arNoteSource = String(source ?? "");
+      if (recordActivity) recordReadingActivity(path, "open");
       const plainWords = String(source ?? "").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, " ").replace(/<[^>]+>|!\?\[\[[^\]]+\]\]|\[[^\]]*\]\([^)]+\)|[#>*_~=|$\\{}\[\]()-]/g, " ");
       arNoteWordCount = plainWords.match(/[\p{L}\p{N}]+(?:['’.-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
       arNoteCanvas = document.createElement("canvas");
@@ -7091,7 +7094,34 @@
       return added;
     }
 
-    async function applyLiveGraphUpdate(rawData) {
+    async function refreshOpenNoteAfterVaultChange(config) {
+      const path = arNotePath;
+      if (!xrSession || !arNoteGroup.visible || !path || noteRequestBusy) return;
+      noteRequestBusy = true;
+      try {
+        const response = await fetch(config.url + "/note", {
+          method: "POST",
+          headers: bridgeRequestHeaders(config, true),
+          cache: "no-store",
+          body: JSON.stringify({ path })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error ?? ("HTTP " + response.status));
+        if (path !== arNotePath || String(result.content ?? "") === arNoteSource) return;
+        noteSessionCache.delete(path);
+        noteTitle.textContent = result.title;
+        await renderNoteMarkdown(result.content);
+        await highlightNoteCode();
+        await prepareNoteImages(config, path);
+        await showNoteInAr(result.title, result.content, path, null, false);
+        setXrMessage("Nota atualizada durante a sessão: " + result.title + ".");
+      } catch (error) {
+        console.warn("Não foi possível atualizar a nota aberta.", error);
+      } finally {
+        noteRequestBusy = false;
+      }
+    }
+    async function applyLiveGraphUpdate(rawData, config) {
       if (
         graphUpdateApplying ||
         !dynamicGraphActive ||
@@ -7101,6 +7131,12 @@
       graphUpdateApplying = true;
       try {
         const nextData = buildHierarchicalGraph(rawData);
+        const nextSignature = graphSignature(nextData);
+        graphRevision = Number(rawData.revision) || graphRevision;
+        if (nextSignature === graphLayoutKey) {
+          await refreshOpenNoteAfterVaultChange(config);
+          return;
+        }
         const added = seedLiveGraphPositions(nextData);
         if (nextData.nodes.length >= HUGE_GRAPH_NODE_THRESHOLD) {
           applyLargeGraphLayout(nextData);
@@ -7159,7 +7195,7 @@
       URL.revokeObjectURL(url);
       graphUpdateWorker.onmessage = ({ data }) => {
         if (data?.type === "graph") {
-          const apply = () => void applyLiveGraphUpdate(data.graph);
+          const apply = () => void applyLiveGraphUpdate(data.graph, config);
           if ("scheduler" in window && scheduler?.postTask) {
             void scheduler.postTask(apply, { priority: "background" });
           } else {

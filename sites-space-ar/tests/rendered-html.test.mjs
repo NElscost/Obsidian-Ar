@@ -600,3 +600,11 @@ test("atualiza o grafo fora da thread principal", async () => {
   assert.match(html, /seedLiveGraphPositions\(nextData\)/);
   assert.match(html, /stopGraphUpdateWorker\(\)/);
 });
+
+test("atualiza a nota aberta sem redesenhar o grafo inalterado", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /nextSignature === graphLayoutKey/);
+  assert.match(html, /refreshOpenNoteAfterVaultChange\(config\)/);
+  assert.match(html, /String\(result\.content \?\? ""\) === arNoteSource/);
+  assert.match(html, /showNoteInAr\(result\.title, result\.content, path, null, false\)/);
+});
