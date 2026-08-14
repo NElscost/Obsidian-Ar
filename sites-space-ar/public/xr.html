@@ -526,6 +526,7 @@
     .note-content .note-music-abc svg { position:static; inset:auto; display:block; width:100%; height:auto; max-height:410px; background:transparent; color:#eef5ff; border-radius:6px; }
     .note-content .note-music-abc svg path { fill:#eef5ff; }
     .note-content .note-music-abc svg text { fill:#eef5ff; }
+    .note-content .note-music-abc-image { display:block; width:100%; height:auto; background:transparent; }
     .note-content .note-smiles { margin:10px 0; padding:8px; border:1px solid rgba(99,230,190,.25); border-radius:10px; background:rgba(7,11,18,.82); break-inside:avoid; overflow:hidden; }
     .note-content .note-smiles canvas, .note-content .note-smiles svg, .note-content .note-smiles img { position:static; inset:auto; display:block; width:100%; height:auto; max-height:300px; object-fit:contain; }
     .note-content .note-avatar { display:flex; gap:14px; align-items:center; margin:10px 0; padding:10px; border-radius:14px; background:rgba(20,29,45,.72); break-inside:avoid; }
@@ -1163,6 +1164,43 @@
       return abcJsPromise;
     }
 
+    async function replaceAbcSvgWithTransparentImage(block) {
+      const svg = block.querySelector("svg");
+      if (!svg) return;
+      const viewBox = svg.viewBox?.baseVal;
+      const sourceWidth = Math.max(1, viewBox?.width || svg.getBoundingClientRect().width || 820);
+      const sourceHeight = Math.max(1, viewBox?.height || svg.getBoundingClientRect().height || 240);
+      const width = Math.min(1024, Math.ceil(sourceWidth));
+      const height = Math.max(1, Math.ceil(sourceHeight * width / sourceWidth));
+      const clone = svg.cloneNode(true);
+      clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      clone.style.background = "transparent";
+      for (const path of clone.querySelectorAll("path")) {
+        if ((path.getAttribute("fill") || "").toLowerCase() !== "none") path.setAttribute("fill", "#eef5ff");
+        if (path.hasAttribute("stroke") && path.getAttribute("stroke") !== "none") path.setAttribute("stroke", "#eef5ff");
+      }
+      for (const text of clone.querySelectorAll("text, tspan")) text.setAttribute("fill", "#eef5ff");
+      const serialized = new XMLSerializer().serializeToString(clone);
+      const objectUrl = URL.createObjectURL(new Blob([serialized], { type: "image/svg+xml" }));
+      try {
+        const sourceImage = new Image();
+        sourceImage.decoding = "async";
+        sourceImage.src = objectUrl;
+        await sourceImage.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d", { alpha: true }).drawImage(sourceImage, 0, 0, width, height);
+        const image = document.createElement("img");
+        image.className = "note-music-abc-image";
+        image.alt = "Rendered music score";
+        image.src = canvas.toDataURL("image/png");
+        await image.decode();
+        block.replaceChildren(image);
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+    }
     async function renderNoteAbcBlocks() {
       const blocks = [...noteContent.querySelectorAll("[data-note-abc]")];
       if (!blocks.length) return;
@@ -1183,6 +1221,7 @@
             paddingright: 4,
             add_classes: false
           });
+          await replaceAbcSvgWithTransparentImage(block);
         } catch (error) {
           block.textContent = "ABC notation could not be rendered.";
           console.warn("ABC rendering failed.", error);
