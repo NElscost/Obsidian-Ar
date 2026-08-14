@@ -2354,6 +2354,9 @@
     let snapDomPromise = null;
     let noteImageObjectUrls = [];
     let noteCaptureGeneration = 0;
+    let deferredNoteCapture = null;
+    const LARGE_NOTE_CAPTURE_CHARACTERS = 45_000;
+    const LARGE_NOTE_CAPTURE_PAGES = 18;
     const NOTE_PAGE_WIDTH = 900;
     const NOTE_PAGE_HEIGHT = 570;
     const NOTE_IMAGE_MAX_BYTES = 12 * 1024 * 1024;
@@ -2644,6 +2647,7 @@
 
     function cancelNoteCapture() {
       noteCaptureGeneration += 1;
+      deferredNoteCapture = null;
       noteContent.classList.remove("xr-capture");
       notePanel.classList.remove("xr-capture-host");
     }
@@ -3014,26 +3018,28 @@
       }
     }
 
-    function buildNotePageCapture(page, pageIndex) {
-      const pageTop = Number.isFinite(page?.top)
-        ? page.top
-        : pageIndex * NOTE_PAGE_HEIGHT;
-      const pageBottom = Number.isFinite(page?.bottom)
-        ? page.bottom
-        : pageTop + NOTE_PAGE_HEIGHT;
+    function measureNoteCaptureLayout() {
       const noteBounds = noteContent.getBoundingClientRect();
+      return [...noteContent.children].map((child) => {
+        const bounds = child.getBoundingClientRect();
+        return { child, left: bounds.left - noteBounds.left, top: bounds.top - noteBounds.top,
+          bottom: bounds.bottom - noteBounds.top, width: bounds.width };
+      });
+    }
+
+    function buildNotePageCapture(page, pageIndex, layoutEntries = null) {
+      const pageTop = Number.isFinite(page?.top) ? page.top : pageIndex * NOTE_PAGE_HEIGHT;
+      const pageBottom = Number.isFinite(page?.bottom) ? page.bottom : pageTop + NOTE_PAGE_HEIGHT;
+      const entries = layoutEntries ?? measureNoteCaptureLayout();
       const capture = document.createElement("article");
       capture.className = "note-content xr-page-capture";
-      for (const child of noteContent.children) {
-        const bounds = child.getBoundingClientRect();
-        const top = bounds.top - noteBounds.top;
-        const bottom = bounds.bottom - noteBounds.top;
-        if (bottom <= pageTop || top >= pageBottom) continue;
-        const clone = child.cloneNode(true);
+      for (const entry of entries) {
+        if (entry.bottom <= pageTop || entry.top >= pageBottom) continue;
+        const clone = entry.child.cloneNode(true);
         clone.style.position = "absolute";
-        clone.style.left = `${bounds.left - noteBounds.left}px`;
-        clone.style.top = `${top - pageTop}px`;
-        clone.style.width = `${bounds.width}px`;
+        clone.style.left = `${entry.left}px`;
+        clone.style.top = `${entry.top - pageTop}px`;
+        clone.style.width = `${entry.width}px`;
         clone.style.margin = "0";
         capture.appendChild(clone);
       }
@@ -3041,9 +3047,9 @@
       return capture;
     }
 
-    async function captureOneNotePage(snapdom, page, pageIndex) {
+    async function captureOneNotePage(snapdom, page, pageIndex, layoutEntries = null) {
       page.status = "rendering";
-      const capture = buildNotePageCapture(page, pageIndex);
+      const capture = buildNotePageCapture(page, pageIndex, layoutEntries);
       try {
         page.canvas = await snapdom.toCanvas(capture, {
           backgroundColor: "#0a101b",
@@ -3069,7 +3075,8 @@
       snapdom,
       pages,
       generation,
-      onComplete
+      onComplete,
+      layoutEntries = null
     ) {
       let completed = false;
       try {
@@ -3077,7 +3084,7 @@
           if (generation !== noteCaptureGeneration) return;
           await waitForRenderingIdle();
           if (generation !== noteCaptureGeneration) return;
-          await captureOneNotePage(snapdom, pages[index], index);
+          await captureOneNotePage(snapdom, pages[index], index, layoutEntries);
           if (arNotePage === index && arNoteGroup.visible) drawArNotePage();
         }
         completed = generation === noteCaptureGeneration;
@@ -3104,14 +3111,51 @@
           bottom: range.bottom
         }));
         attachNoteMediaHotspots(pages);
-        await captureOneNotePage(snapdom, pages[0], 0);
-        return { pages, snapdom, generation };
+        const layoutEntries = measureNoteCaptureLayout();
+        await captureOneNotePage(snapdom, pages[0], 0, layoutEntries);
+        return { pages, snapdom, generation, layoutEntries };
       } catch (error) {
         finishNoteCapture(generation);
         throw error;
       }
     }
 
+    async function ensureDeferredNotePage(pageIndex) {
+      const state = deferredNoteCapture;
+      const page = state?.pages?.[pageIndex];
+      if (!state || !page || page.canvas instanceof HTMLCanvasElement || page.status === "rendering") return;
+      if (state.generation !== noteCaptureGeneration || state.path !== arNotePath) return;
+      if (state.busy) {
+        state.requestedPage = pageIndex;
+        return;
+      }
+      state.busy = true;
+      state.requestedPage = null;
+      notePanel.classList.add("xr-capture-host");
+      noteContent.classList.add("xr-capture");
+      page.status = "rendering";
+      drawArNotePage();
+      try {
+        await waitForRenderingIdle();
+        if (state.generation !== noteCaptureGeneration || state.path !== arNotePath) return;
+        await captureOneNotePage(state.snapdom, page, pageIndex, state.layoutEntries);
+        const complete = state.pages.every((candidate) => candidate.canvas instanceof HTMLCanvasElement);
+        cacheRenderedNote(state.path, state.title, state.source, state.pages, complete);
+        if (complete) deferredNoteCapture = null;
+        if (arNotePage === pageIndex && arNoteGroup.visible) drawArNotePage();
+      } catch (error) {
+        page.status = "error";
+        console.warn(`Página ${pageIndex + 1} não pôde ser preparada sob demanda.`, error);
+      } finally {
+        state.busy = false;
+        finishNoteCapture(state.generation);
+        const requestedPage = state.requestedPage;
+        state.requestedPage = null;
+        if (Number.isInteger(requestedPage) && deferredNoteCapture === state) {
+          void ensureDeferredNotePage(requestedPage);
+        }
+      }
+    }
     function estimateFormulaHeight(latex) {
       const rows = Math.max(1, (latex.match(/\\\\/g)?.length ?? 0) + 1);
       const nested = (latex.match(/\\begin\{/g)?.length ?? 0) > 1;
@@ -4912,6 +4956,7 @@
       if (action === "previous" && arNotePage > 0) { arNotePage -= 1; recordReadingActivity(arNotePath, "page"); }
       if (action === "next" && arNotePage < arNotePages.length - 1) { arNotePage += 1; recordReadingActivity(arNotePath, "page"); }
       drawArNotePage();
+      void ensureDeferredNotePage(arNotePage);
       setXrMessage(`Página ${arNotePage + 1} de ${arNotePages.length}.`);
     }
 
@@ -5180,12 +5225,21 @@
       arNoteGroup.visible = true;
       notePanel.classList.remove("visible");
       if (progressiveCapture) {
-        void captureRemainingNotePages(
-          progressiveCapture.snapdom,
-          progressiveCapture.pages,
-          progressiveCapture.generation,
-          () => cacheRenderedNote(path, title, source, progressiveCapture.pages, true)
-        );
+        const deferRemaining = source.length >= LARGE_NOTE_CAPTURE_CHARACTERS
+          || progressiveCapture.pages.length >= LARGE_NOTE_CAPTURE_PAGES;
+        if (deferRemaining) {
+          deferredNoteCapture = { ...progressiveCapture, path, title, source };
+          finishNoteCapture(progressiveCapture.generation);
+          setXrMessage(`Nota grande aberta. As ${progressiveCapture.pages.length} páginas serão preparadas conforme a navegação.`);
+        } else {
+          void captureRemainingNotePages(
+            progressiveCapture.snapdom,
+            progressiveCapture.pages,
+            progressiveCapture.generation,
+            () => cacheRenderedNote(path, title, source, progressiveCapture.pages, true),
+            progressiveCapture.layoutEntries
+          );
+        }
       }
     }
 
@@ -6156,6 +6210,15 @@
       noteContent.classList.add("xr-capture");
       try {
         await document.fonts?.ready;
+        const layoutEntries = measureNoteCaptureLayout();
+        if (entry.source.length >= LARGE_NOTE_CAPTURE_CHARACTERS || entry.pages.length >= LARGE_NOTE_CAPTURE_PAGES) {
+          deferredNoteCapture = {
+            snapdom, pages: entry.pages, generation, layoutEntries,
+            path, title: entry.title, source: entry.source
+          };
+          void ensureDeferredNotePage(arNotePage);
+          return;
+        }
         for (let index = 1; index < entry.pages.length; index += 1) {
           if (
             generation !== noteCaptureGeneration ||
@@ -6163,7 +6226,7 @@
             arNoteTitle !== entry.title
           ) return;
           await waitForRenderingIdle();
-          await captureOneNotePage(snapdom, entry.pages[index], index);
+          await captureOneNotePage(snapdom, entry.pages[index], index, layoutEntries);
           if (arNotePage === index) drawArNotePage();
         }
         cacheRenderedNote(path, entry.title, entry.source, entry.pages, true);
