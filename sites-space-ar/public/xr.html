@@ -4881,7 +4881,8 @@
       source,
       path = "",
       cachedPages = null,
-      recordActivity = true
+      recordActivity = true,
+      initialPage = 0
     ) {
       if (!xrSession) return;
       const audioTracks = extractNoteAudioTracks(source);
@@ -4923,6 +4924,7 @@
           arNotePages = layoutNotePages(arNoteCanvas.getContext("2d"), source);
         }
       }
+      arNotePage = THREE.MathUtils.clamp(initialPage, 0, Math.max(0, arNotePages.length - 1));
       arNoteTexture = new THREE.CanvasTexture(arNoteCanvas);
       arNoteTexture.colorSpace = THREE.SRGBColorSpace;
       arNoteTexture.minFilter = THREE.LinearFilter;
@@ -7098,6 +7100,7 @@
       const path = arNotePath;
       if (!xrSession || !arNoteGroup.visible || !path || noteRequestBusy) return;
       noteRequestBusy = true;
+      const previousPage = arNotePage;
       try {
         const response = await fetch(config.url + "/note", {
           method: "POST",
@@ -7113,7 +7116,7 @@
         await renderNoteMarkdown(result.content);
         await highlightNoteCode();
         await prepareNoteImages(config, path);
-        await showNoteInAr(result.title, result.content, path, null, false);
+        await showNoteInAr(result.title, result.content, path, null, false, previousPage);
         setXrMessage("Nota atualizada durante a sessão: " + result.title + ".");
       } catch (error) {
         console.warn("Não foi possível atualizar a nota aberta.", error);

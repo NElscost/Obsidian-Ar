@@ -606,5 +606,12 @@ test("atualiza a nota aberta sem redesenhar o grafo inalterado", async () => {
   assert.match(html, /nextSignature === graphLayoutKey/);
   assert.match(html, /refreshOpenNoteAfterVaultChange\(config\)/);
   assert.match(html, /String\(result\.content \?\? ""\) === arNoteSource/);
-  assert.match(html, /showNoteInAr\(result\.title, result\.content, path, null, false\)/);
+  assert.match(html, /showNoteInAr\(result\.title, result\.content, path, null, false, previousPage\)/);
+});
+
+test("preserva a página durante atualização ao vivo da nota", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /const previousPage = arNotePage/);
+  assert.match(html, /initialPage = 0/);
+  assert.match(html, /arNotePage = THREE\.MathUtils\.clamp\(initialPage/);
 });
