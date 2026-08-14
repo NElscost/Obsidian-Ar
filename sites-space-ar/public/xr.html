@@ -521,6 +521,9 @@
       break-inside: avoid;
     }
     .note-content .note-timestamp-card { border-color:rgba(99,230,190,.5); background:rgba(99,230,190,.12); color:#d9fff3; }
+    .note-content .note-music-abc { margin:10px 0; padding:8px 10px; border:1px solid rgba(117,167,255,.42); border-radius:10px; background:rgba(7,11,18,.88); color:#eef5ff; break-inside:avoid; overflow:hidden; }
+    .note-content .note-music-abc::before { content:"▶ Select the score to play"; display:block; margin-bottom:6px; color:#9fc1ff; font-size:12px; font-weight:750; }
+    .note-content .note-music-abc svg { position:static; inset:auto; display:block; width:100%; height:auto; max-height:410px; background:#fff; border-radius:6px; }
     .note-content .note-smiles { margin:10px 0; padding:8px; border:1px solid rgba(99,230,190,.25); border-radius:10px; background:rgba(7,11,18,.82); break-inside:avoid; overflow:hidden; }
     .note-content .note-smiles canvas, .note-content .note-smiles svg, .note-content .note-smiles img { position:static; inset:auto; display:block; width:100%; height:auto; max-height:300px; object-fit:contain; }
     .note-content .note-avatar { display:flex; gap:14px; align-items:center; margin:10px 0; padding:10px; border-radius:14px; background:rgba(20,29,45,.72); break-inside:avoid; }
@@ -1048,6 +1051,9 @@
 
 
     let smilesDrawerPromise = null;
+    let abcJsPromise = null;
+    let activeAbcSynth = null;
+    let activeAbcSource = "";
 
     function parseTimestampSeconds(value) {
       const parts = String(value ?? "").trim().split(":").map(Number);
@@ -1086,7 +1092,7 @@
     function preprocessNotePluginBlocks(source) {
       const markdown = String(source ?? "");
       let mediaSource = "";
-      return markdown.replace(/\x60\x60\x60(timestamp-url|timestamp|smiles|avatar)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi,
+      return markdown.replace(/\x60\x60\x60(timestamp-url|timestamp|smiles|avatar|music-abc)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi,
         (whole, rawKind, rawBody, offset) => {
           const kind = rawKind.toLowerCase();
           const body = rawBody.trim();
@@ -1105,6 +1111,7 @@
               : '<div aria-hidden="true" style="font-size:42px">👤</div>';
             return '<div class="note-avatar ' + side + '" style="--avatar-size:' + size + 'px">' + image + '<div class="note-avatar-body">' + escapeNoteHtml(description) + '</div></div>';
           }
+          if (kind === "music-abc") return '<div class="note-music-abc" data-note-abc="' + encodeURIComponent(body) + '">Loading score…</div>';
           if (kind === "smiles") return '<div class="note-smiles" data-note-smiles="' + encodeURIComponent(body) + '">SMILES: ' + escapeNoteHtml(body) + '</div>';
           if (kind === "timestamp-url") {
             mediaSource = body.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
@@ -1133,6 +1140,80 @@
     }
 
 
+    function normalizeAbcNotation(source) {
+      let abc = String(source ?? "").trim();
+      if (!/^X:/m.test(abc)) abc = "X:1\n" + abc;
+      if (!/^L:/m.test(abc)) abc = "L:1/4\n" + abc;
+      if (!/^K:/m.test(abc)) abc = "K:C\n" + abc;
+      return abc;
+    }
+
+    function loadAbcJs() {
+      if (window.ABCJS) return Promise.resolve(window.ABCJS);
+      if (!abcJsPromise) abcJsPromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "/vendor/abcjs/abcjs-basic-min.js";
+        script.async = true;
+        script.onload = () => window.ABCJS ? resolve(window.ABCJS) : reject(new Error("ABCJS unavailable."));
+        script.onerror = () => reject(new Error("ABCJS failed to load."));
+        document.head.appendChild(script);
+      });
+      return abcJsPromise;
+    }
+
+    async function renderNoteAbcBlocks() {
+      const blocks = [...noteContent.querySelectorAll("[data-note-abc]")];
+      if (!blocks.length) return;
+      const ABCJS = await loadAbcJs();
+      for (const block of blocks) {
+        let source = block.dataset.noteAbc || "";
+        try { source = decodeURIComponent(source); } catch {}
+        source = normalizeAbcNotation(source);
+        block.dataset.noteAbc = encodeURIComponent(source);
+        block.replaceChildren();
+        try {
+          ABCJS.renderAbc(block, source, {
+            responsive: "resize",
+            staffwidth: 820,
+            paddingtop: 4,
+            paddingbottom: 4,
+            paddingleft: 4,
+            paddingright: 4,
+            add_classes: false
+          });
+        } catch (error) {
+          block.textContent = "ABC notation could not be rendered.";
+          console.warn("ABC rendering failed.", error);
+        }
+      }
+    }
+
+    async function toggleAbcPlayback(source) {
+      const ABCJS = await loadAbcJs();
+      const normalized = normalizeAbcNotation(source);
+      if (activeAbcSynth && activeAbcSource === normalized) {
+        activeAbcSynth.pause?.();
+        activeAbcSynth.stop?.();
+        activeAbcSynth = null;
+        activeAbcSource = "";
+        setXrMessage("Music score paused.");
+        return;
+      }
+      activeAbcSynth?.pause?.();
+      activeAbcSynth?.stop?.();
+      const visual = ABCJS.renderAbc("*", normalized, { add_classes: false })?.[0];
+      if (!visual || !ABCJS.synth?.supportsAudio?.()) throw new Error("Synthesized audio is unavailable.");
+      const synth = new ABCJS.synth.CreateSynth();
+      activeAbcSynth = synth;
+      activeAbcSource = normalized;
+      setXrMessage("Preparing music score…");
+      await synth.init({ visualObj: visual });
+      if (activeAbcSynth !== synth) return;
+      await synth.prime();
+      if (activeAbcSynth !== synth) return;
+      await synth.start();
+      setXrMessage("Playing music score. Select it again to pause.");
+    }
     function fallbackSmilesSvg(smiles) {
       const source = String(smiles ?? "").replace(/\s+/g, "");
       const atomPattern = /\[([^\]]+)\]|Br|Cl|Si|Na|Ca|Li|Mg|Al|se|as|[BCNOFPSIHKbcnops]/g;
@@ -1374,6 +1455,7 @@
           }
         }
       }
+      await renderNoteAbcBlocks();
       for (const link of noteContent.querySelectorAll("a")) {
         const href = link.getAttribute("href")?.trim() ?? "";
         if (youtubeVideoId(href)) {
@@ -2096,6 +2178,10 @@
       arNotePage = 0;
       arNotePath = "";
       arNoteWordCount = 0;
+      activeAbcSynth?.pause?.();
+      activeAbcSynth?.stop?.();
+      activeAbcSynth = null;
+      activeAbcSource = "";
       closeYouTubeOverlay();
       arSearchKeyboardActive = false;
       arSearchQuery = "";
@@ -2745,7 +2831,7 @@
       const contentHeight = Math.max(1, noteContent.scrollHeight);
       const atoms = [];
       for (const element of noteContent.querySelectorAll(
-        "img, table, .note-video-card, .note-timestamp-card, .note-smiles, .note-audio-card, .obsidian-callout"
+        "img, table, .note-video-card, .note-timestamp-card, .note-smiles, .note-music-abc, .note-audio-card, .obsidian-callout"
       )) {
         const bounds = element.getBoundingClientRect();
         const height = bounds.height;
@@ -2807,7 +2893,7 @@
       }
       for (const page of pages) page.mediaHotspots = [];
       for (const element of noteContent.querySelectorAll(
-        ".note-audio-card, .note-video-card, .note-timestamp-card"
+        ".note-audio-card, .note-video-card, .note-timestamp-card, .note-music-abc"
       )) {
         const bounds = element.getBoundingClientRect();
         const top = bounds.top - noteBounds.top;
@@ -2817,12 +2903,16 @@
           return middle >= candidate.top && middle < candidate.bottom;
         });
         if (!page) continue;
-        const kind = element.matches(".note-timestamp-card")
-          ? "timestamp"
-          : element.matches(".note-video-card") ? "video" : "audio";
-        const encoded = kind === "timestamp"
-          ? element.dataset.timestampSource
-          : element.dataset[kind === "video" ? "noteVideoSource" : "noteAudioSource"];
+        const kind = element.matches(".note-music-abc")
+          ? "music-abc"
+          : element.matches(".note-timestamp-card")
+            ? "timestamp"
+            : element.matches(".note-video-card") ? "video" : "audio";
+        const encoded = kind === "music-abc"
+          ? element.dataset.noteAbc
+          : kind === "timestamp"
+            ? element.dataset.timestampSource
+            : element.dataset[kind === "video" ? "noteVideoSource" : "noteAudioSource"];
         let source = encoded || "";
         try { source = decodeURIComponent(source); } catch {}
         page.mediaHotspots.push({
@@ -3346,6 +3436,9 @@
           0.07
         );
         control.userData.noteAction = `media-track:${encodeURIComponent(hotspot.source)}`;
+        if (hotspot.kind === "music-abc") {
+          control.userData.noteAction = `music-abc:${encodeURIComponent(hotspot.source)}`;
+        }
         control.userData.highlightScale = false;
         arNoteGroup.add(control);
         arNoteControls.push(control);
@@ -4687,6 +4780,15 @@
       }
       if (action === "audio") {
         void toggleNoteAudio();
+        return;
+      }
+      if (action.startsWith("music-abc:")) {
+        let source = action.slice("music-abc:".length);
+        try { source = decodeURIComponent(source); } catch {}
+        void toggleAbcPlayback(source).catch((error) => {
+          console.warn("ABC playback failed.", error);
+          setXrMessage("Could not play this music score.");
+        });
         return;
       }
       if (action.startsWith("media-track:")) {
@@ -7346,6 +7448,21 @@
       return supported;
     }
 
+    async function configurePowerEfficientXr(session) {
+      renderer.xr.setFoveation?.(0.35);
+      if (!session.updateTargetFrameRate || !session.supportedFrameRates?.length) return;
+      const rates = [...session.supportedFrameRates].map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+      const ceiling = Math.min(Number(session.frameRate) || 72, 72);
+      const target = rates.filter((rate) => rate <= ceiling).at(-1) ?? rates[0];
+      if (target && session.frameRate !== target) {
+        try {
+          await session.updateTargetFrameRate(target);
+          console.info("WebXR power profile: " + target + " Hz, foveation 0.35.");
+        } catch (error) {
+          console.debug("The Quest kept its default frame rate.", error);
+        }
+      }
+    }
     async function startSession() {
       noteWarmupCancelled = true;
       noteWarmupRunId += 1;
@@ -7361,6 +7478,7 @@
         });
 
         await renderer.xr.setSession(xrSession);
+        await configurePowerEfficientXr(xrSession);
         weatherField.visible = weatherEffectSelect.value !== "none";
         syncAmbientAudio();
         await initializeVirtualHands();
@@ -8344,7 +8462,7 @@
         for (const control of arNoteControls) {
           const active = control === pointedNoteControl;
           control.scale.setScalar(active && control.userData.highlightScale !== false ? 1.35 : 1);
-          if (control.material && control.userData.noteAction !== "note-media" && !control.userData.noteAction?.startsWith("media-track:")) {
+          if (control.material && control.userData.noteAction !== "note-media" && !control.userData.noteAction?.startsWith("media-track:") && !control.userData.noteAction?.startsWith("music-abc:")) {
             control.material.opacity = active ? 1 : 0.82;
           }
         }
@@ -8358,6 +8476,8 @@
               ? "fechar o vídeo"
             : action === "pin"
               ? (noteWindowPinned ? "soltar a janela" : "fixar a janela")
+              : action.startsWith("music-abc:")
+                ? "play or pause the music score"
               : action === "note-media"
                 ? "reproduzir a mídia selecionada"
               : action === "audio"
