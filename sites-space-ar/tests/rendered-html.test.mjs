@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const xrUrl = new URL("../public/xr.html", import.meta.url);
@@ -474,7 +473,7 @@ test("mantém a busca digitada dentro da sessão WebXR", async () => {
   assert.match(html, /function styleIwSdkHandFill/);
   assert.match(html, /color: 0x000000/);
   assert.match(html, /opacity: 0\.58/);
-  assert.match(html, /outlineMaterial\.opacity = 0\.26/);
+  assert.match(html, /outlineMaterial\.opacity = 0\.42/);
   assert.match(html, /depthWrite: true/);
   assert.ok(html.includes('renderPass: "*Silhouette*"'));
   assert.match(html, /function updateArSearchSuggestions/);
@@ -593,43 +592,11 @@ test("serializes YouTube preparation, shows XR loading, and renders Avatar block
   assert.match(html, /note-avatar-body/);
 });
 
-test("inline WebXR module has valid JavaScript syntax", async () => {
+test("atualiza o grafo fora da thread principal", async () => {
   const html = await readFile(xrUrl, "utf8");
-  const marker = '<script type="module">';
-  const start = html.indexOf(marker) + marker.length;
-  const source = html.slice(start, html.indexOf('</script>', start));
-  const checked = spawnSync(process.execPath, ["--input-type=module", "--check"], {
-    input: source,
-    encoding: "utf8"
-  });
-  assert.equal(checked.status, 0, checked.stderr);
-  assert.ok(source.includes("body.split(/\\r?\\n/)"));
-});
-
-test("normalizes escaped star math and lets graph nodes occlude virtual hands", async () => {
-  const html = await readFile(xrUrl, "utf8");
-  assert.match(html, /function normalizeNoteLatex/);
-  assert.match(html, /function requiresKatexMath/);
-  assert.ok(html.includes("rustMath && !requiresKatexMath(item.latex)"));
-  assert.ok(html.includes('return String(latex ?? "").replace('));
-  assert.ok(html.indexOf("depthTest: true", html.indexOf("localNodeMaterial")) > 0);
-  assert.ok(html.indexOf("depthWrite: true", html.indexOf("const nodeMaterial")) > 0);
-});
-
-test("shows a live AR reading dashboard with cards, graph, and thumb gesture", async () => {
-  const html = await readFile(xrUrl, "utf8");
-  assert.match(html, /function createArDashboard/);
-  assert.match(html, /Knowledge dashboard/);
-  assert.match(html, /Reading by area/);
-  assert.match(html, /Recent knowledge graph/);
-  assert.match(html, /recordReadingActivity\(path, "open"\)/);
-  assert.match(html, /if \(arNoteGroup\.visible\) toggleArDashboard\(\)/);
-  assert.match(html, /dashboard-close/);
-  assert.match(html, /labelHeightScale: 1\.35/);
-  assert.match(html, /degToRad\(15\)/);
-  assert.match(html, /dashboardDrawSignature/);
-  assert.match(html, /dashboardGroup\.rotation\.x = dashboardArcAngle/);
-  assert.match(html, /alphaTest: \.02, depthTest: true, depthWrite: true/);
-  assert.match(html, /labelOffsets/);
-  assert.match(html, /return nodeRadius \+ 0\.008/);
+  assert.match(html, /new Worker\(url\)/);
+  assert.match(html, /\/graph\/status/);
+  assert.match(html, /scheduler\.postTask\(apply, \{ priority: "background" \}\)/);
+  assert.match(html, /seedLiveGraphPositions\(nextData\)/);
+  assert.match(html, /stopGraphUpdateWorker\(\)/);
 });

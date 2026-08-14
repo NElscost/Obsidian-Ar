@@ -4,7 +4,10 @@ use std::{
     env, fs,
     hash::{DefaultHasher, Hash, Hasher},
     path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, OnceLock,
+    },
     time::{Duration, Instant, SystemTime},
 };
 
@@ -17,6 +20,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use notify::{RecursiveMode, Watcher};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -54,6 +58,7 @@ struct AppState {
     graph: Option<Arc<PathBuf>>,
     pending: Option<Arc<PathBuf>>,
     graph_cache: Arc<RwLock<GraphCache>>,
+    graph_revision: Arc<AtomicU64>,
     note_cache: Arc<RwLock<HashMap<String, CachedNote>>>,
     asset_cache: Arc<RwLock<HashMap<String, PathBuf>>>,
     waveform_cache: Arc<RwLock<HashMap<String, CachedWaveform>>>,
@@ -147,6 +152,36 @@ fn is_allowed_web_origin(origin: &HeaderValue) -> bool {
     )
 }
 
+fn start_graph_watcher(vault: Arc<PathBuf>, revision: Arc<AtomicU64>) {
+    std::thread::spawn(move || {
+        let callback_revision = revision.clone();
+        let mut watcher =
+            match notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+                let Ok(event) = event else { return };
+                if event.paths.iter().any(|path| {
+                    path.extension()
+                        .and_then(|extension| extension.to_str())
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+                }) {
+                    callback_revision.fetch_add(1, Ordering::Relaxed);
+                }
+            }) {
+                Ok(watcher) => watcher,
+                Err(error) => {
+                    eprintln!("[GRAPH] observador indisponível: {error}");
+                    return;
+                }
+            };
+        if let Err(error) = watcher.watch(vault.as_ref(), RecursiveMode::Recursive) {
+            eprintln!("[GRAPH] não foi possível observar o vault: {error}");
+            return;
+        }
+        println!("[GRAPH] atualização ao vivo ativa para notas e links.");
+        loop {
+            std::thread::park();
+        }
+    });
+}
 #[cfg(test)]
 mod origin_tests {
     use super::*;
@@ -272,6 +307,7 @@ struct NoteResponse {
 #[serde(rename_all = "camelCase")]
 struct LiveGraph {
     generated_at: String,
+    revision: u64,
     nodes: Vec<LiveNode>,
     links: Vec<LiveLink>,
 }
@@ -475,7 +511,7 @@ fn resolve_wikilink(
     by_stem.get(&stem).and_then(Clone::clone)
 }
 
-fn scan_live_graph(vault: &Path) -> Result<LiveGraph> {
+fn scan_live_graph(vault: &Path, revision: u64) -> Result<LiveGraph> {
     let mut paths = vault_note_paths(vault)?.into_iter().collect::<Vec<_>>();
     paths.sort_unstable();
     let mut exact = HashMap::new();
@@ -526,6 +562,7 @@ fn scan_live_graph(vault: &Path) -> Result<LiveGraph> {
     });
     Ok(LiveGraph {
         generated_at: format!("{:?}", SystemTime::now()),
+        revision,
         nodes,
         links,
     })
@@ -621,7 +658,8 @@ async fn live_graph(State(state): State<AppState>, headers: HeaderMap) -> Respon
         return error(StatusCode::UNAUTHORIZED, "Token inválido.");
     }
     let vault = state.vault.clone();
-    match tokio::task::spawn_blocking(move || scan_live_graph(vault.as_ref())).await {
+    let revision = state.graph_revision.load(Ordering::Relaxed);
+    match tokio::task::spawn_blocking(move || scan_live_graph(vault.as_ref(), revision)).await {
         Ok(Ok(graph)) => {
             let notes = graph
                 .nodes
@@ -642,6 +680,15 @@ async fn live_graph(State(state): State<AppState>, headers: HeaderMap) -> Respon
     }
 }
 
+async fn graph_status(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if !authorized(&headers, &state.token) {
+        return error(StatusCode::UNAUTHORIZED, "Token inválido.");
+    }
+    Json(json!({
+        "revision": state.graph_revision.load(Ordering::Relaxed)
+    }))
+    .into_response()
+}
 async fn note_is_allowed(state: &AppState, path: &str) -> Result<bool> {
     refresh_graph(state).await?;
     Ok(state.graph_cache.read().await.notes.contains(path))
@@ -1860,6 +1907,7 @@ async fn main() -> Result<()> {
         graph: graph.map(Arc::new),
         pending: pending.map(Arc::new),
         graph_cache: Default::default(),
+        graph_revision: Arc::new(AtomicU64::new(1)),
         note_cache: Default::default(),
         asset_cache: Default::default(),
         waveform_cache: Default::default(),
@@ -1871,6 +1919,7 @@ async fn main() -> Result<()> {
             .user_agent("Obsidian-Ar/1.0")
             .build()?,
     };
+    start_graph_watcher(state.vault.clone(), state.graph_revision.clone());
     refresh_graph(&state).await?;
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(|origin, _request| {
@@ -1887,6 +1936,7 @@ async fn main() -> Result<()> {
         .route("/health", get(health))
         .route("/verify", get(verify))
         .route("/graph", get(live_graph))
+        .route("/graph/status", get(graph_status))
         .route("/pending-optimization", get(pending_optimization))
         .route("/note", post(read_note))
         .route("/asset", post(read_asset))

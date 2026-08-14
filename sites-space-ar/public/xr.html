@@ -1592,7 +1592,7 @@
           const styledMaterials = materials.map((source) => {
             const material = source.clone();
             material.transparent = true;
-            material.opacity = 0.56;
+            material.opacity = 0.68;
             material.depthTest = true;
             material.depthWrite = true;
             material.toneMapped = false;
@@ -1615,7 +1615,7 @@
         outline.material = new THREE.MeshBasicMaterial({
           color: 0xffffff,
           transparent: true,
-          opacity: 0.22,
+          opacity: 0.4,
           side: THREE.BackSide,
           depthTest: true,
           depthWrite: false,
@@ -1637,7 +1637,7 @@
         const fill = new THREE.MeshBasicMaterial({
           color: 0x000000,
           transparent: true,
-          opacity: 0.58,
+          opacity: 0.68,
           depthTest: true,
           depthWrite: true,
           side: THREE.DoubleSide,
@@ -1660,18 +1660,18 @@
           );
           outlineMaterial.uniforms.outlineColor.value.set(0xffffff);
           outlineMaterial.transparent = true;
-          outlineMaterial.opacity = 0.26;
+          outlineMaterial.opacity = 0.42;
           outlineMaterial.depthTest = true;
           outlineMaterial.depthWrite = false;
           iwStencilMaterial = stencilMaterial;
-          stencilMaterial.uniforms.outlineThickness.value = 0.0012 * IW_HAND_OUTLINE_WIDTH;
+          stencilMaterial.uniforms.outlineThickness.value = 0.0018 * IW_HAND_OUTLINE_WIDTH;
           iwInputManager = new XRInputManager({ scene, camera });
           scene.add(iwInputManager.xrOrigin);
           iwInputManager.visualAdapters?.hand?.left?.toggleVisual(true);
           iwInputManager.visualAdapters?.hand?.right?.toggleVisual(true);
           for (const adapter of [iwInputManager.visualAdapters?.hand?.left, iwInputManager.visualAdapters?.hand?.right]) {
             if (!adapter) continue;
-            adapter.outlineOptions = { enabled: true, color: { r: 1, g: 1, b: 1, a: 0.28 }, width: IW_HAND_OUTLINE_WIDTH, renderPass: "*Silhouette*" };
+            adapter.outlineOptions = { enabled: true, color: { r: 1, g: 1, b: 1, a: 0.42 }, width: IW_HAND_OUTLINE_WIDTH, renderPass: "*Silhouette*" };
           }
           console.info("IWSDK XRInputManager ativo para as mãos virtuais.");
           return;
@@ -5020,6 +5020,9 @@
     let forceGraph = null;
     let dynamicGraphActive = false;
     let dynamicGraphTicking = false;
+    let graphRevision = 0;
+    let graphUpdateWorker = null;
+    let graphUpdateApplying = false;
     let graphLayoutKey = "";
     let nodeInteractionRoot = null;
     let dynamicLabelMaterial = null;
@@ -6945,6 +6948,7 @@
       });
       updateGraphProgress(14, "Decodificando dados");
       const rawData = await response.json();
+      graphRevision = Number(rawData.revision) || graphRevision;
       if (!response.ok) throw new Error(rawData.error ?? `HTTP ${response.status}`);
       if (!Array.isArray(rawData.nodes) || !Array.isArray(rawData.links)) {
         throw new Error("A ponte retornou um grafo inválido.");
@@ -7050,6 +7054,130 @@
       );
     }
 
+    function seedLiveGraphPositions(nextData) {
+      const previous = new Map(
+        (graphData?.nodes ?? []).map((node) => [
+          node.id,
+          { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 }
+        ])
+      );
+      const neighbors = new Map();
+      for (const link of nextData.links ?? []) {
+        const source = typeof link.source === "object" ? link.source.id : link.source;
+        const target = typeof link.target === "object" ? link.target.id : link.target;
+        if (!neighbors.has(source)) neighbors.set(source, []);
+        if (!neighbors.has(target)) neighbors.set(target, []);
+        neighbors.get(source).push(target);
+        neighbors.get(target).push(source);
+      }
+      let added = 0;
+      for (let index = 0; index < nextData.nodes.length; index += 1) {
+        const node = nextData.nodes[index];
+        const position = previous.get(node.id);
+        if (position) {
+          Object.assign(node, position);
+          continue;
+        }
+        const neighborPosition = (neighbors.get(node.id) ?? [])
+          .map((id) => previous.get(id))
+          .find(Boolean);
+        const angle = index * 2.399963229728653;
+        const radius = 8 + Math.sqrt(index + 1) * 0.18;
+        node.x = (neighborPosition?.x ?? 0) + Math.cos(angle) * radius;
+        node.y = (neighborPosition?.y ?? 0) + ((index % 7) - 3) * 1.2;
+        node.z = (neighborPosition?.z ?? 0) + Math.sin(angle) * radius;
+        added += 1;
+      }
+      return added;
+    }
+
+    async function applyLiveGraphUpdate(rawData) {
+      if (
+        graphUpdateApplying ||
+        !dynamicGraphActive ||
+        !Array.isArray(rawData?.nodes) ||
+        !Array.isArray(rawData?.links)
+      ) return;
+      graphUpdateApplying = true;
+      try {
+        const nextData = buildHierarchicalGraph(rawData);
+        const added = seedLiveGraphPositions(nextData);
+        if (nextData.nodes.length >= HUGE_GRAPH_NODE_THRESHOLD) {
+          applyLargeGraphLayout(nextData);
+          scaleGraphSpacing(nextData, GRAPH_SPACING_EXPERIMENT_FACTOR);
+        }
+        if (graphHierarchy) graphHierarchy.expandedHubId = null;
+        replaceDynamicGraphView(nextData);
+        graphLayoutKey = graphSignature(nextData);
+        graphRevision = Number(rawData.revision) || graphRevision;
+        cacheGraphLayout();
+        setXrMessage(
+          "Grafo atualizado: " + nextData.nodes.length + " notas, " +
+          nextData.links.length + " conexões" +
+          (added ? " e " + added + " novos nós." : ".")
+        );
+      } catch (error) {
+        console.warn("Atualização ao vivo do grafo ignorada.", error);
+      } finally {
+        graphUpdateApplying = false;
+      }
+    }
+
+    function stopGraphUpdateWorker() {
+      graphUpdateWorker?.terminate();
+      graphUpdateWorker = null;
+    }
+
+    function startGraphUpdateWorker(config) {
+      stopGraphUpdateWorker();
+      if (!dynamicGraphActive || !config?.url || !config?.token || typeof Worker === "undefined") return;
+      const source = [
+        "let timer = 0, settings = null, knownRevision = 0, busy = false;",
+        "const poll = async () => {",
+        " if (!settings || busy) return; busy = true;",
+        " try {",
+        "  const statusResponse = await fetch(settings.url + '/graph/status', { cache: 'no-store', headers: settings.headers });",
+        "  if (!statusResponse.ok) throw new Error('status ' + statusResponse.status);",
+        "  const status = await statusResponse.json(); const revision = Number(status.revision) || 0;",
+        "  if (revision > knownRevision) {",
+        "   const graphResponse = await fetch(settings.url + '/graph', { cache: 'no-store', headers: settings.headers });",
+        "   if (!graphResponse.ok) throw new Error('graph ' + graphResponse.status);",
+        "   const graph = await graphResponse.json(); knownRevision = Number(graph.revision) || revision;",
+        "   postMessage({ type: 'graph', graph });",
+        "  }",
+        " } catch (error) { postMessage({ type: 'warning', message: String(error?.message ?? error) }); }",
+        " finally { busy = false; }",
+        "};",
+        "onmessage = (event) => {",
+        " if (event.data?.type !== 'start') return;",
+        " settings = event.data.settings; knownRevision = Number(event.data.revision) || 0;",
+        " clearInterval(timer); timer = setInterval(poll, 5000);",
+        "};"
+      ].join("\n");
+      const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+      graphUpdateWorker = new Worker(url);
+      URL.revokeObjectURL(url);
+      graphUpdateWorker.onmessage = ({ data }) => {
+        if (data?.type === "graph") {
+          const apply = () => void applyLiveGraphUpdate(data.graph);
+          if ("scheduler" in window && scheduler?.postTask) {
+            void scheduler.postTask(apply, { priority: "background" });
+          } else {
+            setTimeout(apply, 50);
+          }
+        } else if (data?.type === "warning") {
+          console.debug("Atualização ao vivo aguardando a ponte:", data.message);
+        }
+      };
+      graphUpdateWorker.postMessage({
+        type: "start",
+        revision: graphRevision,
+        settings: {
+          url: config.url,
+          headers: bridgeRequestHeaders(config)
+        }
+      });
+    }
     async function loadGltfModel() {
       const [{ GLTFLoader }, { DRACOLoader }] = await Promise.all([
         import("three/addons/loaders/GLTFLoader.js"),
@@ -7197,6 +7325,10 @@
         weatherField.visible = weatherEffectSelect.value !== "none";
         syncAmbientAudio();
         await initializeVirtualHands();
+        if (dynamicGraphActive) {
+          const graphConfig = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
+          startGraphUpdateWorker(graphConfig);
+        }
         virtualHandFrameTime = 0;
         updateVirtualHands(performance.now());
         let environment360Ready = false;
@@ -8449,6 +8581,7 @@
     }
 
     function endSession() {
+      stopGraphUpdateWorker();
       searchHighlightedNode = null;
       hitTestSource?.cancel();
       hitTestSource = null;
