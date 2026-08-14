@@ -523,7 +523,9 @@
     .note-content .note-timestamp-card { border-color:rgba(99,230,190,.5); background:rgba(99,230,190,.12); color:#d9fff3; }
     .note-content .note-music-abc { margin:10px 0; padding:8px 10px; border:1px solid rgba(117,167,255,.42); border-radius:10px; background:rgba(7,11,18,.88); color:#eef5ff; break-inside:avoid; overflow:hidden; }
     .note-content .note-music-abc::before { content:"▶ Select the score to play"; display:block; margin-bottom:6px; color:#9fc1ff; font-size:12px; font-weight:750; }
-    .note-content .note-music-abc svg { position:static; inset:auto; display:block; width:100%; height:auto; max-height:410px; background:#fff; border-radius:6px; }
+    .note-content .note-music-abc svg { position:static; inset:auto; display:block; width:100%; height:auto; max-height:410px; background:transparent; color:#eef5ff; border-radius:6px; }
+    .note-content .note-music-abc svg path { fill:#eef5ff; }
+    .note-content .note-music-abc svg text { fill:#eef5ff; }
     .note-content .note-smiles { margin:10px 0; padding:8px; border:1px solid rgba(99,230,190,.25); border-radius:10px; background:rgba(7,11,18,.82); break-inside:avoid; overflow:hidden; }
     .note-content .note-smiles canvas, .note-content .note-smiles svg, .note-content .note-smiles img { position:static; inset:auto; display:block; width:100%; height:auto; max-height:300px; object-fit:contain; }
     .note-content .note-avatar { display:flex; gap:14px; align-items:center; margin:10px 0; padding:10px; border-radius:14px; background:rgba(20,29,45,.72); break-inside:avoid; }
@@ -1188,31 +1190,75 @@
       }
     }
 
+    function waveformFromAudioBuffer(buffer, sampleCount = 384) {
+      const channels = Array.from({ length: buffer.numberOfChannels }, (_, index) => buffer.getChannelData(index));
+      const samples = new Array(sampleCount).fill(0);
+      const bucketSize = Math.max(1, Math.floor(buffer.length / sampleCount));
+      const stride = Math.max(1, Math.floor(bucketSize / 32));
+      for (let bucket = 0; bucket < sampleCount; bucket += 1) {
+        const start = bucket * bucketSize;
+        const end = Math.min(buffer.length, start + bucketSize);
+        let peak = 0;
+        for (let offset = start; offset < end; offset += stride) {
+          for (const channel of channels) peak = Math.max(peak, Math.abs(channel[offset] || 0));
+        }
+        samples[bucket] = Math.min(255, Math.round(peak * 255));
+      }
+      return { samples, duration: buffer.duration };
+    }
+
     async function toggleAbcPlayback(source) {
       const ABCJS = await loadAbcJs();
       const normalized = normalizeAbcNotation(source);
-      if (activeAbcSynth && activeAbcSource === normalized) {
-        activeAbcSynth.pause?.();
-        activeAbcSynth.stop?.();
-        activeAbcSynth = null;
-        activeAbcSource = "";
-        setXrMessage("Music score paused.");
+      if (activeAbcSource === normalized && activeNoteTrack?.kind === "music-abc" && activeNoteAudio) {
+        if (activeNoteAudio.paused) {
+          await activeNoteAudio.play();
+          setXrMessage("Playing music score with spatial audio.");
+        } else {
+          activeNoteAudio.pause();
+          setXrMessage("Music score paused.");
+        }
         return;
       }
-      activeAbcSynth?.pause?.();
+
+      const spatialContextPromise = ensureSpatialAudioContext();
       activeAbcSynth?.stop?.();
+      clearActiveNoteMediaForSwitch();
       const visual = ABCJS.renderAbc("*", normalized, { add_classes: false })?.[0];
       if (!visual || !ABCJS.synth?.supportsAudio?.()) throw new Error("Synthesized audio is unavailable.");
       const synth = new ABCJS.synth.CreateSynth();
       activeAbcSynth = synth;
       activeAbcSource = normalized;
-      setXrMessage("Preparing music score…");
+      activeNoteTrack = { kind: "music-abc", source: normalized, label: "Music score" };
+      activeNoteMediaPath = arNotePath;
+      setXrMessage("Preparing spatial music score…");
       await synth.init({ visualObj: visual });
       if (activeAbcSynth !== synth) return;
       await synth.prime();
       if (activeAbcSynth !== synth) return;
-      await synth.start();
-      setXrMessage("Playing music score. Select it again to pause.");
+
+      const audioBuffer = synth.getAudioBuffer();
+      if (!audioBuffer) throw new Error("ABCJS did not produce an audio buffer.");
+      activeNoteAudioObjectUrl = synth.download();
+      activeNoteAudio = new Audio();
+      activeNoteAudio.preload = "auto";
+      activeNoteAudio.src = activeNoteAudioObjectUrl;
+      activeNoteAudio.volume = 1;
+      const spatial = connectSpatialNoteAudio(activeNoteAudio, await spatialContextPromise);
+      activeNoteAudio.addEventListener("ended", () => {
+        syncAmbientAudio();
+        setXrMessage("Music score completed.");
+      });
+      activeNoteAudio.addEventListener("pause", syncAmbientAudio);
+      activeNoteAudio.addEventListener("play", () => ambientAudio.pause());
+      activeNoteAudio.addEventListener("loadedmetadata", () => {
+        if (pendingNoteAudioSeek === null) return;
+        activeNoteAudio.currentTime = Math.min(pendingNoteAudioSeek, activeNoteAudio.duration);
+        pendingNoteAudioSeek = null;
+      });
+      createArAudioWaveform(waveformFromAudioBuffer(audioBuffer), AR_NOTE_WIDTH, AR_NOTE_HEIGHT);
+      await activeNoteAudio.play();
+      setXrMessage(spatial ? "Playing music score with spatial HRTF audio." : "Playing music score.");
     }
     function fallbackSmilesSvg(smiles) {
       const source = String(smiles ?? "").replace(/\s+/g, "");
