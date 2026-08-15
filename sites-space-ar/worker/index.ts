@@ -41,7 +41,7 @@ const worker = {
       }
       const manifest = await object.json<{ url?: string; graphUrl?: string; version?: string }>();
       const modelKey = manifest.url?.match(/^\/models\/(Space-[a-f0-9]{12}\.gltf)$/)?.[1];
-      if (!modelKey || !(await env.MODELS.head(modelKey))) {
+      if (!modelKey || !(await env.MODELS.get(modelKey))) {
         return Response.json(
           { url: "/Space.gltf", graphUrl: "/graph.json", version: "bundled" },
           { headers: { "Cache-Control": "no-store" } }

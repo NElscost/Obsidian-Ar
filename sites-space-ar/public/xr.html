@@ -875,14 +875,39 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       throw new Error(`${detail} (${describeError(lastError)})`);
     }
 
+    async function withTimeout(promise, milliseconds, label) {
+      let timer;
+      try {
+        return await Promise.race([
+          promise,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`${label}: tempo limite de ${Math.round(milliseconds / 1000)} s.`)), milliseconds);
+          })
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
     async function fetchStaticAsset(url, options = {}) {
-      const response = await fetch(url, {
-        ...options,
-        headers: {
-          ...STATIC_ASSET_HEADERS,
-          ...(options.headers ?? {})
-        }
-      });
+      const controller = options.signal ? null : new AbortController();
+      const timeout = controller ? setTimeout(() => controller.abort(), 20000) : 0;
+      let response;
+      try {
+        response = await fetch(url, {
+          ...options,
+          headers: {
+            ...STATIC_ASSET_HEADERS,
+            ...(options.headers ?? {})
+          },
+          signal: options.signal ?? controller.signal
+        });
+      } catch (error) {
+        if (error?.name === "AbortError") throw new Error(`${url}: download excedeu 20 s.`);
+        throw error;
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
       const contentType = response.headers.get("content-type") ?? "";
       if (!response.ok) {
         throw new Error(`${url} respondeu com HTTP ${response.status}.`);
@@ -7208,6 +7233,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       startGraphProgress();
       updateGraphProgress(4, "Baixando o grafo");
       setStatus("Lendo o vault e calculando o grafo 3D…");
+      setStatus("Conectando à ponte e solicitando o grafo do vault…");
       const response = await fetchBridge(config, "/graph", {
         cache: "no-store"
       });
@@ -7247,8 +7273,11 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         await new Promise((resolve) => requestAnimationFrame(resolve));
       } else {
       updateGraphProgress(30, restored ? "Restaurando layout" : "Preparando distribuição espacial");
-        const { default: ThreeForceGraph } = await import(
-          "https://esm.sh/three-forcegraph@1.43.1?external=three"
+        updateGraphProgress(27, "Carregando motor de layout");
+        const { default: ThreeForceGraph } = await withTimeout(
+          import("https://esm.sh/three-forcegraph@1.43.1?external=three"),
+          20000,
+          "Motor de layout 3D"
         );
       let stopLayout;
       const layoutStopped = new Promise((resolve) => {
@@ -7478,7 +7507,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       });
     }
     async function loadGltfModel() {
-      const { GLTFLoader } = await import("three/addons/loaders/GLTFLoader.js");
+      setStatus("Carregando o leitor glTF…");
+      const { GLTFLoader } = await withTimeout(import("three/addons/loaders/GLTFLoader.js"), 15000, "Leitor glTF");
       const loader = new GLTFLoader();
       let dracoLoader = null;
       // O zrok exige este cabeçalho para requisições não interativas. Ele é
@@ -9008,10 +9038,12 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
     if (await checkSupport()) {
       try {
-        const modelPromise = loadModel();
-        void warmRecentNotesDuringModelLoad();
-        await modelPromise;
+        setStatus(dynamicGraphToggle.checked ? "Preparando o grafo direto do vault…" : "Preparando o modelo Space.gltf…");
+        await loadModel();
         enterButton.disabled = false;
+        const warmWhenIdle = () => void warmRecentNotesDuringModelLoad();
+        if ("requestIdleCallback" in window) requestIdleCallback(warmWhenIdle, { timeout: 3000 });
+        else setTimeout(warmWhenIdle, 1500);
         enterButton.textContent = "Entrar em AR";
       } catch (error) {
         console.error(error);
