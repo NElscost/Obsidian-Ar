@@ -664,6 +664,10 @@
           <summary data-i18n="panorama">360° panoramic background (optional)</summary>
           <input id="background-360" type="file" accept="image/avif,image/webp,image/jpeg,image/png">
           <small data-i18n="panoramaHint">No file: passthrough. Recommended: 8192×4096 equirectangular WebP or AVIF.</small>
+          <label class="graph-mode">
+            <input id="note-banner-wallpaper" type="checkbox">
+            <span id="note-banner-wallpaper-label">Use the open note banner as wallpaper</span>
+          </label>
           <label class="graph-budget"><span>Weather effect</span><select id="weather-effect"><option value="none">None</option><option value="snow">Snow</option><option value="rain">Rain</option></select></label>
           <label class="graph-budget"><span>Ambient sound</span><input id="ambient-audio" type="file" accept="audio/*"></label>
         </details>
@@ -740,6 +744,7 @@
     const GRAPH_NODE_LIMIT_STORAGE_KEY = "space-ar-graph-node-limit";
     const REAL_GLASS_BLUR_STORAGE_KEY = "space-ar-real-glass-blur";
     const WEATHER_EFFECT_STORAGE_KEY = "space-ar-weather-effect";
+    const NOTE_BANNER_WALLPAPER_STORAGE_KEY = "space-ar-note-banner-wallpaper";
     const LARGE_GRAPH_NODE_THRESHOLD = 5000;
     const HUGE_GRAPH_NODE_THRESHOLD = 9000;
     const MAX_DYNAMIC_LABELS = 384;
@@ -773,11 +778,21 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       fr:"Flou de verre réel (expérimental, WebGL uniquement)",
       it:"Sfocatura vetro reale (sperimentale, solo WebGL)",
       ro:"Estompare sticlă reală (experimental, doar WebGL)"
-    };    const UI_KEYS=["language","title","intro","step1","step2","step3","bridgeUrl","bridgeToken","access","dynamic","limit","panorama","panoramaHint","save","checking","loading","estimating","surface","reposition","noteName","search","close","note"];
+    };
+    const NOTE_BANNER_WALLPAPER_LABELS = {
+      en:"Use the open note banner as wallpaper",
+      pt:"Usar o banner da nota aberta como wallpaper",
+      es:"Usar el banner de la nota abierta como fondo",
+      fr:"Utiliser la bannière de la note ouverte comme fond",
+      it:"Usa il banner della nota aperta come sfondo",
+      ro:"Folosește bannerul notei deschise ca fundal"
+    };
+    const UI_KEYS=["language","title","intro","step1","step2","step3","bridgeUrl","bridgeToken","access","dynamic","limit","panorama","panoramaHint","save","checking","loading","estimating","surface","reposition","noteName","search","close","note"];
     function applyUiLanguage(code) {
       code = UI_TRANSLATIONS[code] ? code : "en"; const values=UI_TRANSLATIONS[code]; const messages=Object.fromEntries(UI_KEYS.map((key,index)=>[key,values[index]]));
       document.documentElement.lang=code; languageSelect.value=code;
       document.querySelector("#real-glass-label").textContent=REAL_GLASS_LABELS[code];
+      document.querySelector("#note-banner-wallpaper-label").textContent=NOTE_BANNER_WALLPAPER_LABELS[code];
       document.querySelectorAll("[data-i18n]").forEach((el)=>{if(messages[el.dataset.i18n])el.textContent=messages[el.dataset.i18n]});
       document.querySelectorAll("[data-i18n-placeholder]").forEach((el)=>{el.placeholder=messages[el.dataset.i18nPlaceholder]||el.placeholder});
       localStorage.setItem(LANGUAGE_STORAGE_KEY,code);
@@ -807,6 +822,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     const graphNodeLimitInput = document.querySelector("#graph-node-limit");
     const realGlassBlurToggle = document.querySelector("#real-glass-blur");
     const background360Input = document.querySelector("#background-360");
+    const noteBannerWallpaperToggle = document.querySelector("#note-banner-wallpaper");
     const weatherEffectSelect = document.querySelector("#weather-effect");
     const ambientAudioInput = document.querySelector("#ambient-audio");
     const ambientAudio = new Audio();
@@ -1610,6 +1626,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let environment360Mesh = null;
     let environment360Texture = null;
     let environment360Bitmap = null;
+    let environment360Generation = 0;
     const environment360Position = new THREE.Vector3();
 
     function disposeEnvironment360() {
@@ -1716,13 +1733,16 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       }
     }
 
-    async function prepareEnvironment360() {
-      disposeEnvironment360();
-      const file = background360Input.files?.[0];
+    async function prepareEnvironment360(file = background360Input.files?.[0], generation = null) {
       if (!file) return false;
 
       const decoded = await decodePanoramaWithWebCodecs(file)
         ?? await decodePanoramaWithImageBitmap(file);
+      if (generation !== null && generation !== environment360Generation) {
+        decoded.bitmap.close?.();
+        return false;
+      }
+      disposeEnvironment360();
       environment360Bitmap = decoded.bitmap;
       console.info(
         `Panorâmica ${decoded.sourceWidth}×${decoded.sourceHeight} carregada como ` +
@@ -1750,6 +1770,56 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       environment360Mesh.renderOrder = -1000;
       scene.add(environment360Mesh);
       return true;
+    }
+
+    function noteBannerSource(markdown) {
+      const frontmatter = String(markdown ?? "").match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1];
+      const raw = frontmatter?.match(/^banner\s*:\s*(.+?)\s*$/im)?.[1]?.trim();
+      if (!raw) return "";
+      let source = raw.replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, (_, quoted, single) => quoted ?? single);
+      source = source.replace(/^!?\[\[([\s\S]*?)\]\]$/, "$1").split("|")[0].trim();
+      return source;
+    }
+
+    async function noteBannerBlob(config, notePath, source) {
+      if (isNetworkSource(source)) {
+        try { return await fetchRemoteImage(source); }
+        catch { return fetchRemoteImageThroughBridge(config, source); }
+      }
+      return fetchVaultAsset(config, notePath, source);
+    }
+
+    async function restoreBaseWallpaper() {
+      const generation = ++environment360Generation;
+      const baseFile = background360Input.files?.[0];
+      if (!baseFile) {
+        disposeEnvironment360();
+        return;
+      }
+      try { await prepareEnvironment360(baseFile, generation); }
+      catch (error) {
+        if (generation === environment360Generation) disposeEnvironment360();
+        console.warn("Não foi possível restaurar o wallpaper inicial.", error);
+      }
+    }
+
+    async function applyNoteBannerWallpaper(markdown, notePath) {
+      if (!xrSession || !noteBannerWallpaperToggle.checked) return;
+      const source = noteBannerSource(markdown);
+      if (!source) {
+        await restoreBaseWallpaper();
+        return;
+      }
+      const generation = ++environment360Generation;
+      const config = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
+      try {
+        const blob = await noteBannerBlob(config, notePath, source);
+        await prepareEnvironment360(blob, generation);
+      } catch (error) {
+        if (generation !== environment360Generation) return;
+        console.warn(`Não foi possível usar o banner de ${notePath} como wallpaper.`, error);
+        await restoreBaseWallpaper();
+      }
     }
 
     const renderer = new THREE.WebGLRenderer({
@@ -2330,6 +2400,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       disposeArNote();
       resetNoteMicroGestures();
       for (const ray of handPointerRays) ray.visible = false;
+      if (noteBannerWallpaperToggle.checked) void restoreBaseWallpaper();
       if (xrSession) setXrMessage("Nota fechada.");
     }
 
@@ -5163,6 +5234,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       noteTimestamps = extractNoteTimestamps(source);
       arNotePath = path;
       arNoteSource = String(source ?? "");
+      if (noteBannerWallpaperToggle.checked) void applyNoteBannerWallpaper(arNoteSource, path);
       if (recordActivity) recordReadingActivity(path, "open");
       const plainWords = String(source ?? "").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, " ").replace(/<[^>]+>|!\?\[\[[^\]]+\]\]|\[[^\]]*\]\([^)]+\)|[#>*_~=|$\\{}\[\]()-]/g, " ");
       arNoteWordCount = plainWords.match(/[\p{L}\p{N}]+(?:['’.-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
@@ -5490,6 +5562,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         localStorage.getItem(DYNAMIC_GRAPH_STORAGE_KEY) !== "false";
       realGlassBlurToggle.checked =
         localStorage.getItem(REAL_GLASS_BLUR_STORAGE_KEY) === "true";
+      noteBannerWallpaperToggle.checked =
+        localStorage.getItem(NOTE_BANNER_WALLPAPER_STORAGE_KEY) === "true";
       weatherEffectSelect.value = localStorage.getItem(WEATHER_EFFECT_STORAGE_KEY) ?? (localStorage.getItem("space-ar-gpu-snow") === "true" ? "snow" : "none");
       weatherField.visible = false;
       renderedNodeLimit = normalizeRenderedNodeLimit(
@@ -9020,6 +9094,15 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         ? "Real glass blur ativado. O frosted glass continua como fallback automático."
         : "Real glass blur desativado.";
       bridgeFeedback.className = "bridge-feedback success";
+    });
+    noteBannerWallpaperToggle.addEventListener("change", () => {
+      localStorage.setItem(NOTE_BANNER_WALLPAPER_STORAGE_KEY, String(noteBannerWallpaperToggle.checked));
+      if (!xrSession) return;
+      if (noteBannerWallpaperToggle.checked && arNotePath) {
+        void applyNoteBannerWallpaper(arNoteSource, arNotePath);
+      } else {
+        void restoreBaseWallpaper();
+      }
     });
     graphNodeLimitInput.addEventListener("change", () => {
       const nextLimit = normalizeRenderedNodeLimit(graphNodeLimitInput.value);
