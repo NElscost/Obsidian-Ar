@@ -10,6 +10,15 @@ const blenderGeneratorUrl = new URL(
   import.meta.url
 );
 
+test("mantém o módulo WebXR sintaticamente válido", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  const source = html.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];
+  assert.ok(source, "módulo WebXR ausente");
+  const withoutStaticImports = source.replace(/^\s*import\s+.*;\s*$/gm, "");
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  assert.doesNotThrow(() => new AsyncFunction(withoutStaticImports));
+});
+
 test("declara os recursos WebXR necessários", async () => {
   const html = await readFile(xrUrl, "utf8");
 
