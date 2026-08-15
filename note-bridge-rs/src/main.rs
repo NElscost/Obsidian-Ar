@@ -633,21 +633,21 @@ mod tests {
     }
 
     #[test]
-    fn remote_image_proxy_is_restricted_to_wikimedia_https() {
-        assert!(wikimedia_image_url_allowed(
-            &reqwest::Url::parse(
-                "https://commons.wikimedia.org/wiki/Special:FilePath/Papyrus66.jpg"
-            )
-            .unwrap()
+    fn remote_image_proxy_accepts_public_https_shape_only() {
+        assert!(https_image_url_shape_allowed(
+            &reqwest::Url::parse("https://images.example.com/banner.webp").unwrap()
         ));
-        assert!(wikimedia_image_url_allowed(
-            &reqwest::Url::parse("https://upload.wikimedia.org/example.jpg").unwrap()
+        assert!(!https_image_url_shape_allowed(
+            &reqwest::Url::parse("http://images.example.com/banner.webp").unwrap()
         ));
-        assert!(!wikimedia_image_url_allowed(
-            &reqwest::Url::parse("http://commons.wikimedia.org/example.jpg").unwrap()
+        assert!(!https_image_url_shape_allowed(
+            &reqwest::Url::parse("https://localhost/banner.webp").unwrap()
         ));
-        assert!(!wikimedia_image_url_allowed(
-            &reqwest::Url::parse("https://commons.wikimedia.org.evil.test/example.jpg").unwrap()
+        assert!(!https_image_url_shape_allowed(
+            &reqwest::Url::parse("https://127.0.0.1/banner.webp").unwrap()
+        ));
+        assert!(!https_image_url_shape_allowed(
+            &reqwest::Url::parse("https://images.example.com:8443/banner.webp").unwrap()
         ));
     }
 }
@@ -1818,14 +1818,62 @@ async fn read_media_ticket(
     stream_media_file(&path, &headers, "private, no-store").await
 }
 
-fn wikimedia_image_url_allowed(url: &reqwest::Url) -> bool {
+fn public_remote_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ip) => {
+            !(ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_broadcast()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || ip.octets()[0] == 0
+                || (ip.octets()[0] == 100 && (64..=127).contains(&ip.octets()[1])))
+        }
+        std::net::IpAddr::V6(ip) => {
+            !(ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local())
+        }
+    }
+}
+
+fn https_image_url_shape_allowed(url: &reqwest::Url) -> bool {
     url.scheme() == "https"
-        && matches!(
-            url.host_str()
-                .map(|host| host.to_ascii_lowercase())
-                .as_deref(),
-            Some("commons.wikimedia.org" | "upload.wikimedia.org")
-        )
+        && url.port().is_none_or(|port| port == 443)
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url
+            .host_str()
+            .is_some_and(|host| !host.eq_ignore_ascii_case("localhost"))
+        && url
+            .host_str()
+            .and_then(|host| host.parse::<std::net::IpAddr>().ok())
+            .is_none_or(public_remote_ip)
+}
+
+async fn public_https_image_url_allowed(url: &reqwest::Url) -> bool {
+    if !https_image_url_shape_allowed(url) {
+        return false;
+    }
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return true;
+    }
+    match tokio::net::lookup_host((host, 443)).await {
+        Ok(addresses) => {
+            let addresses = addresses.collect::<Vec<_>>();
+            !addresses.is_empty()
+                && addresses
+                    .into_iter()
+                    .all(|address| public_remote_ip(address.ip()))
+        }
+        Err(_) => false,
+    }
 }
 
 async fn read_remote_image(
@@ -1837,23 +1885,52 @@ async fn read_remote_image(
     if !authorized(&headers, &state.token) {
         return error(StatusCode::UNAUTHORIZED, "Token inválido.");
     }
-    let url = match reqwest::Url::parse(&payload.url) {
-        Ok(url) if wikimedia_image_url_allowed(&url) => url,
+    let mut url = match reqwest::Url::parse(&payload.url) {
+        Ok(url) if public_https_image_url_allowed(&url).await => url,
         _ => {
             return error(
                 StatusCode::BAD_REQUEST,
-                "Somente imagens HTTPS do Wikimedia são permitidas.",
+                "A imagem deve usar HTTPS público, sem acesso a redes locais.",
             )
         }
     };
-    let response = match state.remote_client.get(url).send().await {
-        Ok(response) => response,
-        Err(err) => return error(StatusCode::BAD_GATEWAY, err.to_string()),
+    let response = {
+        let mut redirects = 0_u8;
+        loop {
+            let response = match state.remote_client.get(url.clone()).send().await {
+                Ok(response) => response,
+                Err(err) => return error(StatusCode::BAD_GATEWAY, err.to_string()),
+            };
+            if response.status().is_redirection() {
+                if redirects >= 5 {
+                    return error(StatusCode::BAD_GATEWAY, "Redirecionamentos demais.");
+                }
+                let Some(location) = response
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|value| value.to_str().ok())
+                else {
+                    return error(StatusCode::BAD_GATEWAY, "Redirecionamento sem destino.");
+                };
+                url = match url.join(location) {
+                    Ok(next) if public_https_image_url_allowed(&next).await => next,
+                    _ => {
+                        return error(
+                            StatusCode::BAD_GATEWAY,
+                            "Redirecionamento de imagem inseguro.",
+                        )
+                    }
+                };
+                redirects += 1;
+                continue;
+            }
+            break response;
+        }
     };
-    if !response.status().is_success() || !wikimedia_image_url_allowed(response.url()) {
+    if !response.status().is_success() {
         return error(
             StatusCode::BAD_GATEWAY,
-            "O Wikimedia recusou a imagem ou redirecionou para outro domínio.",
+            "O servidor remoto recusou a imagem.",
         );
     }
     let content_type = response
@@ -1915,7 +1992,7 @@ async fn main() -> Result<()> {
         video_cache: Default::default(),
         media_tickets: Default::default(),
         remote_client: reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::limited(5))
+            .redirect(reqwest::redirect::Policy::none())
             .user_agent("Obsidian-Ar/1.0")
             .build()?,
     };
