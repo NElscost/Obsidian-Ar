@@ -1100,6 +1100,79 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let abcJsPromise = null;
     let activeAbcSynth = null;
     let activeAbcSource = "";
+    let activeAbcTiming = null;
+    let activeAbcTimingBounds = null;
+    let abcPlaybackHighlight = null;
+
+    function clearAbcPlaybackHighlight() {
+      activeAbcTiming?.stop?.();
+      activeAbcTiming = null;
+      activeAbcTimingBounds = null;
+      if (abcPlaybackHighlight) {
+        abcPlaybackHighlight.removeFromParent();
+        abcPlaybackHighlight.geometry.dispose();
+        abcPlaybackHighlight.material.dispose();
+        abcPlaybackHighlight = null;
+      }
+    }
+
+    function updateAbcPlaybackHighlight(event) {
+      if (!event || !activeAbcTimingBounds || !arNoteGroup.visible) {
+        if (abcPlaybackHighlight) abcPlaybackHighlight.visible = false;
+        return;
+      }
+      const hotspot = (arNotePages[arNotePage]?.mediaHotspots ?? []).find(
+        (item) => item.kind === "music-abc" && normalizeAbcNotation(item.source) === activeAbcSource
+      );
+      if (!hotspot) {
+        if (abcPlaybackHighlight) abcPlaybackHighlight.visible = false;
+        return;
+      }
+      if (!abcPlaybackHighlight) {
+        abcPlaybackHighlight = new THREE.Mesh(
+          new THREE.PlaneGeometry(1, 1),
+          new THREE.MeshBasicMaterial({
+            color: 0xffd166,
+            transparent: true,
+            opacity: 0.58,
+            depthTest: true,
+            depthWrite: false,
+            toneMapped: false
+          })
+        );
+        abcPlaybackHighlight.renderOrder = 68;
+        arNoteGroup.add(abcPlaybackHighlight);
+      }
+      const bounds = activeAbcTimingBounds;
+      const eventWidth = Math.max(1, Number(event.width) || 1);
+      const eventHeight = Math.max(1, Number(event.height) || 1);
+      const normalizedX = THREE.MathUtils.clamp(
+        (event.left + eventWidth / 2 - bounds.left) / bounds.width, 0, 1
+      );
+      const normalizedY = THREE.MathUtils.clamp(
+        (event.top + eventHeight / 2 - bounds.top) / bounds.height, 0, 1
+      );
+      const width = Math.max(
+        0.012,
+        (eventWidth / bounds.width) * (hotspot.x2 - hotspot.x1) * AR_NOTE_WIDTH
+      );
+      const height = Math.max(
+        0.018,
+        (eventHeight / bounds.height) * (hotspot.y2 - hotspot.y1) * AR_NOTE_HEIGHT
+      );
+      abcPlaybackHighlight.position.set(
+        (hotspot.x1 + normalizedX * (hotspot.x2 - hotspot.x1) - 0.5) * AR_NOTE_WIDTH,
+        (hotspot.y2 - normalizedY * (hotspot.y2 - hotspot.y1) - 0.5) * AR_NOTE_HEIGHT,
+        0.082
+      );
+      abcPlaybackHighlight.scale.set(width, height, 1);
+      abcPlaybackHighlight.visible = true;
+    }
+
+    function updateAbcHighlightPulse(time) {
+      if (!abcPlaybackHighlight?.visible) return;
+      abcPlaybackHighlight.material.opacity = 0.5 + Math.sin(time * 0.012) * 0.16;
+    }
 
     function parseTimestampSeconds(value) {
       const parts = String(value ?? "").trim().split(":").map(Number);
@@ -1309,6 +1382,24 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       const visual = ABCJS.renderAbc("*", normalized, { add_classes: false })?.[0];
       if (!visual || !ABCJS.synth?.supportsAudio?.()) throw new Error("Synthesized audio is unavailable.");
       const synth = new ABCJS.synth.CreateSynth();
+      const timing = new ABCJS.TimingCallbacks(visual, {
+        eventCallback: updateAbcPlaybackHighlight
+      });
+      const timedEvents = (visual.noteTimings ?? []).filter(
+        (event) => event && Number.isFinite(event.left) && Number.isFinite(event.top)
+      );
+      if (timedEvents.length) {
+        const left = Math.min(...timedEvents.map((event) => event.left));
+        const top = Math.min(...timedEvents.map((event) => event.top));
+        const right = Math.max(...timedEvents.map((event) => event.left + Math.max(1, event.width || 1)));
+        const bottom = Math.max(...timedEvents.map((event) => event.top + Math.max(1, event.height || 1)));
+        activeAbcTimingBounds = {
+          left, top,
+          width: Math.max(1, right - left),
+          height: Math.max(1, bottom - top)
+        };
+      }
+      activeAbcTiming = timing;
       activeAbcSynth = synth;
       activeAbcSource = normalized;
       activeNoteTrack = { kind: "music-abc", source: normalized, label: "Music score" };
@@ -1328,11 +1419,20 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       activeNoteAudio.volume = 1;
       const spatial = connectSpatialNoteAudio(activeNoteAudio, await spatialContextPromise);
       activeNoteAudio.addEventListener("ended", () => {
+        activeAbcTiming?.stop?.();
+        updateAbcPlaybackHighlight(null);
         syncAmbientAudio();
         setXrMessage("Music score completed.");
       });
-      activeNoteAudio.addEventListener("pause", syncAmbientAudio);
-      activeNoteAudio.addEventListener("play", () => ambientAudio.pause());
+      activeNoteAudio.addEventListener("pause", () => {
+        activeAbcTiming?.pause?.();
+        syncAmbientAudio();
+      });
+      activeNoteAudio.addEventListener("play", () => {
+        ambientAudio.pause();
+        activeAbcTiming?.setProgress?.(activeNoteAudio.currentTime || 0, "seconds");
+        activeAbcTiming?.start?.();
+      });
       activeNoteAudio.addEventListener("loadedmetadata", () => {
         if (pendingNoteAudioSeek === null) return;
         activeNoteAudio.currentTime = Math.min(pendingNoteAudioSeek, activeNoteAudio.duration);
@@ -2403,6 +2503,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       arNotePage = 0;
       arNotePath = "";
       arNoteWordCount = 0;
+      clearAbcPlaybackHighlight();
       activeAbcSynth?.pause?.();
       activeAbcSynth?.stop?.();
       activeAbcSynth = null;
@@ -4101,6 +4202,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         activeNoteAudio.currentTime = Math.min(target, activeNoteAudio.duration);
         pendingNoteAudioSeek = null;
       }
+      if (activeNoteTrack?.kind === "music-abc") {
+        activeAbcTiming?.setProgress?.(target, "seconds");
+      }
       updateAudioWaveformProgress();
       return target;
     }
@@ -4730,6 +4834,10 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     }
 
     function clearActiveNoteMediaForSwitch() {
+      clearAbcPlaybackHighlight();
+      activeAbcSynth?.stop?.();
+      activeAbcSynth = null;
+      activeAbcSource = "";
       if (activeNoteAudio) {
         activeNoteAudio.pause();
         activeNoteAudio.removeAttribute("src");
@@ -9012,6 +9120,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       }
       if (isPlaced) synapsePulseTime.value = time * 0.001;
       updateVideoAmbilight(time);
+      updateAbcHighlightPulse(time);
       if (forceGraph && dynamicGraphTicking) {
         forceGraph.tickFrame();
         syncDynamicNodeProxies();
