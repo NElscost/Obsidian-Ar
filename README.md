@@ -188,9 +188,15 @@ Opening the note only renders a selectable card. The Rust bridge parses the MIDI
 after that card is selected, caches the compact event list by file modification
 time and size, and performs the work outside the Quest thread. The AR panel uses
 one instanced keyboard and one instanced note mesh, displays at most 320 upcoming
-notes, and refreshes its temporal window only a few times per second. Closing or
-switching media disposes the panel immediately. This keeps MIDI independent from
-LaTeX, code, image, audio, and video rendering in the same note.
+notes, and refreshes its temporal window only a few times per second. Selecting
+the card also opens a lazily drawn score panel to the left. A fixed 12-voice Web
+Audio pool plays the visible events through a spatial HRTF panner, while a note-
+density waveform below the Synthesia panel supports seeking and bookmarks. Long
+or malformed note durations are visually capped and clipped to the panel. The
+score redraws only when its eight-second page changes. Closing or switching media
+disposes the meshes, textures, oscillators, and waveform immediately. This keeps
+MIDI independent from LaTeX, code, image, audio, and video rendering in the same
+note.
 
 The viewer starts in English and includes a language selector for Portuguese, Spanish, French, Italian, and Romanian.
 

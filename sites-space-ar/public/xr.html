@@ -2336,9 +2336,19 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let midiVizTimeOffset = 0;
     let midiVizWindowOrigin = -1;
     let midiVizLastKeyUpdate = 0;
+    let midiVizScoreGroup = null;
+    let midiVizScoreTexture = null;
+    let midiVizScoreWindow = -1;
+    let midiVizAudioMaster = null;
+    let midiVizAudioPanner = null;
+    let midiVizVoices = [];
+    let midiVizAudioCursor = 0;
+    let midiVizPreviousTime = 0;
     const midiVizCache = new Map();
     const MIDI_VIZ_MAX_INSTANCES = 320;
     const MIDI_VIZ_LOOKAHEAD_SECONDS = 7;
+    const MIDI_VIZ_MAX_DISPLAY_DURATION = 4;
+    const MIDI_VIZ_MAX_VOICES = 12;
     let activeNoteVideoTexture = null;
     let activeNoteVideoLayer = null;
     let activeNoteVideoLayerSession = null;
@@ -2518,33 +2528,93 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     }
 
 
-    function disposeMidiViz() {
-      if (!midiVizGroup) return;
-      const owned = new Set();
-      midiVizGroup.traverse((object) => owned.add(object));
-      arNoteControls = arNoteControls.filter((control) => !owned.has(control));
-      midiVizGroup.removeFromParent();
-      midiVizGroup.traverse((object) => {
-        object.geometry?.dispose?.();
-        object.material?.map?.dispose?.();
-        object.material?.dispose?.();
+    function midiVizCurrentTime(now = performance.now()) {
+      return midiVizTimeOffset + (midiVizPlaying ? Math.max(0, now - midiVizStartedAt) / 1000 : 0);
+    }
+
+    function resetMidiVizAudioCursor(time = 0) {
+      midiVizAudioCursor = midiVizData?.notes?.findIndex((note) => note.start >= time - 0.02) ?? 0;
+      if (midiVizAudioCursor < 0) midiVizAudioCursor = midiVizData?.notes?.length ?? 0;
+      midiVizPreviousTime = time;
+      for (const voice of midiVizVoices) {
+        voice.gain.gain.cancelScheduledValues(voice.context.currentTime);
+        voice.gain.gain.setValueAtTime(0.0001, voice.context.currentTime);
+        voice.busyUntil = 0;
+      }
+    }
+
+    async function ensureMidiVizAudio() {
+      if (midiVizAudioMaster) return true;
+      const context = await ensureSpatialAudioContext();
+      if (!context) return false;
+      midiVizAudioMaster = context.createGain();
+      midiVizAudioMaster.gain.value = 0.16;
+      midiVizAudioPanner = context.createPanner();
+      midiVizAudioPanner.panningModel = 'HRTF';
+      midiVizAudioPanner.distanceModel = 'inverse';
+      midiVizAudioPanner.refDistance = 0.7;
+      midiVizAudioPanner.rolloffFactor = 0.85;
+      midiVizAudioMaster.connect(midiVizAudioPanner).connect(context.destination);
+      midiVizVoices = Array.from({ length: MIDI_VIZ_MAX_VOICES }, (_, index) => {
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.type = index % 3 === 0 ? 'triangle' : 'sine';
+        gain.gain.value = 0.0001;
+        oscillator.connect(gain).connect(midiVizAudioMaster);
+        oscillator.start();
+        return { oscillator, gain, busyUntil: 0, context };
       });
-      midiVizGroup = midiVizNotesMesh = midiVizKeysMesh = null;
-      midiVizData = null;
-      midiVizSource = "";
-      midiVizPlaying = false;
-      midiVizTimeOffset = 0;
-      midiVizWindowOrigin = -1;
+      return true;
+    }
+
+    function triggerMidiVizNote(note) {
+      if (!midiVizAudioMaster || !midiVizPlaying) return;
+      const context = midiVizAudioMaster.context;
+      const now = context.currentTime;
+      const voice = midiVizVoices.reduce((best, item) => item.busyUntil < best.busyUntil ? item : best, midiVizVoices[0]);
+      const duration = THREE.MathUtils.clamp(Number(note.duration) || 0.12, 0.06, MIDI_VIZ_MAX_DISPLAY_DURATION);
+      const level = 0.025 + THREE.MathUtils.clamp(Number(note.velocity) || 80, 1, 127) / 127 * 0.055;
+      voice.oscillator.frequency.cancelScheduledValues(now);
+      voice.oscillator.frequency.setValueAtTime(440 * Math.pow(2, (note.pitch - 69) / 12), now);
+      voice.gain.gain.cancelScheduledValues(now);
+      voice.gain.gain.setValueAtTime(0.0001, now);
+      voice.gain.gain.linearRampToValueAtTime(level, now + 0.012);
+      voice.gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      voice.busyUntil = now + duration;
+    }
+
+    function disposeMidiViz() {
+      const groups = [midiVizGroup, midiVizScoreGroup].filter(Boolean);
+      const owned = new Set();
+      groups.forEach((group) => group.traverse((object) => owned.add(object)));
+      if (audioWaveformGroup?.parent === midiVizGroup) audioWaveformGroup.traverse((object) => owned.add(object));
+      arNoteControls = arNoteControls.filter((control) => !owned.has(control));
+      groups.forEach((group) => {
+        group.removeFromParent();
+        group.traverse((object) => { object.geometry?.dispose?.(); object.material?.map?.dispose?.(); object.material?.dispose?.(); });
+      });
+      midiVizScoreTexture?.dispose?.();
+      for (const voice of midiVizVoices) { try { voice.oscillator.stop(); } catch {} voice.oscillator.disconnect(); voice.gain.disconnect(); }
+      midiVizAudioMaster?.disconnect(); midiVizAudioPanner?.disconnect();
+      if (audioWaveformGroup?.parent === midiVizGroup) {
+        audioWaveformTexture?.dispose?.(); audioWaveformGroup = audioWaveformTexture = audioWaveformPlayhead = null;
+        audioWaveformWidth = audioWaveformDuration = 0; audioBookmarkMeshes = [];
+      }
+      midiVizGroup = midiVizScoreGroup = midiVizNotesMesh = midiVizKeysMesh = null;
+      midiVizScoreTexture = midiVizAudioMaster = midiVizAudioPanner = null; midiVizVoices = [];
+      midiVizData = null; midiVizSource = ''; midiVizPlaying = false; midiVizTimeOffset = 0;
+      midiVizWindowOrigin = midiVizScoreWindow = -1; midiVizAudioCursor = 0; midiVizPreviousTime = 0;
+      if (activeNoteTrack?.kind === 'midi-viz') activeNoteTrack = null;
+      syncAmbientAudio();
     }
 
     function midiVizTitleTexture(data) {
-      const canvas = document.createElement("canvas");
-      canvas.width = 1024; canvas.height = 128;
-      const context = canvas.getContext("2d", { alpha: true });
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      context.fillStyle = "#eef5ff"; context.font = "600 42px system-ui";
-      context.fillText(String(data.title || "MIDI").slice(0, 36), 32, 54, 780);
-      context.fillStyle = "#91a4bf"; context.font = "26px system-ui";
+      const canvas = document.createElement('canvas'); canvas.width = 1024; canvas.height = 128;
+      const context = canvas.getContext('2d', { alpha: false });
+      context.fillStyle = '#070d18'; context.fillRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = '#eef5ff'; context.font = '600 42px system-ui';
+      context.fillText(String(data.title || 'MIDI').slice(0, 36), 32, 54, 780);
+      context.fillStyle = '#91a4bf'; context.font = '26px system-ui';
       context.fillText(`${data.notes.length} notes · ${formatAudioTime(data.duration)} · ${data.trackCount} tracks`, 32, 98);
       const texture = new THREE.CanvasTexture(canvas);
       texture.colorSpace = THREE.SRGBColorSpace; texture.minFilter = THREE.LinearFilter; texture.generateMipmaps = false;
@@ -2554,108 +2624,108 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function rebuildMidiVizWindow(currentTime) {
       if (!midiVizData || !midiVizNotesMesh) return;
       midiVizWindowOrigin = currentTime;
-      const matrix = new THREE.Matrix4();
-      const position = new THREE.Vector3();
-      const quaternion = new THREE.Quaternion();
-      const scale = new THREE.Vector3();
-      const speed = 0.052;
+      const matrix = new THREE.Matrix4(), position = new THREE.Vector3(), quaternion = new THREE.Quaternion(), scale = new THREE.Vector3();
+      const palette = [0x64d8ff,0x63e6be,0xffd166,0xff8fab,0xc18cff,0xffa45b,0x75a7ff,0x8be9fd];
+      const speed = 0.052, floor = -AR_VIDEO_HEIGHT / 2 + 0.092, ceiling = AR_VIDEO_HEIGHT / 2 - 0.092;
       let count = 0;
       for (const note of midiVizData.notes) {
-        if (note.start + note.duration < currentTime - 0.15) continue;
-        if (note.start > currentTime + MIDI_VIZ_LOOKAHEAD_SECONDS) break;
+        const visibleStart = Math.max(Number(note.start) || 0, currentTime);
+        const visibleEnd = Math.min((Number(note.start) || 0) + Math.min(Number(note.duration) || 0.08, MIDI_VIZ_MAX_DISPLAY_DURATION), currentTime + MIDI_VIZ_LOOKAHEAD_SECONDS);
+        if (visibleEnd <= currentTime) continue;
+        if (visibleStart > currentTime + MIDI_VIZ_LOOKAHEAD_SECONDS) break;
         if (count >= MIDI_VIZ_MAX_INSTANCES) break;
         const pitch = THREE.MathUtils.clamp(note.pitch, 21, 108) - 21;
-        const height = Math.max(0.006, note.duration * speed);
-        position.set(-AR_VIDEO_WIDTH / 2 + 0.025 + (pitch + 0.5) * (AR_VIDEO_WIDTH - 0.05) / 88, -AR_VIDEO_HEIGHT / 2 + 0.09 + (note.start - currentTime) * speed + height / 2, 0.018);
-        scale.set((AR_VIDEO_WIDTH - 0.05) / 88 * 0.82, height, 0.009);
-        matrix.compose(position, quaternion, scale);
-        midiVizNotesMesh.setMatrixAt(count, matrix);
-        midiVizNotesMesh.setColorAt(count, new THREE.Color().setHSL((note.channel % 12) / 12, 0.72, 0.62));
-        count += 1;
+        const bottom = THREE.MathUtils.clamp(floor + (visibleStart - currentTime) * speed, floor, ceiling);
+        const top = THREE.MathUtils.clamp(floor + (visibleEnd - currentTime) * speed, floor, ceiling);
+        const height = Math.max(0.005, top - bottom);
+        position.set(-AR_VIDEO_WIDTH/2 + 0.025 + (pitch+0.5)*(AR_VIDEO_WIDTH-0.05)/88, bottom + height/2, 0.018);
+        scale.set((AR_VIDEO_WIDTH-0.05)/88*0.84, height, 0.009); matrix.compose(position, quaternion, scale);
+        midiVizNotesMesh.setMatrixAt(count, matrix); midiVizNotesMesh.setColorAt(count, new THREE.Color(palette[(note.channel || 0) % palette.length])); count++;
       }
-      midiVizNotesMesh.count = count;
-      midiVizNotesMesh.position.y = 0;
-      midiVizNotesMesh.instanceMatrix.needsUpdate = true;
+      midiVizNotesMesh.count = count; midiVizNotesMesh.position.y = 0; midiVizNotesMesh.instanceMatrix.needsUpdate = true;
       if (midiVizNotesMesh.instanceColor) midiVizNotesMesh.instanceColor.needsUpdate = true;
+    }
+
+    function drawMidiVizScore(currentTime, force = false) {
+      if (!midiVizScoreTexture || !midiVizData) return;
+      const page = Math.floor(currentTime / 8); if (!force && page === midiVizScoreWindow) return; midiVizScoreWindow = page;
+      const canvas = midiVizScoreTexture.image, context = canvas.getContext('2d');
+      context.fillStyle = '#f6f1e8'; context.fillRect(0,0,canvas.width,canvas.height);
+      context.fillStyle = '#172033'; context.textAlign = 'center'; context.font = '600 34px system-ui'; context.fillText(`${midiVizData.title || 'MIDI'} · score`, canvas.width/2, 48);
+      const start = page*8, end = start+8, left=72, right=canvas.width-40;
+      context.strokeStyle='#26354a'; context.lineWidth=3;
+      for (const base of [155,365]) for(let line=0;line<5;line++){const y=base+line*22;context.beginPath();context.moveTo(left,y);context.lineTo(right,y);context.stroke();}
+      context.font='58px serif'; context.textAlign='left'; context.fillText('𝄞',20,225); context.fillText('𝄢',20,438);
+      context.fillStyle='#172033';
+      for (const note of midiVizData.notes) {
+        if (note.start < start || note.start >= end) continue;
+        const x=left+(note.start-start)/8*(right-left), upper=note.pitch>=60, base=upper?243:453;
+        const y=THREE.MathUtils.clamp(base-(note.pitch-(upper?60:36))*5.5, upper?125:335, upper?285:495);
+        context.save();context.translate(x,y);context.rotate(-0.25);context.beginPath();context.ellipse(0,0,9,6,0,0,Math.PI*2);context.fill();context.restore();
+        context.fillRect(x+7,y-39,2,38);
+      }
+      const markerX=left+((currentTime-start)/8)*(right-left); context.fillStyle='rgba(50,180,130,.45)'; context.fillRect(markerX,105,5,410);
+      context.fillStyle='#617087'; context.font='22px system-ui'; context.textAlign='center'; context.fillText(`${formatAudioTime(start)} – ${formatAudioTime(Math.min(end,midiVizData.duration))}`,canvas.width/2,555);
+      midiVizScoreTexture.needsUpdate=true;
+    }
+
+    function createMidiVizScorePanel(data) {
+      const canvas=document.createElement('canvas'); canvas.width=1024; canvas.height=600;
+      midiVizScoreTexture=new THREE.CanvasTexture(canvas); midiVizScoreTexture.colorSpace=THREE.SRGBColorSpace; midiVizScoreTexture.minFilter=THREE.LinearFilter; midiVizScoreTexture.generateMipmaps=false;
+      midiVizScoreGroup=new THREE.Group(); const x=AR_VIDEO_CENTER_X*2, angle=THREE.MathUtils.degToRad(27), radius=Math.abs(x)/Math.sin(angle);
+      midiVizScoreGroup.position.set(x,0,radius*(1-Math.cos(angle))); midiVizScoreGroup.rotation.y=angle;
+      const panel=new THREE.Mesh(curvedPanelGeometry(AR_VIDEO_WIDTH,AR_VIDEO_HEIGHT,0.018,18),new THREE.MeshBasicMaterial({map:midiVizScoreTexture,transparent:false,depthTest:true,depthWrite:true,toneMapped:false}));
+      panel.raycast=()=>{}; midiVizScoreGroup.add(panel); arNoteGroup.add(midiVizScoreGroup); drawMidiVizScore(0,true);
+    }
+
+    function midiVizWaveform(data) {
+      const samples=new Array(384).fill(0), duration=Math.max(0.01,Number(data.duration)||0.01);
+      for(const note of data.notes){const index=Math.min(samples.length-1,Math.floor(note.start/duration*samples.length));samples[index]=Math.min(255,samples[index]+28+Math.round((note.velocity||64)/4));}
+      return {duration,samples:samples.map((value)=>Math.max(8,value))};
     }
 
     function updateMidiViz(time) {
       if (!midiVizGroup || !midiVizData) return;
-      let current = midiVizTimeOffset;
-      if (midiVizPlaying) current += Math.max(0, time - midiVizStartedAt) / 1000;
-      if (current >= midiVizData.duration) {
-        current = 0; midiVizTimeOffset = 0; midiVizStartedAt = time;
+      let current=midiVizCurrentTime(time);
+      if(current>=midiVizData.duration){current=0;midiVizTimeOffset=0;midiVizStartedAt=time;resetMidiVizAudioCursor(0);}
+      if(midiVizWindowOrigin<0||Math.abs(current-midiVizWindowOrigin)>0.35)rebuildMidiVizWindow(current);
+      if(midiVizNotesMesh)midiVizNotesMesh.position.y=-(current-midiVizWindowOrigin)*0.052;
+      drawMidiVizScore(current);
+      if(midiVizPlaying){
+        if(current<midiVizPreviousTime||current-midiVizPreviousTime>0.5)resetMidiVizAudioCursor(current);
+        let fired=0;while(midiVizAudioCursor<midiVizData.notes.length&&fired<20){const note=midiVizData.notes[midiVizAudioCursor];if(note.start>current+0.035)break;if(note.start>=midiVizPreviousTime-0.01){triggerMidiVizNote(note);fired++;}midiVizAudioCursor++;}
       }
-      if (midiVizWindowOrigin < 0 || Math.abs(current - midiVizWindowOrigin) > 0.35) rebuildMidiVizWindow(current);
-      if (midiVizNotesMesh) midiVizNotesMesh.position.y = -(current - midiVizWindowOrigin) * 0.052;
-      if (midiVizKeysMesh && time - midiVizLastKeyUpdate > 80) {
-        const active = new Set();
-        for (const note of midiVizData.notes) {
-          if (note.start > current) break;
-          if (note.start + note.duration >= current) active.add(note.pitch);
-        }
-        for (let index = 0; index < 88; index += 1) {
-          const pitch = index + 21;
-          const sharp = [1,3,6,8,10].includes(pitch % 12);
-          midiVizKeysMesh.setColorAt(index, new THREE.Color(active.has(pitch) ? 0x63e6be : sharp ? 0x172033 : 0xdce6f4));
-        }
-        midiVizKeysMesh.instanceColor.needsUpdate = true;
-        midiVizLastKeyUpdate = time;
-      }
+      midiVizPreviousTime=current;
+      if(midiVizKeysMesh&&time-midiVizLastKeyUpdate>80){const active=new Set();for(const note of midiVizData.notes){if(note.start>current)break;if(note.start+Math.min(note.duration,MIDI_VIZ_MAX_DISPLAY_DURATION)>=current)active.add(note.pitch);}for(let index=0;index<88;index++){const pitch=index+21,sharp=[1,3,6,8,10].includes(pitch%12);midiVizKeysMesh.setColorAt(index,new THREE.Color(active.has(pitch)?0xffd166:sharp?0x385070:0xe8f1ff));}if(midiVizKeysMesh.instanceColor)midiVizKeysMesh.instanceColor.needsUpdate=true;midiVizLastKeyUpdate=time;}
+    }
+
+    function setMidiVizPlaying(playing) {
+      const now=performance.now(); if(midiVizPlaying)midiVizTimeOffset=midiVizCurrentTime(now);
+      midiVizPlaying=playing;midiVizStartedAt=now;resetMidiVizAudioCursor(midiVizTimeOffset);
+      if(midiVizAudioMaster)midiVizAudioMaster.gain.setTargetAtTime(playing?0.16:0.0001,midiVizAudioMaster.context.currentTime,0.015);
+      syncAmbientAudio();
     }
 
     function createMidiVizPanel(data, source) {
-      disposeMidiViz();
-      if (activeNoteVideoGroup) closeActiveVideo(true);
-      midiVizData = data; midiVizSource = source; midiVizPlaying = true; midiVizStartedAt = performance.now();
-      midiVizGroup = new THREE.Group();
-      const angle = THREE.MathUtils.degToRad(14);
-      const radius = Math.abs(AR_VIDEO_CENTER_X) / Math.sin(angle);
-      midiVizGroup.position.set(AR_VIDEO_CENTER_X, 0, radius * (1 - Math.cos(angle)));
-      midiVizGroup.rotation.y = angle;
-      const panel = new THREE.Mesh(curvedPanelGeometry(AR_VIDEO_WIDTH, AR_VIDEO_HEIGHT, 0.018, 18), new THREE.MeshBasicMaterial({ color:0x070d18, transparent:true, opacity:0.94, depthTest:true, depthWrite:true, toneMapped:false }));
-      panel.raycast = () => {};
-      const title = new THREE.Mesh(new THREE.PlaneGeometry(AR_VIDEO_WIDTH - 0.07, 0.075), new THREE.MeshBasicMaterial({ map:midiVizTitleTexture(data), transparent:true, depthTest:true, toneMapped:false }));
-      title.position.set(0, AR_VIDEO_HEIGHT / 2 - 0.055, 0.012); title.raycast = () => {};
-      const keyGeometry = new THREE.BoxGeometry(1, 1, 1);
-      midiVizKeysMesh = new THREE.InstancedMesh(keyGeometry, new THREE.MeshBasicMaterial({ vertexColors:true, toneMapped:false }), 88);
-      const matrix = new THREE.Matrix4(); const position = new THREE.Vector3(); const quaternion = new THREE.Quaternion(); const scale = new THREE.Vector3();
-      for (let index = 0; index < 88; index += 1) {
-        const pitch = index + 21; const sharp = [1,3,6,8,10].includes(pitch % 12);
-        position.set(-AR_VIDEO_WIDTH / 2 + 0.025 + (index + 0.5) * (AR_VIDEO_WIDTH - 0.05) / 88, -AR_VIDEO_HEIGHT / 2 + (sharp ? 0.052 : 0.043), sharp ? 0.022 : 0.014);
-        scale.set((AR_VIDEO_WIDTH - 0.05) / 88 * 0.9, sharp ? 0.052 : 0.072, 0.012); matrix.compose(position, quaternion, scale);
-        midiVizKeysMesh.setMatrixAt(index, matrix); midiVizKeysMesh.setColorAt(index, new THREE.Color(sharp ? 0x172033 : 0xdce6f4));
-      }
-      midiVizKeysMesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-      midiVizNotesMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshBasicMaterial({ vertexColors:true, toneMapped:false }), MIDI_VIZ_MAX_INSTANCES);
-      midiVizNotesMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      const close = new THREE.Mesh(new THREE.CircleGeometry(0.019,14), new THREE.MeshBasicMaterial({ color:0xff6b6b, toneMapped:false }));
-      close.position.set(AR_VIDEO_WIDTH/2-0.028,AR_VIDEO_HEIGHT/2-0.028,0.025); close.userData.noteAction="midi-close";
-      const toggle = new THREE.Mesh(new THREE.CircleGeometry(0.019,14), new THREE.MeshBasicMaterial({ color:0x63e6be, toneMapped:false }));
-      toggle.position.set(-AR_VIDEO_WIDTH/2+0.028,AR_VIDEO_HEIGHT/2-0.028,0.025); toggle.userData.noteAction="midi-toggle";
-      midiVizGroup.add(panel,title,midiVizNotesMesh,midiVizKeysMesh,close,toggle);
-      arNoteGroup.add(midiVizGroup); arNoteControls.push(close,toggle);
-      rebuildMidiVizWindow(0);
+      disposeMidiViz(); if(activeNoteVideoGroup)closeActiveVideo(true);
+      midiVizData=data;midiVizSource=source;midiVizPlaying=true;midiVizStartedAt=performance.now();activeNoteTrack={kind:'midi-viz',source,label:data.title||source};activeNoteMediaPath=arNotePath;
+      midiVizGroup=new THREE.Group();const angle=THREE.MathUtils.degToRad(14),radius=Math.abs(AR_VIDEO_CENTER_X)/Math.sin(angle);midiVizGroup.position.set(AR_VIDEO_CENTER_X,0,radius*(1-Math.cos(angle)));midiVizGroup.rotation.y=angle;
+      const panel=new THREE.Mesh(curvedPanelGeometry(AR_VIDEO_WIDTH,AR_VIDEO_HEIGHT,0.018,18),new THREE.MeshBasicMaterial({color:0x070d18,transparent:false,depthTest:true,depthWrite:true,toneMapped:false}));panel.raycast=()=>{};
+      const title=new THREE.Mesh(new THREE.PlaneGeometry(AR_VIDEO_WIDTH-0.07,0.075),new THREE.MeshBasicMaterial({map:midiVizTitleTexture(data),transparent:false,depthTest:false,depthWrite:false,toneMapped:false}));title.position.set(0,AR_VIDEO_HEIGHT/2-0.055,0.025);title.renderOrder=1004;title.raycast=()=>{};
+      const matrix=new THREE.Matrix4(),position=new THREE.Vector3(),quaternion=new THREE.Quaternion(),scale=new THREE.Vector3();midiVizKeysMesh=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),new THREE.MeshBasicMaterial({vertexColors:true,color:0xffffff,depthTest:true,depthWrite:true,toneMapped:false}),88);
+      for(let index=0;index<88;index++){const pitch=index+21,sharp=[1,3,6,8,10].includes(pitch%12);position.set(-AR_VIDEO_WIDTH/2+0.025+(index+0.5)*(AR_VIDEO_WIDTH-0.05)/88,-AR_VIDEO_HEIGHT/2+(sharp?0.052:0.043),sharp?0.022:0.014);scale.set((AR_VIDEO_WIDTH-0.05)/88*0.9,sharp?0.052:0.072,0.012);matrix.compose(position,quaternion,scale);midiVizKeysMesh.setMatrixAt(index,matrix);midiVizKeysMesh.setColorAt(index,new THREE.Color(sharp?0x385070:0xe8f1ff));}midiVizKeysMesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);midiVizKeysMesh.instanceMatrix.needsUpdate=true;if(midiVizKeysMesh.instanceColor)midiVizKeysMesh.instanceColor.needsUpdate=true;
+      midiVizNotesMesh=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),new THREE.MeshBasicMaterial({vertexColors:true,color:0xffffff,depthTest:true,depthWrite:true,toneMapped:false}),MIDI_VIZ_MAX_INSTANCES);midiVizNotesMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      const close=new THREE.Mesh(new THREE.CircleGeometry(0.019,14),new THREE.MeshBasicMaterial({color:0xff6b6b,toneMapped:false}));close.position.set(AR_VIDEO_WIDTH/2-0.028,AR_VIDEO_HEIGHT/2-0.028,0.03);close.userData.noteAction='midi-close';
+      const toggle=new THREE.Mesh(new THREE.CircleGeometry(0.019,14),new THREE.MeshBasicMaterial({color:0x63e6be,toneMapped:false}));toggle.position.set(-AR_VIDEO_WIDTH/2+0.028,AR_VIDEO_HEIGHT/2-0.028,0.03);toggle.userData.noteAction='midi-toggle';
+      midiVizGroup.add(panel,title,midiVizNotesMesh,midiVizKeysMesh,close,toggle);arNoteGroup.add(midiVizGroup);arNoteControls.push(close,toggle);createMidiVizScorePanel(data);rebuildMidiVizWindow(0);resetMidiVizAudioCursor(0);
+      createArAudioWaveform(midiVizWaveform(data),AR_VIDEO_WIDTH,AR_VIDEO_HEIGHT);void ensureMidiVizAudio().then(()=>syncAmbientAudio());
     }
 
     async function openMidiViz(source) {
-      if (midiVizGroup && midiVizSource === source) {
-        if (midiVizPlaying) midiVizTimeOffset += Math.max(0, performance.now() - midiVizStartedAt) / 1000;
-        midiVizPlaying = !midiVizPlaying; midiVizStartedAt = performance.now(); return;
-      }
-      const config = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
-      if (!config?.url || !config?.token) throw new Error("The Obsidian bridge is not configured.");
-      const key = `${arNotePath}\n${source}`;
-      let data = midiVizCache.get(key);
-      if (!data) {
-        setXrMessage("Preparing MIDI outside the Quest main thread…");
-        const response = await fetchBridge(config, "/midi", { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ notePath:arNotePath, assetPath:source }) });
-        if (!response.ok) throw new Error((await response.json().catch(()=>null))?.error || `HTTP ${response.status}`);
-        data = await response.json();
-        midiVizCache.set(key, data);
-      }
-      createMidiVizPanel(data, source);
-      setXrMessage(`Synthesia ready: ${data.notes.length} notes.`);
+      if(midiVizGroup&&midiVizSource===source){setMidiVizPlaying(!midiVizPlaying);return;}
+      const config=JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY)??'null');if(!config?.url||!config?.token)throw new Error('The Obsidian bridge is not configured.');
+      const key=`${arNotePath}\n${source}`;let data=midiVizCache.get(key);if(!data){setXrMessage('Preparing MIDI outside the Quest main thread…');const response=await fetchBridge(config,'/midi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notePath:arNotePath,assetPath:source})});if(!response.ok)throw new Error((await response.json().catch(()=>null))?.error||`HTTP ${response.status}`);data=await response.json();midiVizCache.set(key,data);}
+      createMidiVizPanel(data,source);setXrMessage(`Synthesia and score ready: ${data.notes.length} notes.`);
     }
     function releaseActiveMedia() {
       if (activeNoteAudio) {
@@ -4348,6 +4418,12 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
     function placeAudioWaveformGroup(panelHeight = AR_NOTE_HEIGHT) {
       if (!audioWaveformGroup) return;
+      const belongsToMidi = Boolean(midiVizGroup && activeNoteTrack?.kind === "midi-viz");
+      if (belongsToMidi) {
+        midiVizGroup.add(audioWaveformGroup);
+        audioWaveformGroup.position.set(0, -AR_VIDEO_HEIGHT / 2 - 0.034, 0.034);
+        return;
+      }
       const belongsToVideo = Boolean(
         activeNoteVideoGroup &&
         (activeNoteTrack?.kind === "video" || noteVideoTracks.includes(activeNoteTrack))
@@ -4510,6 +4586,12 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         Math.max(0, activeNoteAudio?.duration || audioWaveformDuration)
       );
       pendingNoteAudioSeek = target;
+      if (activeNoteTrack?.kind === "midi-viz" && midiVizData) {
+        midiVizTimeOffset = Math.min(target, midiVizData.duration);
+        midiVizStartedAt = performance.now();
+        resetMidiVizAudioCursor(midiVizTimeOffset);
+        pendingNoteAudioSeek = null;
+      }
       if (activeNoteAudio && Number.isFinite(activeNoteAudio.duration)) {
         activeNoteAudio.currentTime = Math.min(target, activeNoteAudio.duration);
         pendingNoteAudioSeek = null;
@@ -4564,11 +4646,12 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
     function updateAudioWaveformProgress() {
       if (!audioWaveformPlayhead || !audioWaveformWidth) return;
+      const midiTime = activeNoteTrack?.kind === "midi-viz" ? midiVizCurrentTime() : null;
       const duration = Number.isFinite(activeNoteAudio?.duration) && activeNoteAudio.duration > 0
         ? activeNoteAudio.duration
         : audioWaveformDuration;
       const progress = duration > 0
-        ? Math.min(1, Math.max(0, (activeNoteAudio?.currentTime || 0) / duration))
+        ? Math.min(1, Math.max(0, ((midiTime ?? activeNoteAudio?.currentTime) || 0) / duration))
         : 0;
       audioWaveformPlayhead.position.x = -audioWaveformWidth / 2 + audioWaveformWidth * progress;
     }
@@ -5137,7 +5220,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     }
 
     function syncAmbientAudio() {
-      const noteMediaPlaying = Boolean(activeNoteAudio && !activeNoteAudio.paused && !activeNoteAudio.ended);
+      const noteMediaPlaying = Boolean((activeNoteAudio && !activeNoteAudio.paused && !activeNoteAudio.ended) || (midiVizGroup && midiVizPlaying));
       if (!xrSession || !ambientAudio.src || noteMediaPlaying) {
         ambientAudio.pause();
         return;
@@ -5475,8 +5558,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       }
       if (action === "midi-close") { disposeMidiViz(); setXrMessage("Synthesia closed."); return; }
       if (action === "midi-toggle") {
-        if (midiVizPlaying) midiVizTimeOffset += Math.max(0, performance.now() - midiVizStartedAt) / 1000;
-        midiVizPlaying = !midiVizPlaying; midiVizStartedAt = performance.now();
+        setMidiVizPlaying(!midiVizPlaying);
         setXrMessage(midiVizPlaying ? "Synthesia playing." : "Synthesia paused."); return;
       }
       if (action.startsWith("midi-viz:")) {

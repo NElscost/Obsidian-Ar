@@ -624,3 +624,14 @@ test("preserva a página durante atualização ao vivo da nota", async () => {
   assert.match(html, /initialPage = 0/);
   assert.match(html, /arNotePage = THREE\.MathUtils\.clamp\(initialPage/);
 });
+test("reproduz MIDI com transporte leve, waveform e partitura lateral", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /MIDI_VIZ_MAX_VOICES = 12/);
+  assert.match(html, /function triggerMidiVizNote/);
+  assert.match(html, /function midiVizWaveform/);
+  assert.match(html, /function createMidiVizScorePanel/);
+  assert.match(html, /function drawMidiVizScore/);
+  assert.match(html, /MIDI_VIZ_MAX_DISPLAY_DURATION = 4/);
+  assert.match(html, /belongsToMidi/);
+  assert.match(html, /activeNoteTrack\?\.kind === "midi-viz"/);
+});
