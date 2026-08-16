@@ -1143,7 +1143,23 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         abcPlaybackHighlight.renderOrder = 68;
         arNoteGroup.add(abcPlaybackHighlight);
       }
-      const bounds = activeAbcTimingBounds;
+      const bounds = (
+        Number.isFinite(hotspot.scoreViewLeft) &&
+        Number.isFinite(hotspot.scoreViewTop) &&
+        Number.isFinite(hotspot.scoreViewWidth) &&
+        Number.isFinite(hotspot.scoreViewHeight) &&
+        hotspot.scoreViewWidth > 0 &&
+        hotspot.scoreViewHeight > 0
+      ) ? {
+        left: hotspot.scoreViewLeft,
+        top: hotspot.scoreViewTop,
+        width: hotspot.scoreViewWidth,
+        height: hotspot.scoreViewHeight
+      } : activeAbcTimingBounds;
+      if (!bounds) {
+        if (abcPlaybackHighlight) abcPlaybackHighlight.visible = false;
+        return;
+      }
       const scoreX1 = Number.isFinite(hotspot.scoreX1) ? hotspot.scoreX1 : hotspot.x1;
       const scoreX2 = Number.isFinite(hotspot.scoreX2) ? hotspot.scoreX2 : hotspot.x2;
       const scoreY1 = Number.isFinite(hotspot.scoreY1) ? hotspot.scoreY1 : hotspot.y1;
@@ -1290,6 +1306,12 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       const viewBox = svg.viewBox?.baseVal;
       const sourceWidth = Math.max(1, viewBox?.width || svg.getBoundingClientRect().width || 820);
       const sourceHeight = Math.max(1, viewBox?.height || svg.getBoundingClientRect().height || 240);
+      block.dataset.noteAbcViewbox = [
+        Number(viewBox?.x) || 0,
+        Number(viewBox?.y) || 0,
+        sourceWidth,
+        sourceHeight
+      ].join(",");
       const width = Math.min(1024, Math.ceil(sourceWidth));
       const height = Math.max(1, Math.ceil(sourceHeight * width / sourceWidth));
       const clone = svg.cloneNode(true);
@@ -3253,6 +3275,13 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         const scoreBounds = kind === "music-abc"
           ? element.querySelector(".note-music-abc-image, svg")?.getBoundingClientRect()
           : null;
+        const scoreViewBox = String(element.dataset.noteAbcViewbox || "")
+          .split(",")
+          .map(Number);
+        const hasScoreViewBox = scoreViewBox.length === 4 &&
+          scoreViewBox.every(Number.isFinite) &&
+          scoreViewBox[2] > 0 &&
+          scoreViewBox[3] > 0;
         page.mediaHotspots.push({
           kind,
           source,
@@ -3274,7 +3303,11 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
             : null,
           scoreY2: scoreBounds
             ? THREE.MathUtils.clamp(1 - (108 + scoreBounds.top - noteBounds.top - page.top) / 768, 0, 1)
-            : null
+            : null,
+          scoreViewLeft: hasScoreViewBox ? scoreViewBox[0] : null,
+          scoreViewTop: hasScoreViewBox ? scoreViewBox[1] : null,
+          scoreViewWidth: hasScoreViewBox ? scoreViewBox[2] : null,
+          scoreViewHeight: hasScoreViewBox ? scoreViewBox[3] : null
         });
       }
     }
@@ -5413,7 +5446,11 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
             (Number.isFinite(hotspot.scoreX1) &&
               Number.isFinite(hotspot.scoreX2) &&
               Number.isFinite(hotspot.scoreY1) &&
-              Number.isFinite(hotspot.scoreY2))
+              Number.isFinite(hotspot.scoreY2) &&
+              Number.isFinite(hotspot.scoreViewLeft) &&
+              Number.isFinite(hotspot.scoreViewTop) &&
+              Number.isFinite(hotspot.scoreViewWidth) &&
+              Number.isFinite(hotspot.scoreViewHeight))
           )
         );
         if (!hasMediaHotspotMetadata) {
