@@ -668,7 +668,7 @@
             <input id="note-banner-wallpaper" type="checkbox">
             <span id="note-banner-wallpaper-label">Use the open note banner as wallpaper</span>
           </label>
-          <label class="graph-budget"><span>Weather effect</span><select id="weather-effect"><option value="none">None</option><option value="snow">Snow</option><option value="rain">Rain</option></select></label>
+          <label class="graph-budget"><span id="weather-effect-label">Weather effect</span><select id="weather-effect"><option value="none">None</option><option value="snow">Snow</option><option value="rain">Rain</option><option value="cosmic">Cosmic dust + shooting stars</option></select></label>
           <label class="graph-budget"><span>Ambient sound</span><input id="ambient-audio" type="file" accept="audio/*"></label>
         </details>
         <button id="save-bridge" type="button" data-i18n="save">Save note access</button>
@@ -787,12 +787,30 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       it:"Usa il banner della nota aperta come sfondo",
       ro:"Folosește bannerul notei deschise ca fundal"
     };
-    const UI_KEYS=["language","title","intro","step1","step2","step3","bridgeUrl","bridgeToken","access","dynamic","limit","panorama","panoramaHint","save","checking","loading","estimating","surface","reposition","noteName","search","close","note"];
+    const WEATHER_LABELS = {
+      en:["Weather effect","None","Snow","Rain","Cosmic dust + shooting stars"],
+      pt:["Efeito ambiental","Nenhum","Neve","Chuva","Poeira cósmica + estrelas cadentes"],
+      es:["Efecto ambiental","Ninguno","Nieve","Lluvia","Polvo cósmico + estrellas fugaces"],
+      fr:["Effet d’ambiance","Aucun","Neige","Pluie","Poussière cosmique + étoiles filantes"],
+      it:["Effetto ambientale","Nessuno","Neve","Pioggia","Polvere cosmica + stelle cadenti"],
+      ro:["Efect ambiental","Niciunul","Zăpadă","Ploaie","Praf cosmic + stele căzătoare"]
+    };
+    const XR_SUPPORT_MESSAGES = {
+      en:{https:"HTTPS required",httpsHint:"Open this page over HTTPS to use WebXR.",unavailable:"WebXR unavailable",browserHint:"Use Meta Quest Browser with WebXR enabled.",preparing:"Preparing experience…",incompatible:"AR not compatible",unsupported:"This device does not support immersive-ar sessions."},
+      pt:{https:"HTTPS necessário",httpsHint:"Abra esta página por HTTPS para usar WebXR.",unavailable:"WebXR indisponível",browserHint:"Use o Meta Quest Browser com WebXR habilitado.",preparing:"Preparando experiência…",incompatible:"AR não compatível",unsupported:"Este dispositivo não oferece sessões immersive-ar."},
+      es:{https:"HTTPS necesario",httpsHint:"Abre esta página mediante HTTPS para usar WebXR.",unavailable:"WebXR no disponible",browserHint:"Usa Meta Quest Browser con WebXR habilitado.",preparing:"Preparando la experiencia…",incompatible:"AR no compatible",unsupported:"Este dispositivo no admite sesiones immersive-ar."},
+      fr:{https:"HTTPS requis",httpsHint:"Ouvrez cette page via HTTPS pour utiliser WebXR.",unavailable:"WebXR indisponible",browserHint:"Utilisez Meta Quest Browser avec WebXR activé.",preparing:"Préparation de l’expérience…",incompatible:"AR non compatible",unsupported:"Cet appareil ne prend pas en charge les sessions immersive-ar."},
+      it:{https:"HTTPS richiesto",httpsHint:"Apri questa pagina tramite HTTPS per usare WebXR.",unavailable:"WebXR non disponibile",browserHint:"Usa Meta Quest Browser con WebXR abilitato.",preparing:"Preparazione dell’esperienza…",incompatible:"AR non compatibile",unsupported:"Questo dispositivo non supporta sessioni immersive-ar."},
+      ro:{https:"HTTPS necesar",httpsHint:"Deschide această pagină prin HTTPS pentru a utiliza WebXR.",unavailable:"WebXR indisponibil",browserHint:"Folosește Meta Quest Browser cu WebXR activat.",preparing:"Se pregătește experiența…",incompatible:"AR incompatibil",unsupported:"Acest dispozitiv nu acceptă sesiuni immersive-ar."}
+    };    const UI_KEYS=["language","title","intro","step1","step2","step3","bridgeUrl","bridgeToken","access","dynamic","limit","panorama","panoramaHint","save","checking","loading","estimating","surface","reposition","noteName","search","close","note"];
     function applyUiLanguage(code) {
       code = UI_TRANSLATIONS[code] ? code : "en"; const values=UI_TRANSLATIONS[code]; const messages=Object.fromEntries(UI_KEYS.map((key,index)=>[key,values[index]]));
       document.documentElement.lang=code; languageSelect.value=code;
       document.querySelector("#real-glass-label").textContent=REAL_GLASS_LABELS[code];
       document.querySelector("#note-banner-wallpaper-label").textContent=NOTE_BANNER_WALLPAPER_LABELS[code];
+      const weatherLabels = WEATHER_LABELS[code];
+      document.querySelector("#weather-effect-label").textContent = weatherLabels[0];
+      [...document.querySelector("#weather-effect").options].forEach((option, index) => option.textContent = weatherLabels[index + 1]);
       document.querySelectorAll("[data-i18n]").forEach((el)=>{if(messages[el.dataset.i18n])el.textContent=messages[el.dataset.i18n]});
       document.querySelectorAll("[data-i18n-placeholder]").forEach((el)=>{el.placeholder=messages[el.dataset.i18nPlaceholder]||el.placeholder});
       localStorage.setItem(LANGUAGE_STORAGE_KEY,code);
@@ -2224,13 +2242,16 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       weatherPositions[i * 3 + 1] = ((i * 47) % 97) / 97 * 5 - 2.5;
       weatherPositions[i * 3 + 2] = ((i * 31) % 89) / 89 * 8 - 4;
     }
+    const weatherSeeds = new Float32Array(weatherParticleCount);
+    for (let i = 0; i < weatherParticleCount; i += 1) weatherSeeds[i] = ((i * 83) % 317) / 317;
     const weatherGeometry = new THREE.BufferGeometry();
     weatherGeometry.setAttribute("position", new THREE.BufferAttribute(weatherPositions, 3));
+    weatherGeometry.setAttribute("seed", new THREE.BufferAttribute(weatherSeeds, 1));
     weatherGeometry.computeBoundingSphere();
     const weatherMaterial = new THREE.ShaderMaterial({
       uniforms: { time: { value: 0 }, mode: { value: 1 } },
-      vertexShader: "uniform float time; uniform float mode; void main(){ vec3 p=position; float speed=mix(0.22,1.35,step(1.5,mode)); p.y=mod(p.y-time*speed+2.5,5.0)-2.5; p.x+=sin(time*0.45+position.y*2.1)*mix(0.10,0.025,step(1.5,mode)); vec4 mv=modelViewMatrix*vec4(p,1.0); gl_PointSize=clamp(mix(7.0,10.0,step(1.5,mode))/-mv.z,1.2,7.0); gl_Position=projectionMatrix*mv; }",
-      fragmentShader: "uniform float mode; void main(){ vec2 p=gl_PointCoord-0.5; float snow=(1.0-smoothstep(0.18,0.5,length(p)))*0.72; float rain=(1.0-smoothstep(0.05,0.14,abs(p.x)))*smoothstep(0.5,0.08,abs(p.y))*0.58; float alpha=mix(snow,rain,step(1.5,mode)); gl_FragColor=vec4(mix(vec3(0.88,0.94,1.0),vec3(0.55,0.76,1.0),step(1.5,mode)),alpha); }",
+      vertexShader: "uniform float time; uniform float mode; attribute float seed; varying float vStar; varying float vLife; void main(){ vec3 p=position; vStar=0.0; vLife=1.0; if(mode>2.5){ vStar=step(0.988,seed); float phase=fract(time*0.055+fract(seed*17.0)); vLife=mix(0.34,1.0-smoothstep(0.10,0.22,abs(phase-0.5)),vStar); p+=vec3(sin(time*0.08+seed*19.0)*0.16,cos(time*0.06+seed*13.0)*0.10,0.0); p.x=mix(p.x,-4.2+phase*8.4,vStar); p.y=mix(p.y,2.0-phase*3.4,vStar); }else{ float rain=step(1.5,mode); float speed=mix(0.22,1.35,rain); p.y=mod(p.y-time*speed+2.5,5.0)-2.5; p.x+=sin(time*0.45+position.y*2.1)*mix(0.10,0.025,rain); } vec4 mv=modelViewMatrix*vec4(p,1.0); float size=mode>2.5?mix(4.0,28.0,vStar):mix(7.0,10.0,step(1.5,mode)); gl_PointSize=clamp(size/-mv.z,1.0,10.0); gl_Position=projectionMatrix*mv; }",
+      fragmentShader: "uniform float mode; varying float vStar; varying float vLife; void main(){ vec2 p=gl_PointCoord-0.5; if(mode>2.5){ float dust=(1.0-smoothstep(0.08,0.5,length(p)))*0.42; float streak=(1.0-smoothstep(0.025,0.11,abs(p.y+p.x*0.28)))*(1.0-smoothstep(0.08,0.52,abs(p.x)))*vLife; float alpha=mix(dust,streak,vStar); gl_FragColor=vec4(mix(vec3(0.48,0.68,1.0),vec3(0.92,0.96,1.0),vStar),alpha); }else{ float rainMode=step(1.5,mode); float snow=(1.0-smoothstep(0.18,0.5,length(p)))*0.72; float rain=(1.0-smoothstep(0.05,0.14,abs(p.x)))*smoothstep(0.5,0.08,abs(p.y))*0.58; gl_FragColor=vec4(mix(vec3(0.88,0.94,1.0),vec3(0.55,0.76,1.0),rainMode),mix(snow,rain,rainMode)); } }",
       transparent: true, depthTest: true, depthWrite: false,
       blending: THREE.AdditiveBlending, toneMapped: false
     });
@@ -7979,21 +8000,23 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     }
 
     async function checkSupport() {
+      const language = UI_TRANSLATIONS[languageSelect.value] ? languageSelect.value : "en";
+      const supportMessages = XR_SUPPORT_MESSAGES[language];
       if (!window.isSecureContext) {
-        enterButton.textContent = "HTTPS necessário";
-        setStatus("Abra esta página por HTTPS para usar WebXR.");
+        enterButton.textContent = supportMessages.https;
+        setStatus(supportMessages.httpsHint);
         return false;
       }
       if (!navigator.xr) {
-        enterButton.textContent = "WebXR indisponível";
-        setStatus("Use o Meta Quest Browser com WebXR habilitado.");
+        enterButton.textContent = supportMessages.unavailable;
+        setStatus(supportMessages.browserHint);
         return false;
       }
 
       const supported = await navigator.xr.isSessionSupported("immersive-ar");
       enterButton.disabled = true;
-      enterButton.textContent = supported ? "Preparando experiência…" : "AR não compatível";
-      if (!supported) setStatus("Este dispositivo não oferece sessões immersive-ar.");
+      enterButton.textContent = supported ? supportMessages.preparing : supportMessages.incompatible;
+      if (!supported) setStatus(supportMessages.unsupported);
       return supported;
     }
 
@@ -9251,7 +9274,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       updateVirtualHands(time);
       if (xrSession && weatherField.visible) {
         weatherMaterial.uniforms.time.value = time * 0.001;
-        weatherMaterial.uniforms.mode.value = weatherEffectSelect.value === "rain" ? 2 : 1;
+        weatherMaterial.uniforms.mode.value = weatherEffectSelect.value === "cosmic" ? 3 : weatherEffectSelect.value === "rain" ? 2 : 1;
         renderer.xr.getCamera(camera).getWorldPosition(weatherCenter);
         weatherField.position.copy(weatherCenter);
       }
@@ -9377,7 +9400,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     weatherEffectSelect.addEventListener("change", () => {
       localStorage.setItem(WEATHER_EFFECT_STORAGE_KEY, weatherEffectSelect.value);
       weatherField.visible = Boolean(xrSession) && weatherEffectSelect.value !== "none";
-      weatherMaterial.uniforms.mode.value = weatherEffectSelect.value === "rain" ? 2 : 1;
+      weatherMaterial.uniforms.mode.value = weatherEffectSelect.value === "cosmic" ? 3 : weatherEffectSelect.value === "rain" ? 2 : 1;
     });
     ambientAudioInput.addEventListener("change", () => {
       if (ambientAudioObjectUrl) URL.revokeObjectURL(ambientAudioObjectUrl);
