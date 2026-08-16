@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0"
 axum = { version = "0.8.9", features = ["http1", "json", "tokio"] }
+midly = "0.5.3"
 mime_guess = "2.0"
 notify = "8.2"
 rand = "0.9"

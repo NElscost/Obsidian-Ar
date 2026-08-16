@@ -168,13 +168,29 @@ tiny 24x14 edge-color samples generated once per second by the Rust bridge. For
 YouTube, the bridge reuses the same cached 720p MP4 prepared for playback, so no
 second download is required. The halo uses a soft environmental gradient and
 fades on the side facing the reading panel. Its rounded distance field avoids a
-rectangular glow edge. Optional snow and rain share a 320-particle GPU field, one draw call, depth
+rectangular glow edge. Optional snow, rain, and cosmic dust with occasional shooting stars share a 320-particle GPU field, one draw call, depth
 occlusion, and frustum culling; weather remains disabled by default and only runs
 inside AR. A user-selected ambient audio file loops during reading, pauses while
 note audio or video is playing, and resumes afterward. YouTube links written as Markdown
 links, embeds, or plain URLs become selectable media cards. The
 preprocessing queue prioritizes notes containing video, fenced code blocks, and
 LaTeX so their first open is less likely to interrupt XR.
+
+MIDI attachments can be presented as a lightweight Synthesia-style piano roll:
+
+````md
+```midiviz
+midi: Song.mid
+```
+````
+
+Opening the note only renders a selectable card. The Rust bridge parses the MIDI
+after that card is selected, caches the compact event list by file modification
+time and size, and performs the work outside the Quest thread. The AR panel uses
+one instanced keyboard and one instanced note mesh, displays at most 320 upcoming
+notes, and refreshes its temporal window only a few times per second. Closing or
+switching media disposes the panel immediately. This keeps MIDI independent from
+LaTeX, code, image, audio, and video rendering in the same note.
 
 The viewer starts in English and includes a language selector for Portuguese, Spanish, French, Italian, and Romanian.
 

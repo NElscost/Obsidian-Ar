@@ -20,6 +20,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use midly::{MetaMessage, MidiMessage, Smf, Timing, TrackEventKind};
 use notify::{RecursiveMode, Watcher};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -62,6 +63,7 @@ struct AppState {
     note_cache: Arc<RwLock<HashMap<String, CachedNote>>>,
     asset_cache: Arc<RwLock<HashMap<String, PathBuf>>>,
     waveform_cache: Arc<RwLock<HashMap<String, CachedWaveform>>>,
+    midi_cache: Arc<RwLock<HashMap<String, CachedMidi>>>,
     ambilight_cache: Arc<RwLock<HashMap<String, CachedAmbilight>>>,
     video_cache: Arc<RwLock<HashMap<String, CachedVideo>>>,
     media_tickets: Arc<RwLock<HashMap<String, MediaTicket>>>,
@@ -89,6 +91,12 @@ struct CachedWaveform {
     response: WaveformResponse,
 }
 
+#[derive(Clone)]
+struct CachedMidi {
+    modified: SystemTime,
+    size: u64,
+    response: MidiVizResponse,
+}
 #[derive(Clone)]
 struct CachedAmbilight {
     modified: SystemTime,
@@ -118,6 +126,7 @@ fn bridge_capabilities(_state: &AppState) -> Vec<&'static str> {
         "media-tickets",
         "youtube-video",
         "waveform",
+        "midi-viz",
         "video-ambilight",
     ]
 }
@@ -272,6 +281,25 @@ struct WaveformResponse {
     samples: Vec<u8>,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MidiVizNote {
+    pitch: u8,
+    start: f64,
+    duration: f64,
+    velocity: u8,
+    channel: u8,
+    track: u16,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MidiVizResponse {
+    title: String,
+    duration: f64,
+    track_count: usize,
+    notes: Vec<MidiVizNote>,
+}
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AmbilightResponse {
@@ -859,6 +887,8 @@ fn asset_extension_allowed(path: &Path) -> bool {
                 | "m4a"
                 | "m4v"
                 | "mov"
+                | "mid"
+                | "midi"
                 | "mp3"
                 | "mp4"
                 | "oga"
@@ -1477,6 +1507,215 @@ async fn read_waveform(
     Json(response).into_response()
 }
 
+fn parse_midi_file(path: &Path) -> Result<MidiVizResponse> {
+    let bytes = fs::read(path)?;
+    if bytes.len() > 16 * 1024 * 1024 {
+        bail!("MIDI exceeds the 16 MB safety limit.");
+    }
+    let smf = Smf::parse(&bytes).context("Invalid MIDI file.")?;
+    let ticks_per_beat = match smf.header.timing {
+        Timing::Metrical(value) => u64::from(value.as_int()),
+        Timing::Timecode(_, _) => bail!("SMPTE-timed MIDI is not supported yet."),
+    };
+    #[derive(Clone, Copy)]
+    struct RawNoteEvent {
+        tick: u64,
+        track: u16,
+        channel: u8,
+        pitch: u8,
+        velocity: u8,
+        on: bool,
+    }
+    let mut events = Vec::new();
+    let mut tempos = vec![(0_u64, 500_000_u32)];
+    let mut final_tick = 0_u64;
+    for (track_index, track) in smf.tracks.iter().enumerate() {
+        let mut tick = 0_u64;
+        for event in track {
+            tick = tick.saturating_add(u64::from(event.delta.as_int()));
+            final_tick = final_tick.max(tick);
+            match event.kind {
+                TrackEventKind::Meta(MetaMessage::Tempo(value)) => {
+                    tempos.push((tick, value.as_int()))
+                }
+                TrackEventKind::Midi { channel, message } => match message {
+                    MidiMessage::NoteOn { key, vel } => events.push(RawNoteEvent {
+                        tick,
+                        track: track_index as u16,
+                        channel: channel.as_int(),
+                        pitch: key.as_int(),
+                        velocity: vel.as_int(),
+                        on: vel.as_int() > 0,
+                    }),
+                    MidiMessage::NoteOff { key, .. } => events.push(RawNoteEvent {
+                        tick,
+                        track: track_index as u16,
+                        channel: channel.as_int(),
+                        pitch: key.as_int(),
+                        velocity: 0,
+                        on: false,
+                    }),
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+    }
+    tempos.sort_unstable_by_key(|entry| entry.0);
+    tempos.dedup_by(|left, right| {
+        if left.0 == right.0 {
+            left.1 = right.1;
+            true
+        } else {
+            false
+        }
+    });
+    let mut tempo_segments = Vec::with_capacity(tempos.len());
+    let mut segment_tick = 0_u64;
+    let mut segment_seconds = 0_f64;
+    let mut micros_per_beat = 500_000_u32;
+    for (tick, micros) in tempos {
+        segment_seconds += (tick.saturating_sub(segment_tick)) as f64 * micros_per_beat as f64
+            / ticks_per_beat as f64
+            / 1_000_000.0;
+        tempo_segments.push((tick, segment_seconds, micros));
+        segment_tick = tick;
+        micros_per_beat = micros;
+    }
+    let tick_seconds = |tick: u64| {
+        let mut segment = tempo_segments[0];
+        for candidate in &tempo_segments {
+            if candidate.0 > tick {
+                break;
+            }
+            segment = *candidate;
+        }
+        segment.1
+            + (tick.saturating_sub(segment.0)) as f64 * segment.2 as f64
+                / ticks_per_beat as f64
+                / 1_000_000.0
+    };
+    events.sort_unstable_by_key(|event| event.tick);
+    let mut active: HashMap<(u16, u8, u8), Vec<(u64, u8)>> = HashMap::new();
+    let mut notes = Vec::new();
+    for event in events {
+        let key = (event.track, event.channel, event.pitch);
+        if event.on {
+            active
+                .entry(key)
+                .or_default()
+                .push((event.tick, event.velocity));
+        } else if let Some(started) = active.get_mut(&key).and_then(Vec::pop) {
+            let start = tick_seconds(started.0);
+            let end = tick_seconds(event.tick.max(started.0 + 1));
+            notes.push(MidiVizNote {
+                pitch: event.pitch,
+                start,
+                duration: (end - start).max(0.02),
+                velocity: started.1,
+                channel: event.channel,
+                track: event.track,
+            });
+        }
+        if notes.len() > 50_000 {
+            bail!("MIDI exceeds the 50,000-note safety limit.");
+        }
+    }
+    for ((track, channel, pitch), starts) in active {
+        for (tick, velocity) in starts {
+            let start = tick_seconds(tick);
+            notes.push(MidiVizNote {
+                pitch,
+                start,
+                duration: (tick_seconds(final_tick) - start).max(0.02),
+                velocity,
+                channel,
+                track,
+            });
+        }
+    }
+    notes.sort_by(|left, right| left.start.total_cmp(&right.start));
+    let duration = notes
+        .iter()
+        .map(|note| note.start + note.duration)
+        .fold(0.0_f64, f64::max);
+    Ok(MidiVizResponse {
+        title: path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("MIDI")
+            .to_string(),
+        duration,
+        track_count: smf.tracks.len(),
+        notes,
+    })
+}
+
+async fn read_midi(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<AssetRequest>,
+) -> Response {
+    if !authorized(&headers, &state.token) {
+        return error(StatusCode::UNAUTHORIZED, "Token inválido.");
+    }
+    let note_path = normalize_note_path(&payload.note_path);
+    match note_is_allowed(&state, &note_path).await {
+        Ok(true) => {}
+        _ => return error(StatusCode::NOT_FOUND, "Nota não permitida."),
+    }
+    let path = match resolve_asset(&state, &note_path, &payload.asset_path).await {
+        Ok(path) => path,
+        Err(err) => return error(StatusCode::NOT_FOUND, err.to_string()),
+    };
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    if !extension.eq_ignore_ascii_case("mid") && !extension.eq_ignore_ascii_case("midi") {
+        return error(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "The selected asset is not a MIDI file.",
+        );
+    }
+    let metadata = match tokio::fs::metadata(&path).await {
+        Ok(metadata) => metadata,
+        Err(err) => return error(StatusCode::NOT_FOUND, err.to_string()),
+    };
+    let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+    let key = path.to_string_lossy().to_string();
+    if let Some(cached) = state
+        .midi_cache
+        .read()
+        .await
+        .get(&key)
+        .filter(|cached| cached.modified == modified && cached.size == metadata.len())
+        .cloned()
+    {
+        return Json(cached.response).into_response();
+    }
+    let parse_path = path.clone();
+    let response = match tokio::task::spawn_blocking(move || parse_midi_file(&parse_path)).await {
+        Ok(Ok(response)) => response,
+        Ok(Err(err)) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
+        Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    };
+    println!(
+        "[MIDI] visualization ready: {} notes, {:.1} s ({})",
+        response.notes.len(),
+        response.duration,
+        path.display()
+    );
+    state.midi_cache.write().await.insert(
+        key,
+        CachedMidi {
+            modified,
+            size: metadata.len(),
+            response: response.clone(),
+        },
+    );
+    Json(response).into_response()
+}
 async fn read_asset(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1988,6 +2227,7 @@ async fn main() -> Result<()> {
         note_cache: Default::default(),
         asset_cache: Default::default(),
         waveform_cache: Default::default(),
+        midi_cache: Default::default(),
         ambilight_cache: Default::default(),
         video_cache: Default::default(),
         media_tickets: Default::default(),
@@ -2021,6 +2261,7 @@ async fn main() -> Result<()> {
         .route("/youtube-ticket", post(create_youtube_ticket))
         .route("/media/{ticket}", get(read_media_ticket))
         .route("/waveform", post(read_waveform))
+        .route("/midi", post(read_midi))
         .route("/video-ambilight", post(read_video_ambilight))
         .route("/remote-image", post(read_remote_image))
         .layer(CompressionLayer::new())

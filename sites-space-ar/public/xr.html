@@ -527,6 +527,8 @@
     .note-content .note-music-abc svg path { fill:#eef5ff; }
     .note-content .note-music-abc svg text { fill:#eef5ff; }
     .note-content .note-music-abc-image { display:block; width:100%; height:auto; background:transparent; }
+.note-content .note-midi-viz { margin:10px 0; padding:14px 16px; border:1px solid rgba(117,167,255,.45); border-radius:12px; color:#dce8ff; background:linear-gradient(135deg,rgba(20,35,62,.86),rgba(7,13,24,.9)); cursor:pointer; }
+.note-content .note-midi-viz::before { content:"♪ Synthesia · "; color:#75a7ff; font-weight:700; }
     .note-content .note-smiles { margin:10px 0; padding:8px; border:1px solid rgba(99,230,190,.25); border-radius:10px; background:rgba(7,11,18,.82); break-inside:avoid; overflow:hidden; }
     .note-content .note-smiles canvas, .note-content .note-smiles svg, .note-content .note-smiles img { position:static; inset:auto; display:block; width:100%; height:auto; max-height:300px; object-fit:contain; }
     .note-content .note-avatar { display:flex; gap:14px; align-items:center; margin:10px 0; padding:10px; border-radius:14px; background:rgba(20,29,45,.72); break-inside:avoid; }
@@ -1249,7 +1251,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function preprocessNotePluginBlocks(source) {
       const markdown = String(source ?? "");
       let mediaSource = "";
-      return markdown.replace(/\x60\x60\x60(timestamp-url|timestamp|smiles|avatar|music-abc)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi,
+      return markdown.replace(/\x60\x60\x60(timestamp-url|timestamp|smiles|avatar|music-abc|midiviz)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi,
         (whole, rawKind, rawBody, offset) => {
           const kind = rawKind.toLowerCase();
           const body = rawBody.trim();
@@ -1269,6 +1271,10 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
             return '<div class="note-avatar ' + side + '" style="--avatar-size:' + size + 'px">' + image + '<div class="note-avatar-body">' + escapeNoteHtml(description) + '</div></div>';
           }
           if (kind === "music-abc") return '<div class="note-music-abc" data-note-abc="' + encodeURIComponent(body) + '">Loading score…</div>';
+          if (kind === "midiviz") {
+            const midiSource = body.split(/\r?\n/).map((line) => line.match(/^midi\s*:\s*(.+)$/i)?.[1]?.trim()).find(Boolean) || body.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
+            return '<div class="note-midi-viz" data-note-midi="' + encodeURIComponent(midiSource) + '">' + escapeNoteHtml(midiSource || "MIDI") + '</div>';
+          }
           if (kind === "smiles") return '<div class="note-smiles" data-note-smiles="' + encodeURIComponent(body) + '">SMILES: ' + escapeNoteHtml(body) + '</div>';
           if (kind === "timestamp-url") {
             mediaSource = body.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
@@ -2320,6 +2326,19 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let activeNoteAudioControl = null;
     let activeNoteVideoSurface = null;
     let activeNoteVideoGroup = null;
+    let midiVizGroup = null;
+    let midiVizNotesMesh = null;
+    let midiVizKeysMesh = null;
+    let midiVizData = null;
+    let midiVizSource = "";
+    let midiVizPlaying = false;
+    let midiVizStartedAt = 0;
+    let midiVizTimeOffset = 0;
+    let midiVizWindowOrigin = -1;
+    let midiVizLastKeyUpdate = 0;
+    const midiVizCache = new Map();
+    const MIDI_VIZ_MAX_INSTANCES = 320;
+    const MIDI_VIZ_LOOKAHEAD_SECONDS = 7;
     let activeNoteVideoTexture = null;
     let activeNoteVideoLayer = null;
     let activeNoteVideoLayerSession = null;
@@ -2499,6 +2518,145 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     }
 
 
+    function disposeMidiViz() {
+      if (!midiVizGroup) return;
+      const owned = new Set();
+      midiVizGroup.traverse((object) => owned.add(object));
+      arNoteControls = arNoteControls.filter((control) => !owned.has(control));
+      midiVizGroup.removeFromParent();
+      midiVizGroup.traverse((object) => {
+        object.geometry?.dispose?.();
+        object.material?.map?.dispose?.();
+        object.material?.dispose?.();
+      });
+      midiVizGroup = midiVizNotesMesh = midiVizKeysMesh = null;
+      midiVizData = null;
+      midiVizSource = "";
+      midiVizPlaying = false;
+      midiVizTimeOffset = 0;
+      midiVizWindowOrigin = -1;
+    }
+
+    function midiVizTitleTexture(data) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1024; canvas.height = 128;
+      const context = canvas.getContext("2d", { alpha: true });
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = "#eef5ff"; context.font = "600 42px system-ui";
+      context.fillText(String(data.title || "MIDI").slice(0, 36), 32, 54, 780);
+      context.fillStyle = "#91a4bf"; context.font = "26px system-ui";
+      context.fillText(`${data.notes.length} notes · ${formatAudioTime(data.duration)} · ${data.trackCount} tracks`, 32, 98);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace; texture.minFilter = THREE.LinearFilter; texture.generateMipmaps = false;
+      return texture;
+    }
+
+    function rebuildMidiVizWindow(currentTime) {
+      if (!midiVizData || !midiVizNotesMesh) return;
+      midiVizWindowOrigin = currentTime;
+      const matrix = new THREE.Matrix4();
+      const position = new THREE.Vector3();
+      const quaternion = new THREE.Quaternion();
+      const scale = new THREE.Vector3();
+      const speed = 0.052;
+      let count = 0;
+      for (const note of midiVizData.notes) {
+        if (note.start + note.duration < currentTime - 0.15) continue;
+        if (note.start > currentTime + MIDI_VIZ_LOOKAHEAD_SECONDS) break;
+        if (count >= MIDI_VIZ_MAX_INSTANCES) break;
+        const pitch = THREE.MathUtils.clamp(note.pitch, 21, 108) - 21;
+        const height = Math.max(0.006, note.duration * speed);
+        position.set(-AR_VIDEO_WIDTH / 2 + 0.025 + (pitch + 0.5) * (AR_VIDEO_WIDTH - 0.05) / 88, -AR_VIDEO_HEIGHT / 2 + 0.09 + (note.start - currentTime) * speed + height / 2, 0.018);
+        scale.set((AR_VIDEO_WIDTH - 0.05) / 88 * 0.82, height, 0.009);
+        matrix.compose(position, quaternion, scale);
+        midiVizNotesMesh.setMatrixAt(count, matrix);
+        midiVizNotesMesh.setColorAt(count, new THREE.Color().setHSL((note.channel % 12) / 12, 0.72, 0.62));
+        count += 1;
+      }
+      midiVizNotesMesh.count = count;
+      midiVizNotesMesh.position.y = 0;
+      midiVizNotesMesh.instanceMatrix.needsUpdate = true;
+      if (midiVizNotesMesh.instanceColor) midiVizNotesMesh.instanceColor.needsUpdate = true;
+    }
+
+    function updateMidiViz(time) {
+      if (!midiVizGroup || !midiVizData) return;
+      let current = midiVizTimeOffset;
+      if (midiVizPlaying) current += Math.max(0, time - midiVizStartedAt) / 1000;
+      if (current >= midiVizData.duration) {
+        current = 0; midiVizTimeOffset = 0; midiVizStartedAt = time;
+      }
+      if (midiVizWindowOrigin < 0 || Math.abs(current - midiVizWindowOrigin) > 0.35) rebuildMidiVizWindow(current);
+      if (midiVizNotesMesh) midiVizNotesMesh.position.y = -(current - midiVizWindowOrigin) * 0.052;
+      if (midiVizKeysMesh && time - midiVizLastKeyUpdate > 80) {
+        const active = new Set();
+        for (const note of midiVizData.notes) {
+          if (note.start > current) break;
+          if (note.start + note.duration >= current) active.add(note.pitch);
+        }
+        for (let index = 0; index < 88; index += 1) {
+          const pitch = index + 21;
+          const sharp = [1,3,6,8,10].includes(pitch % 12);
+          midiVizKeysMesh.setColorAt(index, new THREE.Color(active.has(pitch) ? 0x63e6be : sharp ? 0x172033 : 0xdce6f4));
+        }
+        midiVizKeysMesh.instanceColor.needsUpdate = true;
+        midiVizLastKeyUpdate = time;
+      }
+    }
+
+    function createMidiVizPanel(data, source) {
+      disposeMidiViz();
+      if (activeNoteVideoGroup) closeActiveVideo(true);
+      midiVizData = data; midiVizSource = source; midiVizPlaying = true; midiVizStartedAt = performance.now();
+      midiVizGroup = new THREE.Group();
+      const angle = THREE.MathUtils.degToRad(14);
+      const radius = Math.abs(AR_VIDEO_CENTER_X) / Math.sin(angle);
+      midiVizGroup.position.set(AR_VIDEO_CENTER_X, 0, radius * (1 - Math.cos(angle)));
+      midiVizGroup.rotation.y = angle;
+      const panel = new THREE.Mesh(curvedPanelGeometry(AR_VIDEO_WIDTH, AR_VIDEO_HEIGHT, 0.018, 18), new THREE.MeshBasicMaterial({ color:0x070d18, transparent:true, opacity:0.94, depthTest:true, depthWrite:true, toneMapped:false }));
+      panel.raycast = () => {};
+      const title = new THREE.Mesh(new THREE.PlaneGeometry(AR_VIDEO_WIDTH - 0.07, 0.075), new THREE.MeshBasicMaterial({ map:midiVizTitleTexture(data), transparent:true, depthTest:true, toneMapped:false }));
+      title.position.set(0, AR_VIDEO_HEIGHT / 2 - 0.055, 0.012); title.raycast = () => {};
+      const keyGeometry = new THREE.BoxGeometry(1, 1, 1);
+      midiVizKeysMesh = new THREE.InstancedMesh(keyGeometry, new THREE.MeshBasicMaterial({ vertexColors:true, toneMapped:false }), 88);
+      const matrix = new THREE.Matrix4(); const position = new THREE.Vector3(); const quaternion = new THREE.Quaternion(); const scale = new THREE.Vector3();
+      for (let index = 0; index < 88; index += 1) {
+        const pitch = index + 21; const sharp = [1,3,6,8,10].includes(pitch % 12);
+        position.set(-AR_VIDEO_WIDTH / 2 + 0.025 + (index + 0.5) * (AR_VIDEO_WIDTH - 0.05) / 88, -AR_VIDEO_HEIGHT / 2 + (sharp ? 0.052 : 0.043), sharp ? 0.022 : 0.014);
+        scale.set((AR_VIDEO_WIDTH - 0.05) / 88 * 0.9, sharp ? 0.052 : 0.072, 0.012); matrix.compose(position, quaternion, scale);
+        midiVizKeysMesh.setMatrixAt(index, matrix); midiVizKeysMesh.setColorAt(index, new THREE.Color(sharp ? 0x172033 : 0xdce6f4));
+      }
+      midiVizKeysMesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+      midiVizNotesMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshBasicMaterial({ vertexColors:true, toneMapped:false }), MIDI_VIZ_MAX_INSTANCES);
+      midiVizNotesMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      const close = new THREE.Mesh(new THREE.CircleGeometry(0.019,14), new THREE.MeshBasicMaterial({ color:0xff6b6b, toneMapped:false }));
+      close.position.set(AR_VIDEO_WIDTH/2-0.028,AR_VIDEO_HEIGHT/2-0.028,0.025); close.userData.noteAction="midi-close";
+      const toggle = new THREE.Mesh(new THREE.CircleGeometry(0.019,14), new THREE.MeshBasicMaterial({ color:0x63e6be, toneMapped:false }));
+      toggle.position.set(-AR_VIDEO_WIDTH/2+0.028,AR_VIDEO_HEIGHT/2-0.028,0.025); toggle.userData.noteAction="midi-toggle";
+      midiVizGroup.add(panel,title,midiVizNotesMesh,midiVizKeysMesh,close,toggle);
+      arNoteGroup.add(midiVizGroup); arNoteControls.push(close,toggle);
+      rebuildMidiVizWindow(0);
+    }
+
+    async function openMidiViz(source) {
+      if (midiVizGroup && midiVizSource === source) {
+        if (midiVizPlaying) midiVizTimeOffset += Math.max(0, performance.now() - midiVizStartedAt) / 1000;
+        midiVizPlaying = !midiVizPlaying; midiVizStartedAt = performance.now(); return;
+      }
+      const config = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
+      if (!config?.url || !config?.token) throw new Error("The Obsidian bridge is not configured.");
+      const key = `${arNotePath}\n${source}`;
+      let data = midiVizCache.get(key);
+      if (!data) {
+        setXrMessage("Preparing MIDI outside the Quest main thread…");
+        const response = await fetchBridge(config, "/midi", { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ notePath:arNotePath, assetPath:source }) });
+        if (!response.ok) throw new Error((await response.json().catch(()=>null))?.error || `HTTP ${response.status}`);
+        data = await response.json();
+        midiVizCache.set(key, data);
+      }
+      createMidiVizPanel(data, source);
+      setXrMessage(`Synthesia ready: ${data.notes.length} notes.`);
+    }
     function releaseActiveMedia() {
       if (activeNoteAudio) {
         activeNoteAudio.pause();
@@ -2575,6 +2733,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       const preservedVideoCloseControl = preserveVideo ? activeNoteVideoCloseControl : null;
       if (preservedVideoGroup) preservedVideoGroup.removeFromParent();
 
+      disposeMidiViz();
       disposeArDashboard();
       audioWaveformGeneration += 1;
       noteVideoPreparationGeneration += 1;
@@ -3283,7 +3442,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       const contentHeight = Math.max(1, noteContent.scrollHeight);
       const atoms = [];
       for (const element of noteContent.querySelectorAll(
-        "img, table, .note-video-card, .note-timestamp-card, .note-smiles, .note-music-abc, .note-audio-card, .obsidian-callout"
+        "img, table, .note-video-card, .note-timestamp-card, .note-smiles, .note-music-abc, .note-midi-viz, .note-audio-card, .obsidian-callout"
       )) {
         const bounds = element.getBoundingClientRect();
         const height = bounds.height;
@@ -3345,7 +3504,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       }
       for (const page of pages) page.mediaHotspots = [];
       for (const element of noteContent.querySelectorAll(
-        ".note-audio-card, .note-video-card, .note-timestamp-card, .note-music-abc"
+        ".note-audio-card, .note-video-card, .note-timestamp-card, .note-music-abc, .note-midi-viz"
       )) {
         const bounds = element.getBoundingClientRect();
         const top = bounds.top - noteBounds.top;
@@ -3357,11 +3516,15 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         if (!page) continue;
         const kind = element.matches(".note-music-abc")
           ? "music-abc"
+          : element.matches(".note-midi-viz")
+            ? "midi-viz"
           : element.matches(".note-timestamp-card")
             ? "timestamp"
             : element.matches(".note-video-card") ? "video" : "audio";
         const encoded = kind === "music-abc"
           ? element.dataset.noteAbc
+          : kind === "midi-viz"
+            ? element.dataset.noteMidi
           : kind === "timestamp"
             ? element.dataset.timestampSource
             : element.dataset[kind === "video" ? "noteVideoSource" : "noteAudioSource"];
@@ -3956,6 +4119,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         control.userData.noteAction = `media-track:${encodeURIComponent(hotspot.source)}`;
         if (hotspot.kind === "music-abc") {
           control.userData.noteAction = `music-abc:${encodeURIComponent(hotspot.source)}`;
+        } else if (hotspot.kind === "midi-viz") {
+          control.userData.noteAction = `midi-viz:${encodeURIComponent(hotspot.source)}`;
         }
         control.userData.highlightScale = false;
         arNoteGroup.add(control);
@@ -4981,6 +5146,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     }
 
     function clearActiveNoteMediaForSwitch() {
+      disposeMidiViz();
       clearAbcPlaybackHighlight();
       activeAbcSynth?.stop?.();
       activeAbcSynth = null;
@@ -5305,6 +5471,17 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       }
       if (action === "audio") {
         void toggleNoteAudio();
+        return;
+      }
+      if (action === "midi-close") { disposeMidiViz(); setXrMessage("Synthesia closed."); return; }
+      if (action === "midi-toggle") {
+        if (midiVizPlaying) midiVizTimeOffset += Math.max(0, performance.now() - midiVizStartedAt) / 1000;
+        midiVizPlaying = !midiVizPlaying; midiVizStartedAt = performance.now();
+        setXrMessage(midiVizPlaying ? "Synthesia playing." : "Synthesia paused."); return;
+      }
+      if (action.startsWith("midi-viz:")) {
+        let source = action.slice("midi-viz:".length); try { source = decodeURIComponent(source); } catch {}
+        void openMidiViz(source).catch((error) => { console.warn("MIDI visualization failed.", error); setXrMessage(`Could not open MIDI: ${error.message}`); });
         return;
       }
       if (action.startsWith("music-abc:")) {
@@ -9281,6 +9458,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       if (isPlaced) synapsePulseTime.value = time * 0.001;
       updateVideoAmbilight(time);
       updateAbcHighlightPulse(time);
+      updateMidiViz(time);
       if (forceGraph && dynamicGraphTicking) {
         forceGraph.tickFrame();
         syncDynamicNodeProxies();
