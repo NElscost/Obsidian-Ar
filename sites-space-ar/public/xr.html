@@ -2328,6 +2328,10 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let activeNoteVideoGroup = null;
     let midiVizGroup = null;
     let midiVizNotesMesh = null;
+    let midiVizRollCanvas = null;
+    let midiVizRollTexture = null;
+    let midiVizRollSurface = null;
+    let midiVizLastRollDraw = 0;
     let midiVizKeysMesh = null;
     let midiVizData = null;
     let midiVizSource = "";
@@ -2608,8 +2612,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         audioWaveformTexture?.dispose?.(); audioWaveformGroup = audioWaveformTexture = audioWaveformPlayhead = null;
         audioWaveformWidth = audioWaveformDuration = 0; audioBookmarkMeshes = [];
       }
-      midiVizGroup = midiVizScoreGroup = midiVizNotesMesh = midiVizKeysMesh = midiVizScorePlayhead = midiVizScoreHighlight = null;
-      midiVizScoreTexture = midiVizAudioMaster = midiVizAudioPanner = null; midiVizVoices = [];
+      midiVizGroup = midiVizScoreGroup = midiVizNotesMesh = midiVizKeysMesh = midiVizScorePlayhead = midiVizScoreHighlight = midiVizRollSurface = null;
+      midiVizScoreTexture = midiVizRollTexture = midiVizAudioMaster = midiVizAudioPanner = null; midiVizRollCanvas = null; midiVizVoices = [];
       midiVizData = null; midiVizSource = ''; midiVizPlaying = false; midiVizTimeOffset = 0;
       midiVizWindowOrigin = midiVizScoreWindow = -1; midiVizAudioCursor = 0; midiVizAudioStartedAt = 0; midiVizPreviousTime = 0;
       if (activeNoteTrack?.kind === 'midi-viz') activeNoteTrack = null;
@@ -2629,31 +2633,35 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       return texture;
     }
 
-    function rebuildMidiVizWindow(currentTime) {
-      if (!midiVizData || !midiVizNotesMesh) return;
-      midiVizWindowOrigin = currentTime;
-      const matrix = new THREE.Matrix4(), position = new THREE.Vector3(), quaternion = new THREE.Quaternion(), scale = new THREE.Vector3();
-      const palette = [0x64d8ff,0x63e6be,0xffd166,0xff8fab,0xc18cff,0xffa45b,0x75a7ff,0x8be9fd];
-      const speed = 0.052, floor = -AR_VIDEO_HEIGHT / 2 + 0.092, ceiling = AR_VIDEO_HEIGHT / 2 - 0.092;
-      let count = 0;
-      for (const note of midiVizData.notes) {
-        const visibleStart = Math.max(Number(note.start) || 0, currentTime);
-        const visibleEnd = Math.min((Number(note.start) || 0) + Math.min(Number(note.duration) || 0.08, MIDI_VIZ_MAX_DISPLAY_DURATION), currentTime + MIDI_VIZ_LOOKAHEAD_SECONDS);
-        if (visibleEnd <= currentTime) continue;
-        if (visibleStart > currentTime + MIDI_VIZ_LOOKAHEAD_SECONDS) break;
-        if (count >= MIDI_VIZ_MAX_INSTANCES) break;
-        const pitch = THREE.MathUtils.clamp(note.pitch, 21, 108) - 21;
-        const bottom = THREE.MathUtils.clamp(floor + (visibleStart - currentTime) * speed, floor, ceiling);
-        const top = THREE.MathUtils.clamp(floor + (visibleEnd - currentTime) * speed, floor, ceiling);
-        const height = Math.max(0.005, top - bottom);
-        position.set(-AR_VIDEO_WIDTH/2 + 0.025 + (pitch+0.5)*(AR_VIDEO_WIDTH-0.05)/88, bottom + height/2, 0.018);
-        scale.set((AR_VIDEO_WIDTH-0.05)/88*0.84, height, 0.009); matrix.compose(position, quaternion, scale);
-        midiVizNotesMesh.setMatrixAt(count, matrix); midiVizNotesMesh.setColorAt(count, new THREE.Color(palette[(note.channel || 0) % palette.length])); count++;
+    function drawMidiVizRoll(currentTime, force = false) {
+      if (!midiVizRollCanvas || !midiVizRollTexture || !midiVizData) return;
+      const now=performance.now(); if(!force&&now-midiVizLastRollDraw<80)return; midiVizLastRollDraw=now;
+      midiVizWindowOrigin=currentTime;
+      const canvas=midiVizRollCanvas,context=canvas.getContext('2d',{alpha:false}),width=canvas.width,height=canvas.height;
+      const left=18,right=width-18,top=72,keyTop=height-92,keyBottom=height-14,keyWidth=(right-left)/88;
+      const palette=['#64d8ff','#63e6be','#ffd166','#ff8fab','#c18cff','#ffa45b','#75a7ff','#8be9fd'];
+      context.fillStyle='#070d18';context.fillRect(0,0,width,height);
+      context.strokeStyle='rgba(145,164,191,.16)';context.lineWidth=1;
+      for(let row=0;row<5;row++){const y=top+(keyTop-top)*row/4;context.beginPath();context.moveTo(left,y);context.lineTo(right,y);context.stroke();}
+      const active=new Set();
+      for(const note of midiVizData.notes){
+        const start=Number(note.start)||0,duration=Math.min(Number(note.duration)||0.08,MIDI_VIZ_MAX_DISPLAY_DURATION),end=start+duration;
+        if(start>currentTime+MIDI_VIZ_LOOKAHEAD_SECONDS)break;
+        if(end<currentTime)continue;
+        const pitch=THREE.MathUtils.clamp(note.pitch,21,108)-21,visibleStart=Math.max(start,currentTime),visibleEnd=Math.min(end,currentTime+MIDI_VIZ_LOOKAHEAD_SECONDS);
+        const yBottom=keyTop-(visibleStart-currentTime)/MIDI_VIZ_LOOKAHEAD_SECONDS*(keyTop-top),yTop=keyTop-(visibleEnd-currentTime)/MIDI_VIZ_LOOKAHEAD_SECONDS*(keyTop-top);
+        const x=left+pitch*keyWidth+Math.max(1,keyWidth*.08),barWidth=Math.max(2,keyWidth*.84);
+        context.fillStyle=palette[(note.channel||0)%palette.length];context.fillRect(x,yTop,barWidth,Math.max(3,yBottom-yTop));
+        if(start<=currentTime&&end>=currentTime)active.add(note.pitch);
       }
-      midiVizNotesMesh.count = count; midiVizNotesMesh.position.y = 0; midiVizNotesMesh.instanceMatrix.needsUpdate = true;
-      if (midiVizNotesMesh.instanceColor) midiVizNotesMesh.instanceColor.needsUpdate = true;
+      for(let index=0;index<88;index++){const pitch=index+21,sharp=[1,3,6,8,10].includes(pitch%12),x=left+index*keyWidth;
+        context.fillStyle=active.has(pitch)?'#ffd166':sharp?'#385070':'#e8f1ff';context.fillRect(x+0.5,keyTop+(sharp?0:12),Math.max(1,keyWidth-1),keyBottom-keyTop-(sharp?24:12));
+        context.strokeStyle=sharp?'#172033':'#91a4bf';context.strokeRect(x+0.5,keyTop+(sharp?0:12),Math.max(1,keyWidth-1),keyBottom-keyTop-(sharp?24:12));}
+      context.fillStyle='#91a4bf';context.font='18px system-ui';context.textAlign='right';context.fillText(formatAudioTime(currentTime),right,48);
+      midiVizRollTexture.needsUpdate=true;
     }
 
+    function rebuildMidiVizWindow(currentTime) { drawMidiVizRoll(currentTime,true); }
     function drawMidiVizScore(currentTime, force = false) {
       if (!midiVizScoreTexture || !midiVizData) return;
       const page = Math.floor(currentTime / 8); if (!force && page === midiVizScoreWindow) return; midiVizScoreWindow = page;
@@ -2679,9 +2687,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function createMidiVizScorePanel(data) {
       const canvas=document.createElement('canvas'); canvas.width=1024; canvas.height=600;
       midiVizScoreTexture=new THREE.CanvasTexture(canvas); midiVizScoreTexture.colorSpace=THREE.SRGBColorSpace; midiVizScoreTexture.minFilter=THREE.LinearFilter; midiVizScoreTexture.generateMipmaps=false;
-      midiVizScoreGroup=new THREE.Group(); const x=AR_VIDEO_CENTER_X*2, angle=THREE.MathUtils.degToRad(27), radius=Math.abs(x)/Math.sin(angle);
+      midiVizScoreGroup=new THREE.Group(); const x=AR_VIDEO_CENTER_X*2, angle=THREE.MathUtils.degToRad(30), radius=Math.abs(x)/Math.sin(angle);
       midiVizScoreGroup.position.set(x,0,radius*(1-Math.cos(angle))); midiVizScoreGroup.rotation.y=angle;
-      const panel=new THREE.Mesh(curvedPanelGeometry(AR_VIDEO_WIDTH,AR_VIDEO_HEIGHT,0.018,18),new THREE.MeshBasicMaterial({map:midiVizScoreTexture,transparent:false,depthTest:true,depthWrite:true,toneMapped:false}));
+      const panel=new THREE.Mesh(curvedPanelGeometry(AR_VIDEO_WIDTH,AR_VIDEO_HEIGHT,0.022,24),new THREE.MeshBasicMaterial({map:midiVizScoreTexture,transparent:false,depthTest:true,depthWrite:true,toneMapped:false}));
       panel.raycast=()=>{};
       midiVizScorePlayhead = new THREE.Mesh(new THREE.PlaneGeometry(0.0035, AR_VIDEO_HEIGHT * 0.7), new THREE.MeshBasicMaterial({ color:0x63e6be, transparent:true, opacity:0.7, depthTest:false, depthWrite:false, toneMapped:false }));
       midiVizScorePlayhead.position.z=0.024; midiVizScorePlayhead.renderOrder=1011; midiVizScorePlayhead.raycast=()=>{};
@@ -2716,9 +2724,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function updateMidiViz(time) {
       if (!midiVizGroup || !midiVizData) return;
       let current=midiVizCurrentTime(time);
-      if(current>=midiVizData.duration){current=0;midiVizTimeOffset=0;midiVizStartedAt=time;resetMidiVizAudioCursor(0);}
-      if(midiVizWindowOrigin<0||Math.abs(current-midiVizWindowOrigin)>0.35)rebuildMidiVizWindow(current);
-      if(midiVizNotesMesh)midiVizNotesMesh.position.y=-(current-midiVizWindowOrigin)*0.052;
+      if(current>=midiVizData.duration){current=0;midiVizTimeOffset=0;midiVizStartedAt=time;midiVizAudioStartedAt=midiVizAudioMaster?.context?.currentTime??0;resetMidiVizAudioCursor(0);}
+      drawMidiVizRoll(current);
       drawMidiVizScore(current);
       updateMidiVizScoreHighlight(current,time);
       if(midiVizPlaying){
@@ -2727,7 +2734,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         let fired=0;while(midiVizAudioCursor<midiVizData.notes.length&&fired<20){const note=midiVizData.notes[midiVizAudioCursor];if(note.start>current+audioLookAhead)break;if(note.start>=midiVizPreviousTime-0.01){triggerMidiVizNote(note,note.start-current);fired++;}midiVizAudioCursor++;}
       }
       midiVizPreviousTime=current;
-      if(midiVizKeysMesh&&time-midiVizLastKeyUpdate>80){const active=new Set();for(const note of midiVizData.notes){if(note.start>current)break;if(note.start+Math.min(note.duration,MIDI_VIZ_MAX_DISPLAY_DURATION)>=current)active.add(note.pitch);}for(let index=0;index<88;index++){const pitch=index+21,sharp=[1,3,6,8,10].includes(pitch%12);midiVizKeysMesh.setColorAt(index,new THREE.Color(active.has(pitch)?0xffd166:sharp?0x385070:0xe8f1ff));}if(midiVizKeysMesh.instanceColor)midiVizKeysMesh.instanceColor.needsUpdate=true;midiVizLastKeyUpdate=time;}
+
     }
 
     function setMidiVizPlaying(playing) {
@@ -2740,15 +2747,14 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function createMidiVizPanel(data, source) {
       disposeMidiViz(); if(activeNoteVideoGroup)closeActiveVideo(true);
       midiVizData=data;midiVizSource=source;midiVizPlaying=false;midiVizStartedAt=performance.now();activeNoteTrack={kind:'midi-viz',source,label:data.title||source};activeNoteMediaPath=arNotePath;
-      midiVizGroup=new THREE.Group();const angle=THREE.MathUtils.degToRad(14),radius=Math.abs(AR_VIDEO_CENTER_X)/Math.sin(angle);midiVizGroup.position.set(AR_VIDEO_CENTER_X,0,radius*(1-Math.cos(angle)));midiVizGroup.rotation.y=angle;
-      const panel=new THREE.Mesh(curvedPanelGeometry(AR_VIDEO_WIDTH,AR_VIDEO_HEIGHT,0.018,18),new THREE.MeshBasicMaterial({color:0x070d18,transparent:false,depthTest:true,depthWrite:true,toneMapped:false}));panel.raycast=()=>{};
-      const title=new THREE.Mesh(new THREE.PlaneGeometry(AR_VIDEO_WIDTH-0.07,0.075),new THREE.MeshBasicMaterial({map:midiVizTitleTexture(data),transparent:false,depthTest:false,depthWrite:false,toneMapped:false}));title.position.set(0,AR_VIDEO_HEIGHT/2-0.055,0.025);title.renderOrder=1004;title.raycast=()=>{};
-      const matrix=new THREE.Matrix4(),position=new THREE.Vector3(),quaternion=new THREE.Quaternion(),scale=new THREE.Vector3();midiVizKeysMesh=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),new THREE.MeshBasicMaterial({vertexColors:true,color:0xffffff,depthTest:false,depthWrite:false,toneMapped:false}),88);
-      for(let index=0;index<88;index++){const pitch=index+21,sharp=[1,3,6,8,10].includes(pitch%12);position.set(-AR_VIDEO_WIDTH/2+0.025+(index+0.5)*(AR_VIDEO_WIDTH-0.05)/88,-AR_VIDEO_HEIGHT/2+(sharp?0.052:0.043),sharp?0.022:0.014);scale.set((AR_VIDEO_WIDTH-0.05)/88*0.9,sharp?0.052:0.072,0.012);matrix.compose(position,quaternion,scale);midiVizKeysMesh.setMatrixAt(index,matrix);midiVizKeysMesh.setColorAt(index,new THREE.Color(sharp?0x385070:0xe8f1ff));}midiVizKeysMesh.renderOrder=1002;midiVizKeysMesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);midiVizKeysMesh.instanceMatrix.needsUpdate=true;if(midiVizKeysMesh.instanceColor)midiVizKeysMesh.instanceColor.needsUpdate=true;
-      midiVizNotesMesh=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),new THREE.MeshBasicMaterial({vertexColors:true,color:0xffffff,depthTest:false,depthWrite:false,toneMapped:false}),MIDI_VIZ_MAX_INSTANCES);midiVizNotesMesh.renderOrder=1003;midiVizNotesMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      midiVizGroup=new THREE.Group();const angle=THREE.MathUtils.degToRad(15),radius=Math.abs(AR_VIDEO_CENTER_X)/Math.sin(angle);midiVizGroup.position.set(AR_VIDEO_CENTER_X,0,radius*(1-Math.cos(angle)));midiVizGroup.rotation.y=angle;
+      midiVizRollCanvas=document.createElement('canvas');midiVizRollCanvas.width=768;midiVizRollCanvas.height=512;
+      midiVizRollTexture=new THREE.CanvasTexture(midiVizRollCanvas);midiVizRollTexture.colorSpace=THREE.SRGBColorSpace;midiVizRollTexture.minFilter=THREE.LinearFilter;midiVizRollTexture.magFilter=THREE.LinearFilter;midiVizRollTexture.generateMipmaps=false;
+      midiVizRollSurface=new THREE.Mesh(curvedPanelGeometry(AR_VIDEO_WIDTH,AR_VIDEO_HEIGHT,0.022,24),new THREE.MeshBasicMaterial({map:midiVizRollTexture,transparent:false,depthTest:true,depthWrite:true,toneMapped:false}));midiVizRollSurface.raycast=()=>{};
+      const title=new THREE.Mesh(new THREE.PlaneGeometry(AR_VIDEO_WIDTH-0.07,0.075),new THREE.MeshBasicMaterial({map:midiVizTitleTexture(data),transparent:false,depthTest:false,depthWrite:false,toneMapped:false}));title.position.set(0,AR_VIDEO_HEIGHT/2-0.055,0.028);title.renderOrder=1004;title.raycast=()=>{};
       const close=new THREE.Mesh(new THREE.CircleGeometry(0.019,14),new THREE.MeshBasicMaterial({color:0xff6b6b,toneMapped:false}));close.position.set(AR_VIDEO_WIDTH/2-0.028,AR_VIDEO_HEIGHT/2-0.028,0.03);close.userData.noteAction='midi-close';
       const toggle=new THREE.Mesh(new THREE.CircleGeometry(0.019,14),new THREE.MeshBasicMaterial({color:0x63e6be,toneMapped:false}));toggle.position.set(-AR_VIDEO_WIDTH/2+0.028,AR_VIDEO_HEIGHT/2-0.028,0.03);toggle.userData.noteAction='midi-toggle';
-      midiVizGroup.add(panel,title,midiVizNotesMesh,midiVizKeysMesh,close,toggle);arNoteGroup.add(midiVizGroup);arNoteControls.push(close,toggle);createMidiVizScorePanel(data);rebuildMidiVizWindow(0);resetMidiVizAudioCursor(0);
+      midiVizGroup.add(midiVizRollSurface,title,close,toggle);arNoteGroup.add(midiVizGroup);arNoteControls.push(close,toggle);createMidiVizScorePanel(data);rebuildMidiVizWindow(0);resetMidiVizAudioCursor(0);
       createArAudioWaveform(midiVizWaveform(data),AR_VIDEO_WIDTH,AR_VIDEO_HEIGHT);void ensureMidiVizAudio().then(()=>{setMidiVizPlaying(true);syncAmbientAudio();});
     }
 
