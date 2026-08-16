@@ -1144,6 +1144,10 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         arNoteGroup.add(abcPlaybackHighlight);
       }
       const bounds = activeAbcTimingBounds;
+      const scoreX1 = Number.isFinite(hotspot.scoreX1) ? hotspot.scoreX1 : hotspot.x1;
+      const scoreX2 = Number.isFinite(hotspot.scoreX2) ? hotspot.scoreX2 : hotspot.x2;
+      const scoreY1 = Number.isFinite(hotspot.scoreY1) ? hotspot.scoreY1 : hotspot.y1;
+      const scoreY2 = Number.isFinite(hotspot.scoreY2) ? hotspot.scoreY2 : hotspot.y2;
       const eventWidth = Math.max(1, Number(event.width) || 1);
       const eventHeight = Math.max(1, Number(event.height) || 1);
       const normalizedX = THREE.MathUtils.clamp(
@@ -1154,15 +1158,15 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       );
       const width = Math.max(
         0.012,
-        (eventWidth / bounds.width) * (hotspot.x2 - hotspot.x1) * AR_NOTE_WIDTH
+        (eventWidth / bounds.width) * (scoreX2 - scoreX1) * AR_NOTE_WIDTH
       );
       const height = Math.max(
         0.018,
-        (eventHeight / bounds.height) * (hotspot.y2 - hotspot.y1) * AR_NOTE_HEIGHT
+        (eventHeight / bounds.height) * (scoreY2 - scoreY1) * AR_NOTE_HEIGHT
       );
       abcPlaybackHighlight.position.set(
-        (hotspot.x1 + normalizedX * (hotspot.x2 - hotspot.x1) - 0.5) * AR_NOTE_WIDTH,
-        (hotspot.y2 - normalizedY * (hotspot.y2 - hotspot.y1) - 0.5) * AR_NOTE_HEIGHT,
+        (scoreX1 + normalizedX * (scoreX2 - scoreX1) - 0.5) * AR_NOTE_WIDTH,
+        (scoreY2 - normalizedY * (scoreY2 - scoreY1) - 0.5) * AR_NOTE_HEIGHT,
         0.082
       );
       abcPlaybackHighlight.scale.set(width, height, 1);
@@ -3246,6 +3250,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
             : element.dataset[kind === "video" ? "noteVideoSource" : "noteAudioSource"];
         let source = encoded || "";
         try { source = decodeURIComponent(source); } catch {}
+        const scoreBounds = kind === "music-abc"
+          ? element.querySelector(".note-music-abc-image, svg")?.getBoundingClientRect()
+          : null;
         page.mediaHotspots.push({
           kind,
           source,
@@ -3255,7 +3262,19 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           x1: THREE.MathUtils.clamp((62 + bounds.left - noteBounds.left) / 1024, 0, 1),
           x2: THREE.MathUtils.clamp((62 + bounds.right - noteBounds.left) / 1024, 0, 1),
           y1: THREE.MathUtils.clamp(1 - (108 + bottom - page.top) / 768, 0, 1),
-          y2: THREE.MathUtils.clamp(1 - (108 + top - page.top) / 768, 0, 1)
+          y2: THREE.MathUtils.clamp(1 - (108 + top - page.top) / 768, 0, 1),
+          scoreX1: scoreBounds
+            ? THREE.MathUtils.clamp((62 + scoreBounds.left - noteBounds.left) / 1024, 0, 1)
+            : null,
+          scoreX2: scoreBounds
+            ? THREE.MathUtils.clamp((62 + scoreBounds.right - noteBounds.left) / 1024, 0, 1)
+            : null,
+          scoreY1: scoreBounds
+            ? THREE.MathUtils.clamp(1 - (108 + scoreBounds.bottom - noteBounds.top - page.top) / 768, 0, 1)
+            : null,
+          scoreY2: scoreBounds
+            ? THREE.MathUtils.clamp(1 - (108 + scoreBounds.top - noteBounds.top - page.top) / 768, 0, 1)
+            : null
         });
       }
     }
@@ -5388,7 +5407,14 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       if (cachedPages) {
         arNotePages = cachedPages;
         const hasMediaHotspotMetadata = arNotePages.every((page) =>
-          Array.isArray(page?.mediaHotspots)
+          Array.isArray(page?.mediaHotspots) &&
+          page.mediaHotspots.every((hotspot) =>
+            hotspot.kind !== "music-abc" ||
+            (Number.isFinite(hotspot.scoreX1) &&
+              Number.isFinite(hotspot.scoreX2) &&
+              Number.isFinite(hotspot.scoreY1) &&
+              Number.isFinite(hotspot.scoreY2))
+          )
         );
         if (!hasMediaHotspotMetadata) {
           // Legacy/session entries without metadata are rebuilt once from this
