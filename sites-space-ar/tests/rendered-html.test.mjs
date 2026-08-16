@@ -634,4 +634,9 @@ test("reproduz MIDI com transporte leve, waveform e partitura lateral", async ()
   assert.match(html, /MIDI_VIZ_MAX_DISPLAY_DURATION = 4/);
   assert.match(html, /belongsToMidi/);
   assert.match(html, /activeNoteTrack\?\.kind === "midi-viz"/);
+  assert.match(html, /audioLookAhead=0\.11/);
+  assert.match(html, /function updateMidiVizScoreHighlight/);
+  assert.match(html, /midiVizScoreHighlight/);
+  assert.match(html, /midiVizKeysMesh\.renderOrder=1002/);
+  assert.match(html, /midiVizNotesMesh\.renderOrder=1003/);
 });
