@@ -287,6 +287,8 @@ struct MidiVizNote {
     pitch: u8,
     start: f64,
     duration: f64,
+    start_beat: f64,
+    duration_beats: f64,
     velocity: u8,
     channel: u8,
     track: u16,
@@ -298,6 +300,8 @@ struct MidiVizResponse {
     title: String,
     duration: f64,
     track_count: usize,
+    beats_per_measure: u8,
+    beat_unit: u8,
     notes: Vec<MidiVizNote>,
 }
 #[derive(Clone, Serialize)]
@@ -1529,6 +1533,8 @@ fn parse_midi_file(path: &Path) -> Result<MidiVizResponse> {
     let mut events = Vec::new();
     let mut tempos = vec![(0_u64, 500_000_u32)];
     let mut final_tick = 0_u64;
+    let mut beats_per_measure = 4_u8;
+    let mut beat_unit = 4_u8;
     for (track_index, track) in smf.tracks.iter().enumerate() {
         let mut tick = 0_u64;
         for event in track {
@@ -1537,6 +1543,10 @@ fn parse_midi_file(path: &Path) -> Result<MidiVizResponse> {
             match event.kind {
                 TrackEventKind::Meta(MetaMessage::Tempo(value)) => {
                     tempos.push((tick, value.as_int()))
+                }
+                TrackEventKind::Meta(MetaMessage::TimeSignature(numerator, denominator, _, _)) => {
+                    beats_per_measure = numerator.max(1);
+                    beat_unit = 2_u8.saturating_pow(u32::from(denominator.min(6)));
                 }
                 TrackEventKind::Midi { channel, message } => match message {
                     MidiMessage::NoteOn { key, vel } => events.push(RawNoteEvent {
@@ -1612,6 +1622,8 @@ fn parse_midi_file(path: &Path) -> Result<MidiVizResponse> {
                 pitch: event.pitch,
                 start,
                 duration: (end - start).max(0.02),
+                start_beat: started.0 as f64 / ticks_per_beat as f64,
+                duration_beats: event.tick.saturating_sub(started.0).max(1) as f64 / ticks_per_beat as f64,
                 velocity: started.1,
                 channel: event.channel,
                 track: event.track,
@@ -1628,6 +1640,8 @@ fn parse_midi_file(path: &Path) -> Result<MidiVizResponse> {
                 pitch,
                 start,
                 duration: (tick_seconds(final_tick) - start).max(0.02),
+                start_beat: tick as f64 / ticks_per_beat as f64,
+                duration_beats: final_tick.saturating_sub(tick).max(1) as f64 / ticks_per_beat as f64,
                 velocity,
                 channel,
                 track,
@@ -1647,6 +1661,8 @@ fn parse_midi_file(path: &Path) -> Result<MidiVizResponse> {
             .to_string(),
         duration,
         track_count: smf.tracks.len(),
+        beats_per_measure,
+        beat_unit,
         notes,
     })
 }
