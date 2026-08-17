@@ -640,6 +640,6 @@ test("reproduz MIDI com transporte leve, waveform e partitura lateral", async ()
   assert.match(html, /function drawMidiVizRoll/);
   assert.match(html, /midiVizRollCanvas\.width=768/);
   assert.match(html, /drawMidiVizRoll\(current\)/);
-  assert.match(html, /degToRad\(15\)/);
-  assert.match(html, /degToRad\(30\)/);
+  assert.match(html, /midiVizGroup=new THREE\.Group\(\);const angle=THREE\.MathUtils\.degToRad\(45\)/);
+  assert.match(html, /midiVizScoreGroup=new THREE\.Group\(\); const angle=THREE\.MathUtils\.degToRad\(90\)/);
 });
