@@ -2722,7 +2722,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function createMidiVizScorePanel(data) {
       const canvas=document.createElement('canvas'); canvas.width=1024; canvas.height=600;
       midiVizScoreTexture=new THREE.CanvasTexture(canvas); midiVizScoreTexture.colorSpace=THREE.SRGBColorSpace; midiVizScoreTexture.minFilter=THREE.LinearFilter; midiVizScoreTexture.generateMipmaps=false;
-      midiVizScoreGroup=new THREE.Group(); const radius=0.85,gap=0.018,angle=2*Math.asin(Math.min(.98,(AR_VIDEO_WIDTH+gap)/(2*radius))),x=-radius*Math.sin(angle);
+      midiVizScoreGroup=new THREE.Group(); const radius=0.85,gap=0.006,angle=2*Math.asin(Math.min(.98,(AR_VIDEO_WIDTH+gap)/(2*radius))),x=-radius*Math.sin(angle);
       midiVizScoreGroup.position.set(x,0,radius*(1-Math.cos(angle))); midiVizScoreGroup.rotation.y=angle;
       const panel=new THREE.Mesh(curvedPanelGeometry(AR_VIDEO_WIDTH,AR_VIDEO_HEIGHT,0.022,24),new THREE.MeshBasicMaterial({map:midiVizScoreTexture,transparent:false,depthTest:true,depthWrite:true,toneMapped:false}));
       panel.raycast=()=>{};
@@ -2809,7 +2809,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function createMidiVizPanel(data, source, options = {}) {
       disposeMidiViz(); if(activeNoteVideoGroup)closeActiveVideo(true);
       midiVizData=data;midiVizSource=source;midiVizPlaying=false;midiVizPlaybackRate=1;midiVizExternalAudio=Boolean(options.externalAudio);midiVizStartedAt=performance.now();if(!options.preserveTrack)activeNoteTrack={kind:'midi-viz',source,label:data.title||source};activeNoteMediaPath=arNotePath;
-      const hasScore=options.score!==false,radius=0.85,gap=0.018,sideAngle=2*Math.asin(Math.min(.98,(AR_VIDEO_WIDTH+gap)/(2*radius))),readingAngle=hasScore?-sideAngle:-sideAngle/2,synthAngle=hasScore?0:sideAngle/2;
+      const hasScore=options.score!==false,radius=0.85,gap=0.006,sideAngle=2*Math.asin(Math.min(.98,(AR_VIDEO_WIDTH+gap)/(2*radius))),readingAngle=hasScore?-sideAngle:-sideAngle/2,synthAngle=hasScore?0:sideAngle/2;
       midiVizReadingGroup=new THREE.Group();for(const child of [...arNoteGroup.children])midiVizReadingGroup.add(child);midiVizReadingGroup.position.set(-radius*Math.sin(readingAngle),0,radius*(1-Math.cos(readingAngle)));midiVizReadingGroup.rotation.y=readingAngle;arNoteGroup.add(midiVizReadingGroup);
       midiVizGroup=new THREE.Group();midiVizGroup.position.set(-radius*Math.sin(synthAngle),0,radius*(1-Math.cos(synthAngle)));midiVizGroup.rotation.y=synthAngle;
       midiVizRollCanvas=document.createElement('canvas');midiVizRollCanvas.width=768;midiVizRollCanvas.height=512;
@@ -4751,10 +4751,12 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
     function updateAudioWaveformProgress() {
       if (!audioWaveformPlayhead || !audioWaveformWidth) return;
-      const midiTime = (activeNoteTrack?.kind === "midi-viz" || midiVizExternalAudio) ? midiVizCurrentTime() : null;
-      const duration = Number.isFinite(activeNoteAudio?.duration) && activeNoteAudio.duration > 0
-        ? activeNoteAudio.duration
-        : audioWaveformDuration;
+      const isMidiViz=activeNoteTrack?.kind === "midi-viz",midiTime=(isMidiViz||midiVizExternalAudio)?midiVizCurrentTime():null;
+      const duration = isMidiViz && Number(midiVizData?.duration)>0
+        ? Number(midiVizData.duration)
+        : Number.isFinite(activeNoteAudio?.duration) && activeNoteAudio.duration > 0
+          ? activeNoteAudio.duration
+          : audioWaveformDuration;
       const progress = duration > 0
         ? Math.min(1, Math.max(0, ((midiTime ?? activeNoteAudio?.currentTime) || 0) / duration))
         : 0;
@@ -4912,7 +4914,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
     function curvedPanelGeometry(width, height, depth = 0.022, segments = 18) {
       const verticalSegments=8,geometry=new THREE.PlaneGeometry(width,height,segments,verticalSegments),positions=geometry.attributes.position;
-      const halfWidth=Math.max(width/2,.001),halfHeight=Math.max(height/2,.001),radius=Math.min(.018,halfWidth*.06,halfHeight*.1);
+      const halfWidth=Math.max(width/2,.001),halfHeight=Math.max(height/2,.001),radius=Math.min(.003,halfWidth*.012,halfHeight*.025);
       for(let index=0;index<positions.count;index+=1){let x=positions.getX(index),y=positions.getY(index);const edgeDistance=halfHeight-Math.abs(y);if(edgeDistance<radius){const inset=radius-Math.sqrt(Math.max(0,radius*radius-(radius-edgeDistance)*(radius-edgeDistance)));x=THREE.MathUtils.clamp(x,-halfWidth+inset,halfWidth-inset);positions.setX(index,x);}const normalizedX=x/halfWidth;positions.setZ(index,depth*normalizedX*normalizedX);}
       positions.needsUpdate = true;
       geometry.computeVertexNormals();
