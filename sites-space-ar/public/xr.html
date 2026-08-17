@@ -2702,6 +2702,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         const staffTop=position.upper?155:365,staffBottom=position.upper?243:453;
         if(y<staffTop-4||y>staffBottom+4){context.strokeStyle='#26354a';context.lineWidth=2;const direction=y<staffTop?-1:1;for(let ledger=staffTop+(direction<0?-22:22);direction<0?ledger>=y:ledger<=y;ledger+=direction*22){context.beginPath();context.moveTo(x-13,ledger);context.lineTo(x+13,ledger);context.stroke();}}
       }
+      const tiedNotes=midiVizData.notes.filter(note=>note.start>=start&&note.start<end);context.strokeStyle='#172033';context.lineWidth=3;for(let index=0;index<tiedNotes.length-1;index++){const a=tiedNotes[index],b=tiedNotes[index+1];if(a.pitch!==b.pitch||Math.abs(a.start+(Number(a.duration)||0)-b.start)>.08)continue;const ap=staffPosition(a.pitch),bp=staffPosition(b.pitch),ax=left+(a.start-start)/8*(right-left),bx=left+(b.start-start)/8*(right-left),lift=ap.upper?-22:22;context.beginPath();context.moveTo(ax+9,ap.y+lift/3);context.quadraticCurveTo((ax+bx)/2,(ap.y+bp.y)/2+lift,bx-9,bp.y+lift/3);context.stroke();}
       context.fillStyle='#617087'; context.font='22px system-ui'; context.textAlign='center'; context.fillText(`${formatAudioTime(start)} – ${formatAudioTime(Math.min(end,midiVizData.duration))}`,canvas.width/2,555);
       midiVizScoreTexture.needsUpdate=true;
     }
