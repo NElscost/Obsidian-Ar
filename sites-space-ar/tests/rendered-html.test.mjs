@@ -210,7 +210,9 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /noteAction = `media-track:/);
   assert.match(html, /action\.startsWith\("media-track:"\)/);
   assert.match(html, /control\.position\.set\([\s\S]*?0\.07/);
-  assert.match(html, /videoArcAngle = THREE\.MathUtils\.degToRad\(14\)/);
+  assert.match(html, /function layoutVideoReadingPair/);
+  assert.match(html, /radius=\.85,gap=\.006/);
+  assert.match(html, /videoReadingGroup/);
   assert.match(html, /color: 0x000000/);
   assert.match(html, /videoClose[\s\S]*?color: 0xff6b6b/);
   assert.match(html, /activeNoteVideoGroup\.name = "note-video-window"/);

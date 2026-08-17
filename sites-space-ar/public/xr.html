@@ -1162,7 +1162,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         );
         abcPlaybackHighlight.renderOrder = 68;
       }
-      const highlightParent=midiVizReadingGroup??arNoteGroup;
+      const highlightParent=midiVizReadingGroup??videoReadingGroup??arNoteGroup;
       if(abcPlaybackHighlight.parent!==highlightParent)highlightParent.add(abcPlaybackHighlight);
       const bounds = (
         Number.isFinite(hotspot.scoreViewLeft) &&
@@ -2349,6 +2349,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let activeNoteAudioControl = null;
     let activeNoteVideoSurface = null;
     let activeNoteVideoGroup = null;
+    let videoReadingGroup = null;
     let midiVizGroup = null;
     let midiVizReadingGroup = null;
     let midiVizNotesMesh = null;
@@ -2858,7 +2859,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
     function closeActiveVideo(silent = false) {
       removeArVideoLoadingWindow();
-      if (!activeNoteVideoGroup && !activeNoteAudio?.tagName?.toLowerCase().includes("video")) return;
+      if (!activeNoteVideoGroup && !activeNoteAudio?.tagName?.toLowerCase().includes("video")){restoreVideoReadingLayout();return;}
       const group = activeNoteVideoGroup;
       const waveformOwnedByVideo = Boolean(
         group && audioWaveformGroup?.parent === group
@@ -2892,6 +2893,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         pendingNoteAudioSeek = null;
         audioBookmarkMeshes = [];
       }
+      restoreVideoReadingLayout();
       updateAudioControlColor();
       if (!silent) setXrMessage("Janela de vídeo fechada.");
     }
@@ -2943,6 +2945,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         object.material?.dispose();
       });
       arNoteGroup.clear();
+      videoReadingGroup = null;
       arNoteGroup.scale.setScalar(1);
       arNoteTexture?.dispose();
       arNoteSurface = null;
@@ -4294,7 +4297,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           control.userData.noteAction = `midi-viz:${encodeURIComponent(hotspot.source)}`;
         }
         control.userData.highlightScale = false;
-        arNoteGroup.add(control);
+        (midiVizReadingGroup??videoReadingGroup??arNoteGroup).add(control);
         arNoteControls.push(control);
         arNoteMediaHotspotControls.push(control);
       }
@@ -4938,14 +4941,22 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       activeNoteVideoLoadingSpinner = null;
     }
 
+    function restoreVideoReadingLayout() {
+      if(!videoReadingGroup)return;for(const child of [...videoReadingGroup.children])arNoteGroup.add(child);videoReadingGroup.removeFromParent();videoReadingGroup=null;
+    }
+    function layoutVideoReadingPair(videoGroup) {
+      if(!videoGroup)return;const radius=.85,gap=.006,angle=2*Math.asin(Math.min(.98,(AR_VIDEO_WIDTH+gap)/(2*radius))),half=angle/2;
+      if(!videoReadingGroup){videoReadingGroup=new THREE.Group();arNoteGroup.add(videoReadingGroup);}
+      for(const child of [...arNoteGroup.children])if(child!==videoReadingGroup&&child!==videoGroup&&child!==activeNoteVideoGroup&&child!==activeNoteVideoLoadingGroup&&!child.userData?.keepOutsideReadingWindow)videoReadingGroup.add(child);
+      videoReadingGroup.position.set(-radius*Math.sin(-half),0,radius*(1-Math.cos(-half)));videoReadingGroup.rotation.y=-half;
+      videoGroup.position.set(-radius*Math.sin(half),0,radius*(1-Math.cos(half)));videoGroup.rotation.y=half;if(videoGroup.parent!==arNoteGroup)arNoteGroup.add(videoGroup);
+    }
+
     function createArVideoLoadingWindow() {
       if (activeNoteVideoGroup || activeNoteVideoLoadingGroup) return;
       const group = new THREE.Group();
       group.name = "note-video-loading-window";
-      const videoArcAngle = THREE.MathUtils.degToRad(14);
-      const videoArcRadius = Math.abs(AR_VIDEO_CENTER_X) / Math.sin(videoArcAngle);
-      group.position.set(AR_VIDEO_CENTER_X, 0, videoArcRadius * (1 - Math.cos(videoArcAngle)));
-      group.rotation.y = videoArcAngle;
+
       const panel = new THREE.Mesh(
         curvedPanelGeometry(AR_VIDEO_WIDTH, AR_VIDEO_HEIGHT, 0.022, 18),
         new THREE.MeshBasicMaterial({ color:0x080d17, transparent:true, opacity:0.9, depthTest:false, toneMapped:false })
@@ -4956,8 +4967,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       );
       spinner.position.z = 0.01;
       group.add(panel, spinner);
-      arNoteGroup.add(group);
       activeNoteVideoLoadingGroup = group;
+      layoutVideoReadingPair(group);
       activeNoteVideoLoadingSpinner = spinner;
     }
 
@@ -4970,15 +4981,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       activeNoteVideoTexture.generateMipmaps = false;
       activeNoteVideoGroup = new THREE.Group();
       activeNoteVideoGroup.name = "note-video-window";
-      // Side-by-side panels share one concave viewing arc, like virtual monitors.
-      const videoArcAngle = THREE.MathUtils.degToRad(14);
-      const videoArcRadius = Math.abs(AR_VIDEO_CENTER_X) / Math.sin(videoArcAngle);
-      activeNoteVideoGroup.position.set(
-        AR_VIDEO_CENTER_X,
-        0,
-        videoArcRadius * (1 - Math.cos(videoArcAngle))
-      );
-      activeNoteVideoGroup.rotation.y = videoArcAngle;
+      // Reading and video share the same dynamic 6 mm arc used by the MIDI windows.
       const videoBackdrop = new THREE.Mesh(
         curvedPanelGeometry(AR_VIDEO_WIDTH + 0.18, AR_VIDEO_HEIGHT + 0.18, 0.032, 24),
         new THREE.ShaderMaterial({
@@ -5053,7 +5056,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       activeNoteVideoCloseControl = videoClose;
       activeNoteVideoGroup.add(videoBackdrop, activeNoteVideoSurface, videoClose);
       arNoteControls.push(videoClose);
-      arNoteGroup.add(activeNoteVideoGroup);
+      layoutVideoReadingPair(activeNoteVideoGroup);
       placeAudioWaveformGroup(AR_VIDEO_HEIGHT);
       const resize = () => {
         if (!activeNoteVideoSurface || !video.videoWidth || !video.videoHeight) return;
@@ -5995,6 +5998,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         }
       }
       drawArNotePage();
+      if(activeNoteVideoGroup)layoutVideoReadingPair(activeNoteVideoGroup);
       if (dashboardVisible) createArDashboard();
       if (noteWindowPinned) {
         if (arNoteGroup.parent !== scene) scene.attach(arNoteGroup);
