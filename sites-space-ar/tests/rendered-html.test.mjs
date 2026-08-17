@@ -215,6 +215,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /videoReadingGroup/);
   assert.match(html, /color: 0x000000/);
   assert.match(html, /videoClose[\s\S]*?color: 0xff6b6b/);
+  assert.match(html, /videoCloseIcon\.renderOrder = 1004/);
   assert.match(html, /activeNoteVideoGroup\.name = "note-video-window"/);
   assert.match(html, /activeNoteVideoGroup\.add\(videoBackdrop, activeNoteVideoSurface, videoClose\)/);
   assert.match(html, /new THREE\.VideoTexture\(video\)/);
@@ -271,8 +272,12 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /spatialSource\.getWorldPosition\(audioSourcePosition\)/);
   assert.match(html, /activeNoteVideoGroup && activeNoteAudio/);
   assert.match(html, /mesh\.material\.alphaMap = texture/);
+  assert.match(html, /mesh\.material\.transparent = false/);
+  assert.match(html, /applyRoundedPanelMask\(noteWeatherOccluder\)/);
   assert.match(html, /activeNoteAudioControl\.visible = false/);
   assert.match(html, /activeNoteAudioControl\.visible = true/);
+  assert.match(html, /abcPlaybackHighlight\.renderOrder = 1012/);
+  assert.match(html, /color: 0xffd166,[\s\S]*?depthTest: false/);
   assert.match(html, /spatialAudioContext\.listener/);
   assert.match(html, /addArNoteControl\(\s*"audio"/);
   assert.match(html, /function noteControlIconTexture/);
