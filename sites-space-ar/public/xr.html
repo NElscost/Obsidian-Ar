@@ -2894,6 +2894,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         audioBookmarkMeshes = [];
       }
       restoreVideoReadingLayout();
+      if (activeNoteAudioControl) activeNoteAudioControl.visible = true;
       updateAudioControlColor();
       if (!silent) setXrMessage("Janela de vídeo fechada.");
     }
@@ -4824,7 +4825,10 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       audioListenerUp.set(0, 1, 0).applyQuaternion(
         xrCamera.getWorldQuaternion(workingQuaternion)
       );
-      arNoteGroup.getWorldPosition(audioSourcePosition);
+      const spatialSource = activeNoteVideoGroup && activeNoteAudio?.tagName?.toLowerCase() === "video"
+        ? activeNoteVideoGroup
+        : arNoteGroup;
+      spatialSource.getWorldPosition(audioSourcePosition);
       const now = spatialAudioContext.currentTime;
       const listener = spatialAudioContext.listener;
       setAudioParam(listener.positionX, audioListenerPosition.x, now);
@@ -4916,8 +4920,34 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       videoSurfaceVisibilityCheckedAt = time;
     }
 
+    const roundedPanelMasks = new Map();
     function applyRoundedPanelMask(mesh) {
-      if(!mesh?.geometry)return mesh;mesh.geometry.computeBoundingBox();const box=mesh.geometry.boundingBox,width=Math.max(.001,box.max.x-box.min.x),height=Math.max(.001,box.max.y-box.min.y),canvas=document.createElement('canvas');canvas.width=512;canvas.height=Math.max(64,Math.round(512*height/width));const context=canvas.getContext('2d');context.clearRect(0,0,canvas.width,canvas.height);context.strokeStyle='rgba(205,220,244,.42)';context.lineWidth=2;context.beginPath();context.roundRect(2,2,canvas.width-4,canvas.height-4,5);context.stroke();const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;texture.minFilter=THREE.LinearFilter;texture.generateMipmaps=false;const border=new THREE.Mesh(curvedPanelGeometry(width,height,.022,24),new THREE.MeshBasicMaterial({map:texture,transparent:true,depthTest:false,depthWrite:false,toneMapped:false}));border.position.z=.004;border.renderOrder=(mesh.renderOrder||1000)+1;border.raycast=()=>{};border.userData.roundedPanelBorder=true;mesh.add(border);return mesh;
+      if (!mesh?.geometry || !mesh.material) return mesh;
+      mesh.geometry.computeBoundingBox();
+      const box = mesh.geometry.boundingBox;
+      const width = Math.max(0.001, box.max.x - box.min.x);
+      const height = Math.max(0.001, box.max.y - box.min.y);
+      const key = `${Math.round(width * 1000)}:${Math.round(height * 1000)}`;
+      let texture = roundedPanelMasks.get(key);
+      if (!texture) {
+        const canvas = document.createElement("canvas");
+        canvas.width = 512;
+        canvas.height = Math.max(64, Math.round(512 * height / width));
+        const context = canvas.getContext("2d");
+        context.fillStyle = "#fff";
+        context.beginPath();
+        context.roundRect(2, 2, canvas.width - 4, canvas.height - 4, 5);
+        context.fill();
+        texture = new THREE.CanvasTexture(canvas);
+        texture.minFilter = THREE.LinearFilter;
+        texture.generateMipmaps = false;
+        roundedPanelMasks.set(key, texture);
+      }
+      mesh.material.alphaMap = texture;
+      mesh.material.transparent = true;
+      mesh.material.alphaTest = 0.02;
+      mesh.material.needsUpdate = true;
+      return mesh;
     }
     function curvedPanelGeometry(width, height, depth = 0.022, segments = 18) {
       const verticalSegments=8,geometry=new THREE.PlaneGeometry(width,height,segments,verticalSegments),positions=geometry.attributes.position;
@@ -5024,6 +5054,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       videoWeatherOccluder.position.z = 0.001;
       videoWeatherOccluder.renderOrder = -20;
       videoWeatherOccluder.raycast = () => {};
+      applyRoundedPanelMask(videoWeatherOccluder);
       activeNoteVideoGroup.add(videoWeatherOccluder);
       activeNoteVideoSurface.position.set(0, 0, 0.002);
       activeNoteVideoSurface.renderOrder = 1000;
@@ -5057,6 +5088,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       activeNoteVideoGroup.add(videoBackdrop, activeNoteVideoSurface, videoClose);
       arNoteControls.push(videoClose);
       layoutVideoReadingPair(activeNoteVideoGroup);
+      if (activeNoteAudioControl) activeNoteAudioControl.visible = false;
       placeAudioWaveformGroup(AR_VIDEO_HEIGHT);
       const resize = () => {
         if (!activeNoteVideoSurface || !video.videoWidth || !video.videoHeight) return;
@@ -5961,6 +5993,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       noteWeatherOccluder.position.z = -0.001;
       noteWeatherOccluder.renderOrder = -20;
       noteWeatherOccluder.raycast = () => {};
+      applyRoundedPanelMask(noteWeatherOccluder);
       arNoteGroup.add(noteWeatherOccluder);
       arNoteSurface.renderOrder = 1000;
       arNoteSurface.userData.noteAction = "note-media";
@@ -5998,7 +6031,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         }
       }
       drawArNotePage();
-      if(activeNoteVideoGroup)layoutVideoReadingPair(activeNoteVideoGroup);
+      if(activeNoteVideoGroup){layoutVideoReadingPair(activeNoteVideoGroup);if(activeNoteAudioControl)activeNoteAudioControl.visible=false;}
       if (dashboardVisible) createArDashboard();
       if (noteWindowPinned) {
         if (arNoteGroup.parent !== scene) scene.attach(arNoteGroup);

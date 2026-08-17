@@ -268,7 +268,11 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function rebuildAudioBookmarkMeshes/);
   assert.match(html, /action === "waveform"/);
   assert.match(html, /bookmarkSeconds/);
-  assert.match(html, /arNoteGroup\.getWorldPosition\(audioSourcePosition\)/);
+  assert.match(html, /spatialSource\.getWorldPosition\(audioSourcePosition\)/);
+  assert.match(html, /activeNoteVideoGroup && activeNoteAudio/);
+  assert.match(html, /mesh\.material\.alphaMap = texture/);
+  assert.match(html, /activeNoteAudioControl\.visible = false/);
+  assert.match(html, /activeNoteAudioControl\.visible = true/);
   assert.match(html, /spatialAudioContext\.listener/);
   assert.match(html, /addArNoteControl\(\s*"audio"/);
   assert.match(html, /function noteControlIconTexture/);
