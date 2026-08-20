@@ -1255,7 +1255,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function preprocessNotePluginBlocks(source) {
       const markdown = String(source ?? "");
       let mediaSource = "";
-      return markdown.replace(/\x60\x60\x60(timestamp-url|timestamp|smiles|avatar|music-abc|midiviz|chess)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi,
+      return markdown.replace(/\x60\x60\x60(timestamp-url|timestamp|smiles|avatar|music-abc|midiviz|chess|chesser)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi,
         (whole, rawKind, rawBody, offset) => {
           const kind = rawKind.toLowerCase();
           const body = rawBody.trim();
@@ -1275,7 +1275,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
             return '<div class="note-avatar ' + side + '" style="--avatar-size:' + size + 'px">' + image + '<div class="note-avatar-body">' + escapeNoteHtml(description) + '</div></div>';
           }
           if (kind === "music-abc") return '<div class="note-music-abc" data-note-abc="' + encodeURIComponent(body) + '">Loading score…</div>';
-          if (kind === "chess") return '<div class="note-chess" data-note-chess="' + encodeURIComponent(body) + '">Loading chessboard…</div>';
+          if (kind === "chess" || kind === "chesser") return '<div class="note-chess" data-note-chess="' + encodeURIComponent(body) + '">Loading chessboard…</div>';
           if (kind === "midiviz") {
             const midiSource = body.split(/\r?\n/).map((line) => line.match(/^midi\s*:\s*(.+)$/i)?.[1]?.trim()).find(Boolean) || body.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
             return '<div class="note-midi-viz" data-note-midi="' + encodeURIComponent(midiSource) + '">' + escapeNoteHtml(midiSource || "MIDI") + '</div>';

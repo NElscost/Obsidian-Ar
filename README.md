@@ -198,10 +198,10 @@ disposes the meshes, textures, oscillators, and waveform immediately. This keeps
 MIDI independent from LaTeX, code, image, audio, and video rendering in the same
 note.
 
-Chesser-compatible `chess` blocks accept a direct FEN, a direct PGN, or the plugin's YAML-style configuration:
+Chesser-compatible `chesser` blocks (and the shorter `chess` alias) accept a direct FEN, a direct PGN, or the plugin's YAML-style configuration:
 
 ````md
-```chess
+```chesser
 fen: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1
 orientation: white
 ```
