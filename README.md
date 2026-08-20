@@ -11,7 +11,7 @@ local Rust bridge, creates an HTTPS tunnel, and displays a QR code for pairing.
 - WebXR hit testing and anchors;
 - hand gestures for placement, scale, rotation, selection, and pagination;
 - fuzzy keyboard search with selectable 3D suggestions;
-- Markdown, tables, LaTeX, code, images, audio, and video in a 3D note window;
+- Markdown, tables, LaTeX, code, images, audio, video, and interactive Chesser boards in a 3D note window;
 - spatial HRTF audio, audio/video waveform seeking, and media bookmarks;
 - cached note rendering and preprocessing to reduce frame drops;
 - progress reporting with elapsed and estimated remaining time;
@@ -198,6 +198,16 @@ disposes the meshes, textures, oscillators, and waveform immediately. This keeps
 MIDI independent from LaTeX, code, image, audio, and video rendering in the same
 note.
 
+Chesser-compatible `chess` blocks accept a direct FEN, a direct PGN, or the plugin's YAML-style configuration:
+
+````md
+```chess
+fen: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1
+orientation: white
+```
+````
+
+For PGN, use `pgn: |` followed by indented PGN lines, as Chesser does. The board engine is loaded only when such a block is present. The captured note shows the board without additional per-frame work; pinching it enables square selection and legal moves, previous/next PGN navigation, board flipping, and closing the interactive overlay. The board state and texture are reused during the session and disposed when the note or page changes.
 The viewer starts in English and includes a language selector for Portuguese, Spanish, French, Italian, and Romanian.
 
 During AR, use the keyboard search to find notes by title. Selecting a suggested result with a pinch opens the note through the same cached bridge path used by the main graph.

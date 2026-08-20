@@ -530,6 +530,9 @@
 .note-content .note-midi-viz { margin:10px 0; padding:14px 16px; border:1px solid rgba(117,167,255,.45); border-radius:12px; color:#dce8ff; background:linear-gradient(135deg,rgba(20,35,62,.86),rgba(7,13,24,.9)); cursor:pointer; }
 .note-content .note-midi-viz::before { content:"♪ Synthesia · "; color:#75a7ff; font-weight:700; }
     .note-content .note-smiles { margin:10px 0; padding:8px; border:1px solid rgba(99,230,190,.25); border-radius:10px; background:rgba(7,11,18,.82); break-inside:avoid; overflow:hidden; }
+    .note-content .note-chess { margin:10px 0; padding:8px; border:1px solid rgba(255,209,102,.38); border-radius:10px; background:rgba(7,11,18,.9); break-inside:avoid; overflow:hidden; }
+    .note-content .note-chess::before { content:"♟ Select the board to interact"; display:block; margin-bottom:6px; color:#ffd166; font-size:12px; font-weight:750; }
+    .note-content .note-chess canvas { position:static; inset:auto; display:block; width:min(100%,560px); height:auto; margin:auto; border-radius:5px; }
     .note-content .note-smiles canvas, .note-content .note-smiles svg, .note-content .note-smiles img { position:static; inset:auto; display:block; width:100%; height:auto; max-height:300px; object-fit:contain; }
     .note-content .note-avatar { display:flex; gap:14px; align-items:center; margin:10px 0; padding:10px; border-radius:14px; background:rgba(20,29,45,.72); break-inside:avoid; }
     .note-content .note-avatar.right { flex-direction:row-reverse; }
@@ -1252,7 +1255,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function preprocessNotePluginBlocks(source) {
       const markdown = String(source ?? "");
       let mediaSource = "";
-      return markdown.replace(/\x60\x60\x60(timestamp-url|timestamp|smiles|avatar|music-abc|midiviz)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi,
+      return markdown.replace(/\x60\x60\x60(timestamp-url|timestamp|smiles|avatar|music-abc|midiviz|chess)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi,
         (whole, rawKind, rawBody, offset) => {
           const kind = rawKind.toLowerCase();
           const body = rawBody.trim();
@@ -1272,6 +1275,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
             return '<div class="note-avatar ' + side + '" style="--avatar-size:' + size + 'px">' + image + '<div class="note-avatar-body">' + escapeNoteHtml(description) + '</div></div>';
           }
           if (kind === "music-abc") return '<div class="note-music-abc" data-note-abc="' + encodeURIComponent(body) + '">Loading score…</div>';
+          if (kind === "chess") return '<div class="note-chess" data-note-chess="' + encodeURIComponent(body) + '">Loading chessboard…</div>';
           if (kind === "midiviz") {
             const midiSource = body.split(/\r?\n/).map((line) => line.match(/^midi\s*:\s*(.+)$/i)?.[1]?.trim()).find(Boolean) || body.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
             return '<div class="note-midi-viz" data-note-midi="' + encodeURIComponent(midiSource) + '">' + escapeNoteHtml(midiSource || "MIDI") + '</div>';
@@ -1290,6 +1294,54 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         });
     }
 
+    let chessModulePromise = null;
+    const chessBlockStates = new Map();
+    function loadChessModule() {
+      chessModulePromise ??= import("https://esm.sh/chess.js@1.4.0");
+      return chessModulePromise;
+    }
+    function parseChessBlockConfig(source) {
+      const raw = String(source ?? "").trim();
+      const config = { fen:"", pgn:"", orientation:"white", drawable:false, viewOnly:false, free:false };
+      if (!raw) return config;
+      if (/^(?:[1-8prnbqkPRNBQK]+\/){7}[1-8prnbqkPRNBQK]+\s+[wb]\s+/i.test(raw)) { config.fen=raw; return config; }
+      if (/^\s*(?:\[\w+\s+"|\d+\.(?:\.\.)?\s)/m.test(raw) && !/^\s*\w+\s*:/m.test(raw)) { config.pgn=raw; return config; }
+      const lines=raw.split(/\r?\n/);
+      for(let index=0;index<lines.length;index+=1){
+        const match=lines[index].match(/^([A-Za-z]+)\s*:\s*(.*)$/);if(!match)continue;
+        const key=match[1].toLowerCase(),value=match[2].trim();
+        if(key==='pgn'&&(value==='|'||value==='>')){const collected=[];while(index+1<lines.length&&(/^\s+/.test(lines[index+1])||!lines[index+1].trim()))collected.push(lines[++index].replace(/^\s{2,4}/,''));config.pgn=collected.join('\n').trim();}
+        else if(key==='pgn')config.pgn=value;
+        else if(key==='fen')config.fen=value;
+        else if(key==='orientation')config.orientation=value.toLowerCase()==='black'?'black':'white';
+        else if(['drawable','viewonly','free'].includes(key))config[key==='viewonly'?'viewOnly':key]=/^true$/i.test(value);
+      }
+      return config;
+    }
+    function chessFenPieces(fen) {
+      const pieces=new Map(),ranks=String(fen||'').split(/\s+/)[0]?.split('/')||[];
+      for(let row=0;row<8;row+=1){let file=0;for(const token of ranks[row]||''){if(/\d/.test(token)){file+=Number(token);continue;}if(file<8)pieces.set('abcdefgh'[file]+(8-row),token);file+=1;}}
+      return pieces;
+    }
+    const chessGlyphs={K:'♔',Q:'♕',R:'♖',B:'♗',N:'♘',P:'♙',k:'♚',q:'♛',r:'♜',b:'♝',n:'♞',p:'♟'};
+    function drawChessCanvas(canvas,state) {
+      const context=canvas.getContext('2d'),size=canvas.width,square=size/8,white=state.orientation!=='black',files=white?'abcdefgh':'hgfedcba',ranks=white?[8,7,6,5,4,3,2,1]:[1,2,3,4,5,6,7,8],pieces=chessFenPieces(state.fens[state.index]);
+      context.clearRect(0,0,size,size);context.textAlign='center';context.textBaseline='middle';
+      for(let row=0;row<8;row+=1)for(let column=0;column<8;column+=1){const squareName=files[column]+ranks[row],x=column*square,y=row*square;context.fillStyle=(row+column)%2?'#5f7f67':'#dce5cf';context.fillRect(x,y,square,square);if(state.selected===squareName){context.fillStyle='rgba(255,209,102,.62)';context.fillRect(x,y,square,square);}const piece=pieces.get(squareName);if(piece){context.font=`${Math.round(square*.72)}px "Segoe UI Symbol","Noto Sans Symbols 2",serif`;context.fillStyle=piece===piece.toUpperCase()?'#f8fafc':'#111827';context.strokeStyle=piece===piece.toUpperCase()?'#111827':'#f8fafc';context.lineWidth=1.5;context.strokeText(chessGlyphs[piece]||piece,x+square/2,y+square/2+square*.03);context.fillText(chessGlyphs[piece]||piece,x+square/2,y+square/2+square*.03);}context.font=`${Math.round(square*.14)}px system-ui`;context.fillStyle='rgba(7,11,18,.72)';if(column===0)context.fillText(String(ranks[row]),x+square*.1,y+square*.12);if(row===7)context.fillText(files[column],x+square*.88,y+square*.88);}
+    }
+    async function ensureChessState(source) {
+      const key=String(source??'');if(chessBlockStates.has(key))return chessBlockStates.get(key);
+      const {Chess}=await loadChessModule(),config=parseChessBlockConfig(key);let game;
+      try{game=new Chess(config.fen||undefined);}catch{game=new Chess();}
+      const fens=[];
+      if(config.pgn){try{game.loadPgn(config.pgn);const moves=game.history();while(game.undo()){}fens.push(game.fen());for(const move of moves){game.move(move);fens.push(game.fen());}}catch(error){console.warn('Invalid Chesser PGN; showing configured position.',error);fens.push(game.fen());}}
+      else fens.push(game.fen());
+      const state={source:key,Chess,config,fens,index:Math.max(0,fens.length-1),orientation:config.orientation,selected:null};chessBlockStates.set(key,state);return state;
+    }
+    async function renderNoteChessBlocks() {
+      const blocks=[...noteContent.querySelectorAll('[data-note-chess]')];
+      for(const block of blocks){let source=block.dataset.noteChess||'';try{source=decodeURIComponent(source);}catch{}try{const state=await ensureChessState(source),canvas=document.createElement('canvas');canvas.width=560;canvas.height=560;canvas.dataset.noteChessBoard='1';drawChessCanvas(canvas,state);block.replaceChildren(canvas);}catch(error){block.textContent='Chess position could not be rendered.';console.warn('Chesser block rendering failed.',error);}}
+    }
     function loadSmilesDrawer() {
       if (window.SmilesDrawer) return Promise.resolve(window.SmilesDrawer);
       if (!smilesDrawerPromise) smilesDrawerPromise = new Promise((resolve, reject) => {
@@ -1757,6 +1809,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         }
       }
       await renderNoteAbcBlocks();
+      await renderNoteChessBlocks();
       for (const link of noteContent.querySelectorAll("a")) {
         const href = link.getAttribute("href")?.trim() ?? "";
         if (youtubeVideoId(href)) {
@@ -2900,6 +2953,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     }
 
     function disposeArNote(options = {}) {
+      disposeChessOverlay();
       const preserveVideo = Boolean(
         options.preserveVideo && activeNoteVideoGroup && activeNoteAudio
       );
@@ -3617,7 +3671,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       const contentHeight = Math.max(1, noteContent.scrollHeight);
       const atoms = [];
       for (const element of noteContent.querySelectorAll(
-        "img, table, .note-video-card, .note-timestamp-card, .note-smiles, .note-music-abc, .note-midi-viz, .note-audio-card, .obsidian-callout"
+        "img, table, .note-video-card, .note-timestamp-card, .note-smiles, .note-music-abc, .note-midi-viz, .note-chess, .note-audio-card, .obsidian-callout"
       )) {
         const bounds = element.getBoundingClientRect();
         const height = bounds.height;
@@ -3679,7 +3733,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       }
       for (const page of pages) page.mediaHotspots = [];
       for (const element of noteContent.querySelectorAll(
-        ".note-audio-card, .note-video-card, .note-timestamp-card, .note-music-abc, .note-midi-viz"
+        ".note-audio-card, .note-video-card, .note-timestamp-card, .note-music-abc, .note-midi-viz, .note-chess"
       )) {
         const bounds = element.getBoundingClientRect();
         const top = bounds.top - noteBounds.top;
@@ -3693,18 +3747,25 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           ? "music-abc"
           : element.matches(".note-midi-viz")
             ? "midi-viz"
-          : element.matches(".note-timestamp-card")
-            ? "timestamp"
-            : element.matches(".note-video-card") ? "video" : "audio";
+            : element.matches(".note-chess")
+              ? "chess"
+              : element.matches(".note-timestamp-card")
+                ? "timestamp"
+                : element.matches(".note-video-card") ? "video" : "audio";
         const encoded = kind === "music-abc"
           ? element.dataset.noteAbc
           : kind === "midi-viz"
             ? element.dataset.noteMidi
-          : kind === "timestamp"
-            ? element.dataset.timestampSource
-            : element.dataset[kind === "video" ? "noteVideoSource" : "noteAudioSource"];
+            : kind === "chess"
+              ? element.dataset.noteChess
+              : kind === "timestamp"
+                ? element.dataset.timestampSource
+                : element.dataset[kind === "video" ? "noteVideoSource" : "noteAudioSource"];
         let source = encoded || "";
         try { source = decodeURIComponent(source); } catch {}
+        const boardBounds = kind === "chess"
+          ? element.querySelector("canvas[data-note-chess-board]")?.getBoundingClientRect()
+          : null;
         const scoreBounds = kind === "music-abc"
           ? element.querySelector(".note-music-abc-image, svg")?.getBoundingClientRect()
           : null;
@@ -3740,7 +3801,11 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           scoreViewLeft: hasScoreViewBox ? scoreViewBox[0] : null,
           scoreViewTop: hasScoreViewBox ? scoreViewBox[1] : null,
           scoreViewWidth: hasScoreViewBox ? scoreViewBox[2] : null,
-          scoreViewHeight: hasScoreViewBox ? scoreViewBox[3] : null
+          scoreViewHeight: hasScoreViewBox ? scoreViewBox[3] : null,
+          boardX1: boardBounds ? THREE.MathUtils.clamp((62 + boardBounds.left - noteBounds.left) / 1024, 0, 1) : null,
+          boardX2: boardBounds ? THREE.MathUtils.clamp((62 + boardBounds.right - noteBounds.left) / 1024, 0, 1) : null,
+          boardY1: boardBounds ? THREE.MathUtils.clamp(1 - (108 + boardBounds.bottom - noteBounds.top - page.top) / 768, 0, 1) : null,
+          boardY2: boardBounds ? THREE.MathUtils.clamp(1 - (108 + boardBounds.top - noteBounds.top - page.top) / 768, 0, 1) : null
         });
       }
     }
@@ -4270,7 +4335,50 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       );
     }
 
+    let chessOverlayGroup = null;
+    let chessOverlayState = null;
+    let chessOverlayTexture = null;
+    let chessOverlayControls = [];
+    function disposeChessOverlay() {
+      if (!chessOverlayGroup) return;
+      const controls=new Set(chessOverlayControls);arNoteControls=arNoteControls.filter((control)=>!controls.has(control));
+      chessOverlayGroup.removeFromParent();
+      chessOverlayGroup.traverse((object)=>{object.geometry?.dispose?.();if(object.material?.map!==chessOverlayTexture)object.material?.map?.dispose?.();object.material?.dispose?.();});
+      chessOverlayTexture?.dispose();chessOverlayGroup=null;chessOverlayState=null;chessOverlayTexture=null;chessOverlayControls=[];
+    }
+    function refreshChessOverlay() {
+      if(!chessOverlayState||!chessOverlayTexture)return;drawChessCanvas(chessOverlayTexture.image,chessOverlayState);chessOverlayTexture.needsUpdate=true;
+    }
+    function addChessOverlayControl(group,action,x,y,size,label,color=0x75a7ff) {
+      const control=new THREE.Mesh(new THREE.CircleGeometry(size,16),new THREE.MeshBasicMaterial({color,transparent:true,opacity:.96,depthTest:false,toneMapped:false}));
+      control.position.set(x,y,.008);control.renderOrder=1013;control.userData.noteAction=action;
+      const canvas=document.createElement('canvas');canvas.width=64;canvas.height=64;const context=canvas.getContext('2d');context.fillStyle='#07111f';context.font='bold 38px system-ui';context.textAlign='center';context.textBaseline='middle';context.fillText(label,32,33);
+      const texture=new THREE.CanvasTexture(canvas),icon=new THREE.Mesh(new THREE.PlaneGeometry(size*1.35,size*1.35),new THREE.MeshBasicMaterial({map:texture,transparent:true,depthTest:false,toneMapped:false}));icon.position.z=.003;icon.renderOrder=1014;icon.raycast=()=>{};control.add(icon);group.add(control);arNoteControls.push(control);chessOverlayControls.push(control);return control;
+    }
+    async function openChessOverlay(source) {
+      const hotspot=(arNotePages[arNotePage]?.mediaHotspots??[]).find((item)=>item.kind==='chess'&&item.source===source);if(!hotspot)return;
+      const state=await ensureChessState(source);disposeChessOverlay();chessOverlayState=state;
+      const x1=Number.isFinite(hotspot.boardX1)?hotspot.boardX1:hotspot.x1,x2=Number.isFinite(hotspot.boardX2)?hotspot.boardX2:hotspot.x2,y1=Number.isFinite(hotspot.boardY1)?hotspot.boardY1:hotspot.y1,y2=Number.isFinite(hotspot.boardY2)?hotspot.boardY2:hotspot.y2;
+      const width=Math.max(.12,(x2-x1)*AR_NOTE_WIDTH),height=Math.max(.12,(y2-y1)*AR_NOTE_HEIGHT),size=Math.min(width,height),centerX=((x1+x2)/2-.5)*AR_NOTE_WIDTH,centerY=((y1+y2)/2-.5)*AR_NOTE_HEIGHT;
+      const group=new THREE.Group();group.position.set(centerX,centerY,.086);const canvas=document.createElement('canvas');canvas.width=512;canvas.height=512;drawChessCanvas(canvas,state);chessOverlayTexture=new THREE.CanvasTexture(canvas);chessOverlayTexture.colorSpace=THREE.SRGBColorSpace;chessOverlayTexture.minFilter=THREE.LinearFilter;chessOverlayTexture.generateMipmaps=false;
+      const board=new THREE.Mesh(new THREE.PlaneGeometry(size,size),new THREE.MeshBasicMaterial({map:chessOverlayTexture,depthTest:false,toneMapped:false}));board.renderOrder=1010;board.raycast=()=>{};group.add(board);
+      const white=state.orientation!=='black',files=white?'abcdefgh':'hgfedcba',ranks=white?[8,7,6,5,4,3,2,1]:[1,2,3,4,5,6,7,8],cell=size/8;
+      for(let row=0;row<8;row+=1)for(let column=0;column<8;column+=1){const control=new THREE.Mesh(new THREE.PlaneGeometry(cell*.94,cell*.94),new THREE.MeshBasicMaterial({transparent:true,opacity:.001,depthTest:false,depthWrite:false}));control.position.set(-size/2+cell*(column+.5),size/2-cell*(row+.5),.006);control.renderOrder=1012;control.userData.noteAction=`chess-square:${files[column]}${ranks[row]}`;control.userData.highlightScale=false;group.add(control);arNoteControls.push(control);chessOverlayControls.push(control);}
+      const buttonY=-size/2-.022;addChessOverlayControl(group,'chess-prev',-.045,buttonY,.014,'‹');addChessOverlayControl(group,'chess-flip',0,buttonY,.014,'↻',0xffd166);addChessOverlayControl(group,'chess-next',.045,buttonY,.014,'›');addChessOverlayControl(group,'chess-close',size/2-.014,size/2-.014,.014,'×',0xff6b6b);
+      const parent=midiVizReadingGroup??videoReadingGroup??arNoteGroup;parent.add(group);chessOverlayGroup=group;setXrMessage(`Chessboard ready · move ${state.index}/${state.fens.length-1}.`);
+    }
+    function activateChessSquare(square) {
+      const state=chessOverlayState;if(!state||state.config.viewOnly)return;
+      const game=new state.Chess(state.fens[state.index]);
+      if(!state.selected){if(game.moves({square,verbose:true}).length)state.selected=square;refreshChessOverlay();return;}
+      if(state.selected===square){state.selected=null;refreshChessOverlay();return;}
+      try{const move=game.move({from:state.selected,to:square,promotion:'q'});if(move){state.fens=state.fens.slice(0,state.index+1);state.fens.push(game.fen());state.index+=1;state.selected=null;refreshChessOverlay();setXrMessage(`${move.san} · move ${state.index}.`);return;}}catch{}
+      state.selected=game.moves({square,verbose:true}).length?square:null;refreshChessOverlay();
+    }
+    function stepChessOverlay(delta) {const state=chessOverlayState;if(!state)return;state.index=THREE.MathUtils.clamp(state.index+delta,0,state.fens.length-1);state.selected=null;refreshChessOverlay();setXrMessage(`Chess move ${state.index}/${state.fens.length-1}.`);}
+    function flipChessOverlay() {if(!chessOverlayState)return;const source=chessOverlayState.source;chessOverlayState.orientation=chessOverlayState.orientation==='black'?'white':'black';void openChessOverlay(source);}
     function rebuildArNoteMediaHotspotControls() {
+      disposeChessOverlay();
       for (const control of arNoteMediaHotspotControls) {
         arNoteControls = arNoteControls.filter((item) => item !== control);
         control.removeFromParent();
@@ -4296,6 +4404,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           control.userData.noteAction = `music-abc:${encodeURIComponent(hotspot.source)}`;
         } else if (hotspot.kind === "midi-viz") {
           control.userData.noteAction = `midi-viz:${encodeURIComponent(hotspot.source)}`;
+        } else if (hotspot.kind === "chess") {
+          control.userData.noteAction = `chess-open:${encodeURIComponent(hotspot.source)}`;
         }
         control.userData.highlightScale = false;
         (midiVizReadingGroup??videoReadingGroup??arNoteGroup).add(control);
@@ -5710,6 +5820,15 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       }
       if (action === "midi-slower") { setMidiVizPlaybackRate(midiVizPlaybackRate - 0.25); return; }
       if (action === "midi-faster") { setMidiVizPlaybackRate(midiVizPlaybackRate + 0.25); return; }
+      if (action.startsWith("chess-open:")) {
+        let source=action.slice("chess-open:".length);try{source=decodeURIComponent(source);}catch{}
+        void openChessOverlay(source).catch((error)=>{console.warn("Chessboard failed.",error);setXrMessage("Could not open this chessboard.");});return;
+      }
+      if (action.startsWith("chess-square:")) { activateChessSquare(action.slice("chess-square:".length)); return; }
+      if (action === "chess-prev") { stepChessOverlay(-1); return; }
+      if (action === "chess-next") { stepChessOverlay(1); return; }
+      if (action === "chess-flip") { flipChessOverlay(); return; }
+      if (action === "chess-close") { disposeChessOverlay(); setXrMessage("Chessboard closed."); return; }
       if (action.startsWith("midi-viz:")) {
         let source = action.slice("midi-viz:".length); try { source = decodeURIComponent(source); } catch {}
         void openMidiViz(source).catch((error) => { console.warn("MIDI visualization failed.", error); setXrMessage(`Could not open MIDI: ${error.message}`); });

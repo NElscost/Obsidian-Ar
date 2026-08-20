@@ -656,3 +656,17 @@ test("reproduz MIDI com transporte leve, waveform e partitura lateral", async ()
   assert.match(html, /function abcEventPitches/);
   assert.match(html, /score:false,waveform:false,externalAudio:true/);
 });
+
+test("supports Chesser chess blocks with lazy FEN and PGN interaction", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /timestamp-url\|timestamp\|smiles\|avatar\|music-abc\|midiviz\|chess/);
+  assert.match(html, /function parseChessBlockConfig/);
+  assert.match(html, /import\("https:\/\/esm\.sh\/chess\.js@1\.4\.0"\)/);
+  assert.match(html, /data-note-chess/);
+  assert.match(html, /function openChessOverlay/);
+  assert.match(html, /chess-square:/);
+  assert.match(html, /chess-prev/);
+  assert.match(html, /chess-next/);
+  assert.match(html, /chess-flip/);
+  assert.match(html, /game\.move\(\{from:state\.selected,to:square,promotion:'q'\}\)/);
+});
