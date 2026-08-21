@@ -232,7 +232,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /MP4 com H\.264 \+ AAC/);
   assert.match(html, /async function toggleNoteAudio\(requestedTrack = null\)/);
   assert.match(html, /function attachNoteMediaHotspots/);
-  assert.match(html, /space-ar-note-cache-v9/);
+  assert.match(html, /space-ar-note-cache-v10/);
   assert.match(html, /pageMeta: pages\.map/);
   assert.match(html, /hasMediaHotspotMetadata/);
   assert.match(html, /if \(isVideo\) void prepareVideoAmbilight\(track, arNotePath\)/);
@@ -287,7 +287,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function setNoteControlIcon/);
   assert.match(html, /new THREE\.PlaneGeometry\(0\.024, 0\.024\)/);
   assert.match(html, /activeNoteAudio\.currentTime = 0/);
-  assert.match(html, /space-ar-note-cache-v9/);
+  assert.match(html, /space-ar-note-cache-v10/);
 });
 
 test("remove a captura de voz e preserva a busca local", async () => {
@@ -695,4 +695,28 @@ test("prioritizes project and package-manager yt-dlp over stale PATH entries", a
   assert.match(launcher, /"Microsoft", "WinGet", "Links"/);
   assert.match(launcher, /\.\.\.preferred\.filter\(existsSync\), \.\.\.current/);
   assert.doesNotMatch(launcher, /\.\.\.current, \.\.\.candidates/);
+});
+
+test("supports interactive Rubik blocks and worker solver", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /createRubikExtension/);
+  assert.match(html, /data-note-rubik/);
+  assert.match(html, /rubik-open:/);
+  assert.match(html, /rubikExtension\.update\(time\)/);
+  const rubik = await readFile(new URL("../public/vendor/cubejs/rubik-ar.js", import.meta.url), "utf8");
+  assert.match(rubik, /Cube\.initSolver\(\)/);
+  assert.match(rubik, /new Worker/);
+  assert.match(rubik, /cornerIndices|const corners=/);
+  assert.match(rubik, /register\(group,hooks\.width\)/);
+});
+
+test("renders semantic MIDI measures without changing exact playback", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /midiVizMeasureInfo/);
+  assert.match(html, /quantizedStartBeat/);
+  assert.match(html, /quantizedDurationBeats/);
+  assert.match(html, /engraved score/);
+  assert.match(html, /keySignatures/);
+  assert.match(html, /tempoMap/);
+  assert.match(html, /midiVizScoreLayout/);
 });
