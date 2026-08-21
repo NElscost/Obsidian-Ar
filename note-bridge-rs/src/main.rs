@@ -1871,7 +1871,9 @@ async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
             "--max-filesize",
             "256M",
             "--format",
-            "22/18/b[ext=mp4][height<=720]/b[height<=720]/best",
+            "18/22/bv*[ext=mp4][vcodec^=avc1][height<=720]+ba[ext=m4a]/bv*[ext=mp4][height<=720]+ba/bv*[height<=720]+ba",
+            "--merge-output-format",
+            "mp4",
             "--output",
         ])
         .arg(&partial_path)
