@@ -670,4 +670,11 @@ test("supports Chesser chess blocks with lazy FEN and PGN interaction", async ()
   assert.match(html, /chess-next/);
   assert.match(html, /chess-flip/);
   assert.match(html, /game\.move\(\{from:state\.selected,to:square,promotion:'q'\}\)/);
+  assert.match(html, /chessBoardThemes=\{brown:/);
+  assert.match(html, /let chessReadingGroup = null/);
+  assert.match(html, /curvedPanelGeometry\(AR_VIDEO_WIDTH,AR_VIDEO_HEIGHT/);
+  assert.match(html, /applyRoundedPanelMask\(panel\)/);
+  assert.match(html, /function setChessReplay/);
+  assert.match(html, /chess-replay/);
+  assert.match(html, /colorWrite: false, transparent: true, opacity: 0/);
 });
