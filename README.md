@@ -68,7 +68,7 @@ yt-dlp --version
 Install [Homebrew](https://brew.sh/) and then run:
 
 ```sh
-brew install git node rustup cmake llvm cloudflared ffmpeg yt-dlp yt-dlp
+brew install git node rustup cmake llvm cloudflared ffmpeg yt-dlp
 rustup-init -y
 ```
 

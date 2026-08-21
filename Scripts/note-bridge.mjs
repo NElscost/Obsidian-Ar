@@ -20,23 +20,26 @@ const logDir = path.join(workspace, "note-bridge-logs");
 
 function extendExecutablePath() {
   const home = homedir();
-  const candidates = process.platform === "win32"
+  const preferred = process.platform === "win32"
     ? [
+        path.join(workspace, ".tools"),
+        path.join(home, "AppData", "Local", "Microsoft", "WinGet", "Links"),
         path.join(home, ".cargo", "bin"),
         path.join(process.env.ProgramFiles ?? "C:\\Program Files", "Cloudflare", "Cloudflared"),
         path.join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "cloudflared")
       ]
     : [
+        path.join(workspace, ".tools"),
         path.join(home, ".cargo", "bin"),
         "/opt/homebrew/bin",
         "/usr/local/bin",
-        "/usr/bin",
-        "/bin",
+        "/home/linuxbrew/.linuxbrew/bin",
         "/opt/local/bin",
-        "/home/linuxbrew/.linuxbrew/bin"
+        "/usr/bin",
+        "/bin"
       ];
   const current = String(process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
-  process.env.PATH = [...new Set([...current, ...candidates.filter(existsSync)])].join(path.delimiter);
+  process.env.PATH = [...new Set([...preferred.filter(existsSync), ...current])].join(path.delimiter);
 }
 
 extendExecutablePath();

@@ -5,6 +5,7 @@ import test from "node:test";
 const xrUrl = new URL("../public/xr.html", import.meta.url);
 const viteConfigUrl = new URL("../vite.config.ts", import.meta.url);
 const sitesPluginUrl = new URL("../sites-vite-plugin.ts", import.meta.url);
+const noteBridgeLauncherUrl = new URL("../../Scripts/note-bridge.mjs", import.meta.url);
 const blenderGeneratorUrl = new URL(
   "../../Scripts/Generate-SpaceBlend.py",
   import.meta.url
@@ -684,4 +685,11 @@ test("supports Chesser chess blocks with lazy FEN and PGN interaction", async ()
   assert.match(html, /chessReadingGroup\?\?midiVizReadingGroup/);
   const hotspotRebuild = html.match(/function rebuildArNoteMediaHotspotControls\(\) \{([\s\S]*?)function drawArNotePage/)?.[1] ?? '';
   assert.doesNotMatch(hotspotRebuild, /disposeChessOverlay\(\)/);
+});
+test("prioritizes project and package-manager yt-dlp over stale PATH entries", async () => {
+  const launcher = await readFile(noteBridgeLauncherUrl, "utf8");
+  assert.match(launcher, /path\.join\(workspace, "\.tools"\)/);
+  assert.match(launcher, /"Microsoft", "WinGet", "Links"/);
+  assert.match(launcher, /\.\.\.preferred\.filter\(existsSync\), \.\.\.current/);
+  assert.doesNotMatch(launcher, /\.\.\.current, \.\.\.candidates/);
 });
