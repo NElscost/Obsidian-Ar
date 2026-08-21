@@ -212,8 +212,8 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /action\.startsWith\("media-track:"\)/);
   assert.match(html, /control\.position\.set\([\s\S]*?0\.07/);
   assert.match(html, /function layoutVideoReadingPair/);
-  assert.match(html, /radius=\.85,gap=\.006/);
-  assert.match(html, /videoReadingGroup/);
+  assert.match(html, /const SPATIAL_WINDOW_RADIUS = 0\.85/);
+  assert.match(html, /function layoutSpatialWindows/);
   assert.match(html, /color: 0x000000/);
   assert.match(html, /videoClose[\s\S]*?color: 0xff6b6b/);
   assert.match(html, /videoCloseIcon\.renderOrder = 1004/);
@@ -652,8 +652,8 @@ test("reproduz MIDI com transporte leve, waveform e partitura lateral", async ()
   assert.match(html, /function drawMidiVizRoll/);
   assert.match(html, /midiVizRollCanvas\.width=768/);
   assert.match(html, /drawMidiVizRoll\(current\)/);
-  assert.match(html, /radius=0\.85,gap=0\.006,sideAngle=2\*Math\.asin/);
-  assert.match(html, /midiVizScoreGroup=new THREE\.Group\(\); const radius=0\.85,gap=0\.006/);
+  assert.match(html, /registerSpatialAuxWindow\(midiVizGroup,AR_VIDEO_WIDTH\)/);
+  assert.match(html, /registerSpatialAuxWindow\(midiVizScoreGroup,AR_VIDEO_WIDTH\)/);
   assert.match(html, /function abcEventPitches/);
   assert.match(html, /score:false,waveform:false,externalAudio:true/);
 });
@@ -672,7 +672,7 @@ test("supports Chesser chess blocks with lazy FEN and PGN interaction", async ()
   assert.match(html, /chess-flip/);
   assert.match(html, /game\.move\(\{from:state\.selected,to:square,promotion:'q'\}\)/);
   assert.match(html, /chessBoardThemes=\{brown:/);
-  assert.match(html, /let chessReadingGroup = null/);
+  assert.match(html, /const spatialAuxWindows = \[\]/);
   assert.match(html, /curvedPanelGeometry\(AR_VIDEO_WIDTH,AR_VIDEO_HEIGHT/);
   assert.match(html, /applyRoundedPanelMask\(panel\)/);
   assert.match(html, /function setChessReplay/);
@@ -682,7 +682,10 @@ test("supports Chesser chess blocks with lazy FEN and PGN interaction", async ()
   assert.match(html, /canvas\.toDataURL\('image\/png'\)/);
   assert.match(html, /await image\.decode\(\)\.catch/);
   assert.match(html, /width:min\(100%,500px\)/);
-  assert.match(html, /chessReadingGroup\?\?midiVizReadingGroup/);
+  assert.match(html, /registerSpatialAuxWindow\(group,AR_VIDEO_WIDTH\)/);
+  assert.match(html, /function layoutSpatialWindows/);
+  assert.match(html, /const entries = \[\{ group: reading, width: AR_NOTE_WIDTH \}, \.\.\.spatialAuxWindows\]/);
+  assert.doesNotMatch(html, /disposeChessOverlay\(\);if\(midiVizGroup\)disposeMidiViz\(\)/);
   const hotspotRebuild = html.match(/function rebuildArNoteMediaHotspotControls\(\) \{([\s\S]*?)function drawArNotePage/)?.[1] ?? '';
   assert.doesNotMatch(hotspotRebuild, /disposeChessOverlay\(\)/);
 });

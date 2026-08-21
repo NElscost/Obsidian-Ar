@@ -1165,7 +1165,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         );
         abcPlaybackHighlight.renderOrder = 1012;
       }
-      const highlightParent=midiVizReadingGroup??videoReadingGroup??arNoteGroup;
+      const highlightParent=spatialReadingGroup??arNoteGroup;
       if(abcPlaybackHighlight.parent!==highlightParent)highlightParent.add(abcPlaybackHighlight);
       const bounds = (
         Number.isFinite(hotspot.scoreViewLeft) &&
@@ -1718,7 +1718,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       let markdown = preprocessNotePluginBlocks(source)
         .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
         .replace(/%%[\s\S]*?%%/g, "")
-        .replace(/^(```|~~~)\[([^\]\r\n]+)\]\s*$/gm, "$1$2")
+        .replace(/^(```|~~~)\[([^\]\n]+)\]\s*$/gm, "$1$2")
         .replace(/\$\$([\s\S]+?)\$\$/g, (_, latex) => stashMath(latex, true))
         .replace(/(^|[^\\])\$([^$\n]+?)\$/g, (_, prefix, latex) =>
           `${prefix}${stashMath(latex, false)}`
@@ -2413,9 +2413,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let activeNoteAudioControl = null;
     let activeNoteVideoSurface = null;
     let activeNoteVideoGroup = null;
-    let videoReadingGroup = null;
+    let spatialReadingGroup = null;
+    const spatialAuxWindows = [];
     let midiVizGroup = null;
-    let midiVizReadingGroup = null;
     let midiVizNotesMesh = null;
     let midiVizRollCanvas = null;
     let midiVizRollTexture = null;
@@ -2690,7 +2690,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     }
 
     function disposeMidiViz() {
-      if(midiVizReadingGroup){const children=[...midiVizReadingGroup.children];for(const child of children)arNoteGroup.add(child);midiVizReadingGroup.removeFromParent();midiVizReadingGroup=null;}
+      unregisterSpatialAuxWindow(midiVizGroup, false);
+      unregisterSpatialAuxWindow(midiVizScoreGroup, false);
       const groups = [midiVizGroup, midiVizScoreGroup].filter(Boolean);
       const owned = new Set();
       groups.forEach((group) => group.traverse((object) => owned.add(object)));
@@ -2713,6 +2714,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       midiVizWindowOrigin = midiVizScoreWindow = -1; midiVizAudioCursor = 0; midiVizAudioStartedAt = 0; midiVizPlaybackRate = 1; midiVizToggleControl = null; midiVizExternalAudio = false; midiVizPreviousTime = 0;
       if (activeNoteTrack?.kind === 'midi-viz') activeNoteTrack = null;
       syncAmbientAudio();
+      layoutSpatialWindows();
     }
 
     function midiVizTitleTexture(data) {
@@ -2796,7 +2798,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       midiVizScorePlayhead.position.z=0.024; midiVizScorePlayhead.renderOrder=1011; midiVizScorePlayhead.raycast=()=>{};
       midiVizScoreHighlight = new THREE.Mesh(new THREE.CircleGeometry(0.012,16), new THREE.MeshBasicMaterial({ color:0xffd166, transparent:true, opacity:0.9, depthTest:false, depthWrite:false, toneMapped:false }));
       midiVizScoreHighlight.position.z=0.026; midiVizScoreHighlight.renderOrder=1012; midiVizScoreHighlight.visible=false; midiVizScoreHighlight.raycast=()=>{};
-      midiVizScoreGroup.add(panel,midiVizScorePlayhead,midiVizScoreHighlight); arNoteGroup.add(midiVizScoreGroup); drawMidiVizScore(0,true);
+      midiVizScoreGroup.add(panel,midiVizScorePlayhead,midiVizScoreHighlight); registerSpatialAuxWindow(midiVizScoreGroup,AR_VIDEO_WIDTH); drawMidiVizScore(0,true);
     }
 
     function updateMidiVizScoreHighlight(currentTime, time) {
@@ -2873,17 +2875,15 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     }
 
     function createMidiVizPanel(data, source, options = {}) {
-      disposeMidiViz(); if(activeNoteVideoGroup)closeActiveVideo(true);
+      disposeMidiViz();
       midiVizData=data;midiVizSource=source;midiVizPlaying=false;midiVizPlaybackRate=1;midiVizExternalAudio=Boolean(options.externalAudio);midiVizStartedAt=performance.now();if(!options.preserveTrack)activeNoteTrack={kind:'midi-viz',source,label:data.title||source};activeNoteMediaPath=arNotePath;
-      const hasScore=options.score!==false,radius=0.85,gap=0.006,sideAngle=2*Math.asin(Math.min(.98,(AR_VIDEO_WIDTH+gap)/(2*radius))),readingAngle=hasScore?-sideAngle:-sideAngle/2,synthAngle=hasScore?0:sideAngle/2;
-      midiVizReadingGroup=new THREE.Group();for(const child of [...arNoteGroup.children])midiVizReadingGroup.add(child);midiVizReadingGroup.position.set(-radius*Math.sin(readingAngle),0,radius*(1-Math.cos(readingAngle)));midiVizReadingGroup.rotation.y=readingAngle;arNoteGroup.add(midiVizReadingGroup);
-      midiVizGroup=new THREE.Group();midiVizGroup.position.set(-radius*Math.sin(synthAngle),0,radius*(1-Math.cos(synthAngle)));midiVizGroup.rotation.y=synthAngle;
+      midiVizGroup=new THREE.Group();
       midiVizRollCanvas=document.createElement('canvas');midiVizRollCanvas.width=768;midiVizRollCanvas.height=512;
       midiVizRollTexture=new THREE.CanvasTexture(midiVizRollCanvas);midiVizRollTexture.colorSpace=THREE.SRGBColorSpace;midiVizRollTexture.minFilter=THREE.LinearFilter;midiVizRollTexture.magFilter=THREE.LinearFilter;midiVizRollTexture.generateMipmaps=false;
       midiVizRollSurface=new THREE.Mesh(curvedPanelGeometry(AR_VIDEO_WIDTH,AR_VIDEO_HEIGHT,0.022,24),new THREE.MeshBasicMaterial({map:midiVizRollTexture,transparent:false,depthTest:true,depthWrite:true,toneMapped:false}));applyRoundedPanelMask(midiVizRollSurface);midiVizRollSurface.raycast=()=>{};
       const title=new THREE.Mesh(new THREE.PlaneGeometry(AR_VIDEO_WIDTH-0.16,0.064),new THREE.MeshBasicMaterial({map:midiVizTitleTexture(data),transparent:false,depthTest:false,depthWrite:false,toneMapped:false}));title.position.set(0,AR_VIDEO_HEIGHT/2-0.062,0.028);title.renderOrder=1004;title.raycast=()=>{};
       const close=new THREE.Mesh(new THREE.CircleGeometry(0.019,14),new THREE.MeshBasicMaterial({color:0xff6b6b,depthTest:false,toneMapped:false}));close.position.set(AR_VIDEO_WIDTH/2-0.028,AR_VIDEO_HEIGHT/2-0.028,0.03);close.renderOrder=1013;close.userData.noteAction='midi-close';addMidiVizIcon(close,'close');
-      midiVizGroup.add(midiVizRollSurface,title,close);arNoteGroup.add(midiVizGroup);arNoteControls.push(close);if(options.score!==false)createMidiVizScorePanel(data);rebuildMidiVizWindow(0);resetMidiVizAudioCursor(0);
+      midiVizGroup.add(midiVizRollSurface,title,close);registerSpatialAuxWindow(midiVizGroup,AR_VIDEO_WIDTH);arNoteControls.push(close);if(options.score!==false)createMidiVizScorePanel(data);rebuildMidiVizWindow(0);resetMidiVizAudioCursor(0);
       if(options.waveform!==false)createArAudioWaveform(midiVizWaveform(data),AR_VIDEO_WIDTH,AR_VIDEO_HEIGHT);if(!midiVizExternalAudio)void ensureMidiVizAudio().then(()=>{setMidiVizPlaying(true);syncAmbientAudio();});
     }
 
@@ -2934,6 +2934,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         arNoteControls = arNoteControls.filter((control) => !waveformControls.has(control));
       }
       if (group) {
+        unregisterSpatialAuxWindow(group, false);
         group.removeFromParent();
         group.traverse((object) => {
           if (!object.isMesh) return;
@@ -3011,7 +3012,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         object.material?.dispose();
       });
       arNoteGroup.clear();
-      videoReadingGroup = null;
+      spatialReadingGroup = null;
+      spatialAuxWindows.length = 0;
       arNoteGroup.scale.setScalar(1);
       arNoteTexture?.dispose();
       arNoteSurface = null;
@@ -4347,7 +4349,6 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     }
 
     let chessOverlayGroup = null;
-    let chessReadingGroup = null;
     let chessOverlayState = null;
     let chessOverlayTexture = null;
     let chessOverlayControls = [];
@@ -4360,9 +4361,10 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function disposeChessOverlay() {
       stopChessReplay();
       const controls=new Set(chessOverlayControls);arNoteControls=arNoteControls.filter((control)=>!controls.has(control));
+      unregisterSpatialAuxWindow(chessOverlayGroup, false);
       if(chessOverlayGroup){chessOverlayGroup.removeFromParent();chessOverlayGroup.traverse((object)=>{object.geometry?.dispose?.();if(object.material?.map!==chessOverlayTexture)object.material?.map?.dispose?.();object.material?.dispose?.();});}
       chessOverlayTexture?.dispose();chessOverlayGroup=null;chessOverlayState=null;chessOverlayTexture=null;chessOverlayControls=[];
-      if(chessReadingGroup){for(const child of [...chessReadingGroup.children])arNoteGroup.add(child);chessReadingGroup.removeFromParent();chessReadingGroup=null;}
+      layoutSpatialWindows();
     }
     function refreshChessOverlay() {
       if(!chessOverlayState||!chessOverlayTexture)return;drawChessCanvas(chessOverlayTexture.image,chessOverlayState);chessOverlayTexture.needsUpdate=true;
@@ -4382,17 +4384,15 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function toggleChessReplay(){setChessReplay(!chessReplayPlaying);setXrMessage(chessReplayPlaying?'Chess replay playing.':'Chess replay paused.');}
     async function openChessOverlay(source) {
       const hotspot=(arNotePages[arNotePage]?.mediaHotspots??[]).find((item)=>item.kind==='chess'&&item.source===source);if(!hotspot)return;
-      const state=await ensureChessState(source);disposeChessOverlay();if(midiVizGroup)disposeMidiViz();if(activeNoteVideoGroup)closeActiveVideo(true);chessOverlayState=state;
-      const radius=.85,gap=.006,sideAngle=2*Math.asin(Math.min(.98,(AR_VIDEO_WIDTH+gap)/(2*radius))),readingAngle=-sideAngle/2,boardAngle=sideAngle/2;
-      chessReadingGroup=new THREE.Group();for(const child of [...arNoteGroup.children])chessReadingGroup.add(child);chessReadingGroup.position.set(-radius*Math.sin(readingAngle),0,radius*(1-Math.cos(readingAngle)));chessReadingGroup.rotation.y=readingAngle;arNoteGroup.add(chessReadingGroup);
-      const group=new THREE.Group();group.name='chesser-window';group.position.set(-radius*Math.sin(boardAngle),0,radius*(1-Math.cos(boardAngle)));group.rotation.y=boardAngle;
+      const state=await ensureChessState(source);disposeChessOverlay();chessOverlayState=state;
+      const group=new THREE.Group();group.name='chesser-window';
       const panel=new THREE.Mesh(curvedPanelGeometry(AR_VIDEO_WIDTH,AR_VIDEO_HEIGHT,.022,24),new THREE.MeshBasicMaterial({color:0x10151d,transparent:true,opacity:.98,depthTest:true,depthWrite:true,toneMapped:false}));applyRoundedPanelMask(panel);panel.raycast=()=>{};group.add(panel);
       const boardSize=Math.min(AR_VIDEO_WIDTH-.055,AR_VIDEO_HEIGHT-.092),boardY=.018,canvas=document.createElement('canvas');canvas.width=512;canvas.height=512;drawChessCanvas(canvas,state);chessOverlayTexture=new THREE.CanvasTexture(canvas);chessOverlayTexture.colorSpace=THREE.SRGBColorSpace;chessOverlayTexture.minFilter=THREE.LinearFilter;chessOverlayTexture.magFilter=THREE.LinearFilter;chessOverlayTexture.generateMipmaps=false;
       const board=new THREE.Mesh(curvedPanelGeometry(boardSize,boardSize,.012,16),new THREE.MeshBasicMaterial({map:chessOverlayTexture,depthTest:true,depthWrite:true,toneMapped:false}));board.position.set(0,boardY,.027);board.renderOrder=1010;board.raycast=()=>{};group.add(board);
       const white=state.orientation!=='black',files=white?'abcdefgh':'hgfedcba',ranks=white?[8,7,6,5,4,3,2,1]:[1,2,3,4,5,6,7,8],cell=boardSize/8;
       for(let row=0;row<8;row+=1)for(let column=0;column<8;column+=1){const control=new THREE.Mesh(new THREE.PlaneGeometry(cell*.96,cell*.96),new THREE.MeshBasicMaterial({colorWrite:false,transparent:true,opacity:0,depthTest:false,depthWrite:false}));control.position.set(-boardSize/2+cell*(column+.5),boardY+boardSize/2-cell*(row+.5),.044);control.renderOrder=1012;control.userData.noteAction=`chess-square:${files[column]}${ranks[row]}`;control.userData.highlightScale=false;group.add(control);arNoteControls.push(control);chessOverlayControls.push(control);}
       const buttonY=-AR_VIDEO_HEIGHT/2+.028;addChessOverlayControl(group,'chess-prev',-.072,buttonY,.015,'‹');addChessOverlayControl(group,'chess-replay',-.024,buttonY,.015,'▶',0x63e6be);addChessOverlayControl(group,'chess-flip',.024,buttonY,.015,'↻',0xffd166);addChessOverlayControl(group,'chess-next',.072,buttonY,.015,'›');addChessOverlayControl(group,'chess-close',AR_VIDEO_WIDTH/2-.028,AR_VIDEO_HEIGHT/2-.028,.016,'×',0xff6b6b);
-      arNoteGroup.add(group);chessOverlayGroup=group;setXrMessage(`Chessboard ready · move ${state.index}/${state.fens.length-1}.`);if(state.fens.length>1)setChessReplay(true,true);
+      chessOverlayGroup=group;registerSpatialAuxWindow(group,AR_VIDEO_WIDTH);setXrMessage(`Chessboard ready · move ${state.index}/${state.fens.length-1}.`);if(state.fens.length>1)setChessReplay(true,true);
     }
     function activateChessSquare(square) {
       const state=chessOverlayState;if(!state||state.config.viewOnly)return;stopChessReplay();
@@ -4434,7 +4434,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           control.userData.noteAction = `chess-open:${encodeURIComponent(hotspot.source)}`;
         }
         control.userData.highlightScale = false;
-        (chessReadingGroup??midiVizReadingGroup??videoReadingGroup??arNoteGroup).add(control);
+        (spatialReadingGroup??arNoteGroup).add(control);
         arNoteControls.push(control);
         arNoteMediaHotspotControls.push(control);
       }
@@ -5098,6 +5098,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
     function removeArVideoLoadingWindow() {
       if (!activeNoteVideoLoadingGroup) return;
+      unregisterSpatialAuxWindow(activeNoteVideoLoadingGroup, false);
       activeNoteVideoLoadingGroup.removeFromParent();
       activeNoteVideoLoadingGroup.traverse((object) => {
         object.geometry?.dispose?.();
@@ -5105,17 +5106,64 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       });
       activeNoteVideoLoadingGroup = null;
       activeNoteVideoLoadingSpinner = null;
+      layoutSpatialWindows();
+    }
+
+    const SPATIAL_WINDOW_RADIUS = 0.85;
+    const SPATIAL_WINDOW_GAP = 0.006;
+    function ensureSpatialReadingGroup() {
+      if (spatialReadingGroup) return spatialReadingGroup;
+      spatialReadingGroup = new THREE.Group();
+      spatialReadingGroup.name = 'note-reading-window';
+      arNoteGroup.add(spatialReadingGroup);
+      for (const child of [...arNoteGroup.children]) {
+        if (child === spatialReadingGroup || spatialAuxWindows.some((entry) => entry.group === child) || child.userData?.keepOutsideReadingWindow) continue;
+        spatialReadingGroup.add(child);
+      }
+      return spatialReadingGroup;
+    }
+    function layoutSpatialWindows() {
+      if (!spatialAuxWindows.length) {
+        if (spatialReadingGroup) {
+          for (const child of [...spatialReadingGroup.children]) arNoteGroup.add(child);
+          spatialReadingGroup.removeFromParent(); spatialReadingGroup = null;
+        }
+        return;
+      }
+      const reading = ensureSpatialReadingGroup();
+      const entries = [{ group: reading, width: AR_NOTE_WIDTH }, ...spatialAuxWindows];
+      const angles = [0];
+      for (let index = 1; index < entries.length; index += 1) {
+        const distance = entries[index - 1].width / 2 + entries[index].width / 2 + SPATIAL_WINDOW_GAP;
+        angles.push(angles[index - 1] + 2 * Math.asin(Math.min(0.98, distance / (2 * SPATIAL_WINDOW_RADIUS))));
+      }
+      const center = (angles[0] + angles.at(-1)) / 2;
+      entries.forEach((entry, index) => {
+        const angle = angles[index] - center;
+        entry.group.position.set(-SPATIAL_WINDOW_RADIUS * Math.sin(angle), 0, SPATIAL_WINDOW_RADIUS * (1 - Math.cos(angle)));
+        entry.group.rotation.y = angle;
+      });
+    }
+    function registerSpatialAuxWindow(group, width = AR_VIDEO_WIDTH) {
+      if (!group) return;
+      const entry = spatialAuxWindows.find((item) => item.group === group);
+      if (entry) entry.width = width; else spatialAuxWindows.push({ group, width });
+      if (group.parent !== arNoteGroup) arNoteGroup.add(group);
+      layoutSpatialWindows();
+    }
+    function unregisterSpatialAuxWindow(group, reflow = true) {
+      if (!group) return;
+      const index = spatialAuxWindows.findIndex((entry) => entry.group === group);
+      if (index >= 0) spatialAuxWindows.splice(index, 1);
+      group.removeFromParent();
+      if (reflow) layoutSpatialWindows();
     }
 
     function restoreVideoReadingLayout() {
-      if(!videoReadingGroup)return;for(const child of [...videoReadingGroup.children])arNoteGroup.add(child);videoReadingGroup.removeFromParent();videoReadingGroup=null;
+      layoutSpatialWindows();
     }
     function layoutVideoReadingPair(videoGroup) {
-      if(!videoGroup)return;const radius=.85,gap=.006,angle=2*Math.asin(Math.min(.98,(AR_VIDEO_WIDTH+gap)/(2*radius))),half=angle/2;
-      if(!videoReadingGroup){videoReadingGroup=new THREE.Group();arNoteGroup.add(videoReadingGroup);}
-      for(const child of [...arNoteGroup.children])if(child!==videoReadingGroup&&child!==videoGroup&&child!==activeNoteVideoGroup&&child!==activeNoteVideoLoadingGroup&&!child.userData?.keepOutsideReadingWindow)videoReadingGroup.add(child);
-      videoReadingGroup.position.set(-radius*Math.sin(-half),0,radius*(1-Math.cos(-half)));videoReadingGroup.rotation.y=-half;
-      videoGroup.position.set(-radius*Math.sin(half),0,radius*(1-Math.cos(half)));videoGroup.rotation.y=half;if(videoGroup.parent!==arNoteGroup)arNoteGroup.add(videoGroup);
+      registerSpatialAuxWindow(videoGroup, AR_VIDEO_WIDTH);
     }
 
     function createArVideoLoadingWindow() {
