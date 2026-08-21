@@ -70,6 +70,14 @@ if ($env:OS -eq "Windows_NT") {
     New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
     Write-Host "Baixando yt-dlp atualizado para o projeto..."
     Invoke-WebRequest -Uri "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile $localYtDlp
+  } else {
+    # YouTube changes frequently. A stale yt-dlp may still resolve metadata but
+    # receive HTTP 403 when the media stream starts, so refresh it in place.
+    Write-Host "Verificando atualização do yt-dlp..."
+    & $localYtDlp --update-to stable
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warning "Não foi possível atualizar o yt-dlp; continuando com a versão instalada."
+    }
   }
   $env:Path = $toolsDir + [IO.Path]::PathSeparator + $env:Path
 }

@@ -1862,6 +1862,12 @@ async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
         .args([
             "--no-playlist",
             "--no-progress",
+            "--socket-timeout",
+            "15",
+            "--retries",
+            "2",
+            "--fragment-retries",
+            "2",
             "--max-filesize",
             "256M",
             "--format",
