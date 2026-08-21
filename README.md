@@ -207,7 +207,7 @@ orientation: white
 ```
 ````
 
-For PGN, use `pgn: |` followed by indented PGN lines, as Chesser does. The board engine is loaded only when such a block is present. Pinching the captured board opens a separate curved 3D window beside the reading panel, using Chesser-compatible board themes, highlighted legal destinations, previous/next navigation, board flipping, and automatic PGN replay with pause/resume. Invisible raycast-only targets keep MIDI and chess blocks selectable without drawing white click surfaces. Board textures, timers, controls, and window geometry are reused during the session and disposed when the note or page changes.
+For PGN, use `pgn: |` followed by indented PGN lines, as Chesser does. The board engine is loaded only when such a block is present. Pinching the captured board opens a separate curved 3D window beside the reading panel, using Chesser-compatible board themes, highlighted legal destinations, previous/next navigation, board flipping, and automatic PGN replay with pause/resume. The inline board preview is decoded to a 500 px PNG and paginated as one atomic block, so it is never split between pages. Invisible raycast-only targets keep MIDI and chess blocks selectable without drawing white click surfaces; changing the reading page does not close an already-open board. Board textures, timers, controls, and window geometry are reused during the session and disposed when the note or page changes.
 The viewer starts in English and includes a language selector for Portuguese, Spanish, French, Italian, and Romanian.
 
 During AR, use the keyboard search to find notes by title. Selecting a suggested result with a pinch opens the note through the same cached bridge path used by the main graph.

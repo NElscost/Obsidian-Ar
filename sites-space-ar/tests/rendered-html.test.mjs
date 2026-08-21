@@ -677,4 +677,11 @@ test("supports Chesser chess blocks with lazy FEN and PGN interaction", async ()
   assert.match(html, /function setChessReplay/);
   assert.match(html, /chess-replay/);
   assert.match(html, /colorWrite: false, transparent: true, opacity: 0/);
+  assert.match(html, /className='note-chess-image'/);
+  assert.match(html, /canvas\.toDataURL\('image\/png'\)/);
+  assert.match(html, /await image\.decode\(\)\.catch/);
+  assert.match(html, /width:min\(100%,500px\)/);
+  assert.match(html, /chessReadingGroup\?\?midiVizReadingGroup/);
+  const hotspotRebuild = html.match(/function rebuildArNoteMediaHotspotControls\(\) \{([\s\S]*?)function drawArNotePage/)?.[1] ?? '';
+  assert.doesNotMatch(hotspotRebuild, /disposeChessOverlay\(\)/);
 });

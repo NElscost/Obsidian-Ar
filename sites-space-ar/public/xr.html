@@ -532,7 +532,7 @@
     .note-content .note-smiles { margin:10px 0; padding:8px; border:1px solid rgba(99,230,190,.25); border-radius:10px; background:rgba(7,11,18,.82); break-inside:avoid; overflow:hidden; }
     .note-content .note-chess { margin:10px 0; padding:8px; border:1px solid rgba(255,209,102,.38); border-radius:10px; background:rgba(7,11,18,.9); break-inside:avoid; overflow:hidden; }
     .note-content .note-chess::before { content:"♟ Select the board to interact"; display:block; margin-bottom:6px; color:#ffd166; font-size:12px; font-weight:750; }
-    .note-content .note-chess canvas { position:static; inset:auto; display:block; width:min(100%,560px); height:auto; margin:auto; border-radius:5px; }
+    .note-content .note-chess canvas, .note-content .note-chess-image { position:static; inset:auto; display:block; width:min(100%,500px); max-width:500px; max-height:500px; aspect-ratio:1; object-fit:contain; height:auto; margin:auto; border-radius:5px; }
     .note-content .note-smiles canvas, .note-content .note-smiles svg, .note-content .note-smiles img { position:static; inset:auto; display:block; width:100%; height:auto; max-height:300px; object-fit:contain; }
     .note-content .note-avatar { display:flex; gap:14px; align-items:center; margin:10px 0; padding:10px; border-radius:14px; background:rgba(20,29,45,.72); break-inside:avoid; }
     .note-content .note-avatar.right { flex-direction:row-reverse; }
@@ -1351,7 +1351,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     }
     async function renderNoteChessBlocks() {
       const blocks=[...noteContent.querySelectorAll('[data-note-chess]')];
-      for(const block of blocks){let source=block.dataset.noteChess||'';try{source=decodeURIComponent(source);}catch{}try{const state=await ensureChessState(source),canvas=document.createElement('canvas');canvas.width=560;canvas.height=560;canvas.dataset.noteChessBoard='1';drawChessCanvas(canvas,state);block.replaceChildren(canvas);}catch(error){block.textContent='Chess position could not be rendered.';console.warn('Chesser block rendering failed.',error);}}
+      for(const block of blocks){let source=block.dataset.noteChess||'';try{source=decodeURIComponent(source);}catch{}try{const state=await ensureChessState(source),canvas=document.createElement('canvas');canvas.width=500;canvas.height=500;drawChessCanvas(canvas,state);const image=document.createElement('img');image.className='note-chess-image';image.dataset.noteChessBoard='1';image.width=500;image.height=500;image.alt='Chess position';image.src=canvas.toDataURL('image/png');await image.decode().catch(()=>{});block.replaceChildren(image);}catch(error){block.textContent='Chess position could not be rendered.';console.warn('Chesser block rendering failed.',error);}}
     }
     function loadSmilesDrawer() {
       if (window.SmilesDrawer) return Promise.resolve(window.SmilesDrawer);
@@ -3775,7 +3775,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         let source = encoded || "";
         try { source = decodeURIComponent(source); } catch {}
         const boardBounds = kind === "chess"
-          ? element.querySelector("canvas[data-note-chess-board]")?.getBoundingClientRect()
+          ? element.querySelector("[data-note-chess-board]")?.getBoundingClientRect()
           : null;
         const scoreBounds = kind === "music-abc"
           ? element.querySelector(".note-music-abc-image, svg")?.getBoundingClientRect()
@@ -4405,7 +4405,6 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function stepChessOverlay(delta) {const state=chessOverlayState;if(!state)return;stopChessReplay();state.index=THREE.MathUtils.clamp(state.index+delta,0,state.fens.length-1);state.selected=null;state.legalTargets=[];refreshChessOverlay();setXrMessage(`Chess move ${state.index}/${state.fens.length-1}.`);}
     function flipChessOverlay() {if(!chessOverlayState)return;stopChessReplay();const source=chessOverlayState.source;chessOverlayState.orientation=chessOverlayState.orientation==='black'?'white':'black';void openChessOverlay(source);}
     function rebuildArNoteMediaHotspotControls() {
-      disposeChessOverlay();
       for (const control of arNoteMediaHotspotControls) {
         arNoteControls = arNoteControls.filter((item) => item !== control);
         control.removeFromParent();
@@ -4435,7 +4434,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           control.userData.noteAction = `chess-open:${encodeURIComponent(hotspot.source)}`;
         }
         control.userData.highlightScale = false;
-        (midiVizReadingGroup??videoReadingGroup??arNoteGroup).add(control);
+        (chessReadingGroup??midiVizReadingGroup??videoReadingGroup??arNoteGroup).add(control);
         arNoteControls.push(control);
         arNoteMediaHotspotControls.push(control);
       }
