@@ -482,6 +482,9 @@ test("mantém a busca digitada dentro da sessão WebXR", async () => {
   assert.doesNotMatch(html, /tapThumb: 4/);
   assert.match(html, /graphAutoRotating && isPlaced\)/);
   assert.match(html, /!arNoteGroup\.visible &&\s+!arSearchKeyboardActive/);
+assert.match(html, /const keepGraphRotating = graphAutoRotating/);
+assert.match(html, /graphAutoRotating = keepGraphRotating/);
+assert.match(html, /if \(!menuStarted && !arSearchKeyboardActive && tapStarted/);
   assert.match(html, /closedFingers === 4/);
   assert.doesNotMatch(html, /        updateJointDoubleThumbTap\(frame, inputSource, time\);/);
   assert.match(html, /function keyboardTexture/);

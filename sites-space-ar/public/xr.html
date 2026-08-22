@@ -8950,10 +8950,15 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
       state.pressed = menuPressed || tapPressed || leftPressed || rightPressed;
       if (menuStarted) {
+        const keepGraphRotating = graphAutoRotating;
+        state.lastThumbTapAt = 0;
+        state.lastCompletedDoubleTapAt = 0;
         toggleKeyboardSearch();
+        graphAutoRotating = keepGraphRotating;
+        if (keepGraphRotating) graphAutoRotationLastTime = time;
         setXrMessage(arSearchKeyboardActive ? "Busca 3D aberta pelo gesto menu." : "Busca 3D fechada pelo gesto menu.");
       }
-      if (!arSearchKeyboardActive && tapStarted && !graphHierarchy?.expandedHubId) {
+      if (!menuStarted && !arSearchKeyboardActive && tapStarted && !graphHierarchy?.expandedHubId) {
         registerDoubleThumbTap(state, time);
       }
       if (state.pressed) state.suppressRayUntil = time + 260;
