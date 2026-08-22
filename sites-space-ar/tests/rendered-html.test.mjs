@@ -232,7 +232,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /MP4 com H\.264 \+ AAC/);
   assert.match(html, /async function toggleNoteAudio\(requestedTrack = null\)/);
   assert.match(html, /function attachNoteMediaHotspots/);
-  assert.match(html, /space-ar-note-cache-v10/);
+  assert.match(html, /space-ar-note-cache-v16/);
   assert.match(html, /pageMeta: pages\.map/);
   assert.match(html, /hasMediaHotspotMetadata/);
   assert.match(html, /if \(isVideo\) void prepareVideoAmbilight\(track, arNotePath\)/);
@@ -287,7 +287,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function setNoteControlIcon/);
   assert.match(html, /new THREE\.PlaneGeometry\(0\.024, 0\.024\)/);
   assert.match(html, /activeNoteAudio\.currentTime = 0/);
-  assert.match(html, /space-ar-note-cache-v10/);
+  assert.match(html, /space-ar-note-cache-v16/);
 });
 
 test("remove a captura de voz e preserva a busca local", async () => {
@@ -469,8 +469,11 @@ test("configuração pública não depende dos metadados privados do Sites", asy
 test("mantém a busca digitada dentro da sessão WebXR", async () => {
   const html = await readFile(xrUrl, "utf8");
 
-  assert.match(html, /function updateJointDoubleThumbTap/);
-  assert.match(html, /thumbTapGestureStates/);
+  assert.match(html, /function iwSdkMicrogestureStarted/);
+  assert.match(html, /getButtonDown\?\.\(componentId\)/);
+  assert.match(html, /iwSdkMicrogestureStarted\(inputSource, "tap-thumb"\)/);
+  assert.match(html, /closedFingers === 4/);
+  assert.doesNotMatch(html, /        updateJointDoubleThumbTap\(frame, inputSource, time\);/);
   assert.match(html, /function keyboardTexture/);
   assert.ok(html.includes('[..."1234567890"]'));
   assert.ok(html.includes('["@", "#", "&", "(", ")", "+", "/", "="]'));
@@ -702,12 +705,12 @@ test("supports interactive Rubik blocks and worker solver", async () => {
   assert.match(html, /createRubikExtension/);
   assert.match(html, /data-note-rubik/);
   assert.match(html, /rubik-open:/);
-  assert.match(html, /rubikExtension\.update\(time\)/);
+  assert.match(html, /rubikExtension\.update\(time,frame\)/);
   const rubik = await readFile(new URL("../public/vendor/cubejs/rubik-ar.js", import.meta.url), "utf8");
   assert.match(rubik, /Cube\.initSolver\(\)/);
   assert.match(rubik, /new Worker/);
   assert.match(rubik, /cornerIndices|const corners=/);
-  assert.match(rubik, /register\(group,hooks\.width\)/);
+  assert.match(rubik, /register\(group,WINDOW_WIDTH\)/);
 });
 
 test("renders semantic MIDI measures without changing exact playback", async () => {

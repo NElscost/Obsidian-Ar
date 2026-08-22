@@ -533,9 +533,9 @@
     .note-content .note-chess { margin:10px 0; padding:8px; border:1px solid rgba(255,209,102,.38); border-radius:10px; background:rgba(7,11,18,.9); break-inside:avoid; overflow:hidden; }
     .note-content .note-chess::before { content:"♟ Select the board to interact"; display:block; margin-bottom:6px; color:#ffd166; font-size:12px; font-weight:750; }
     .note-content .note-chess canvas, .note-content .note-chess-image { position:static; inset:auto; display:block; width:min(100%,500px); max-width:500px; max-height:500px; aspect-ratio:1; object-fit:contain; height:auto; margin:auto; border-radius:5px; }
-    .note-content .note-rubik { margin:10px 0; padding:8px; border:1px solid rgba(99,230,190,.4); border-radius:10px; background:rgba(7,11,18,.9); break-inside:avoid; overflow:hidden; }
+    .note-content .note-rubik { margin:10px 0; padding:6px; border:1px solid rgba(99,230,190,.28); border-radius:10px; background:transparent; break-inside:avoid; overflow:hidden; }
     .note-content .note-rubik::before { content:"◈ Select to open the interactive 3D cube"; display:block; margin-bottom:6px; color:#63e6be; font-size:12px; font-weight:750; }
-    .note-content .note-rubik-image { display:block; width:min(100%,560px); height:auto; margin:auto; object-fit:contain; }
+    .note-content .note-rubik-image { display:block; width:min(100%,320px); height:auto; margin:auto; object-fit:contain; }
     .note-content .note-smiles canvas, .note-content .note-smiles svg, .note-content .note-smiles img { position:static; inset:auto; display:block; width:100%; height:auto; max-height:300px; object-fit:contain; }
     .note-content .note-avatar { display:flex; gap:14px; align-items:center; margin:10px 0; padding:10px; border-radius:14px; background:rgba(20,29,45,.72); break-inside:avoid; }
     .note-content .note-avatar.right { flex-direction:row-reverse; }
@@ -3119,7 +3119,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     const NOTE_CACHE_MAX_BYTES = 48 * 1024 * 1024;
     const NOTE_PERSISTENT_CACHE_MAX_ENTRIES = 12;
     const NOTE_PERSISTENT_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
-    const NOTE_CACHE_DB = "space-ar-note-cache-v10";
+    const NOTE_CACHE_DB = "space-ar-note-cache-v16";
     const NOTE_CACHE_STORE = "rendered-notes";
     let noteCacheDbPromise = null;
     let highlightCorePromise = null;
@@ -4345,7 +4345,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     const rubikExtension=createRubikExtension(THREE,{
       width:AR_VIDEO_WIDTH,height:AR_VIDEO_HEIGHT,geometry:curvedPanelGeometry,round:applyRoundedPanelMask,
       register:registerSpatialAuxWindow,unregister:unregisterSpatialAuxWindow,layout:layoutSpatialWindows,message:setXrMessage,
-      addControl(control){arNoteControls.push(control);},removeControls(items){const owned=new Set(items);arNoteControls=arNoteControls.filter(item=>!owned.has(item));}
+      addControl(control){arNoteControls.push(control);},removeControls(items){const owned=new Set(items);arNoteControls=arNoteControls.filter(item=>!owned.has(item));},pinchPoint:getPinchPoint
     });
     let chessOverlayGroup = null;
     let chessOverlayState = null;
@@ -6296,6 +6296,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let baseModelScale = 1;
     let userScaleFactor = 1;
     let graphIntroPulseStartedAt = null;
+    let graphAutoRotating = false;
+    let graphAutoRotationLastTime = 0;
+    let graphAutoRotationIgnorePinchUntil = 0;
     let searchHighlightedNode = null;
     let searchHighlightUntil = 0;
     const synapsePulseTime = { value: 0 };
@@ -6363,7 +6366,6 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     });
     let noteMicroGestureStates = new WeakMap();
     let nativeMicroGestureStates = new WeakMap();
-    let thumbTapGestureStates = new WeakMap();
     const NATIVE_MICRO_GESTURE_BUTTONS = Object.freeze({
       tapThumb: 4,
       swipeLeft: 5,
@@ -6413,7 +6415,6 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function resetNoteMicroGestures() {
       noteMicroGestureStates = new WeakMap();
       nativeMicroGestureStates = new WeakMap();
-      thumbTapGestureStates = new WeakMap();
     }
 
     function pairingConfigFromBootstrap() {
@@ -7158,15 +7159,37 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       setXrMessage("Teclado posicionado na superfície. Toque ou use a pinça para digitar.");
     }
     function registerDoubleThumbTap(state, time) {
-      const repeated = time - (state.lastThumbTapAt ?? 0) <= 650;
+      if (
+        !arNoteGroup.visible &&
+        time - (state.lastCompletedDoubleTapAt ?? 0) <= 900
+      ) {
+        state.lastCompletedDoubleTapAt = 0;
+        state.lastThumbTapAt = 0;
+        graphAutoRotating = false;
+        graphAutoRotationLastTime = 0;
+        openKeyboardSearch();
+        setXrMessage("Busca 3D aberta pelo terceiro thumb tap.");
+        return;
+      }
+      const repeated = time - (state.lastThumbTapAt ?? 0) <= 900;
       state.lastThumbTapAt = repeated ? 0 : time;
       if (repeated) {
         if (arNoteGroup.visible) toggleArDashboard();
-        else openKeyboardSearch();
+        else if (!graphHierarchy?.expandedHubId) {
+          graphAutoRotating = !graphAutoRotating;
+          graphAutoRotationLastTime = 0;
+          graphAutoRotationIgnorePinchUntil = time + 850;
+          state.lastCompletedDoubleTapAt = time;
+          setXrMessage(graphAutoRotating
+            ? "Rotação suave ativada. Mais um thumb tap abre a busca; uma pinça posterior interrompe."
+            : "Rotação automática pausada. Mais um thumb tap abre a busca.");
+        } else openKeyboardSearch();
+      } else {
+        setXrMessage(arNoteGroup.visible
+          ? "Toque novamente o polegar para abrir o dashboard."
+          : "Toque novamente para alternar a rotação; três toques abrem a busca 3D.");
       }
-      else setXrMessage("Toque novamente o polegar para abrir a busca 3D.");
     }
-
     function rememberRecentNote(path) {
       try {
         const recent = JSON.parse(
@@ -8766,6 +8789,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function onSelectStart(event) {
       if (!arNoteGroup.visible) return;
       const hit = controlFromSelectEvent(event);
+      if (hit?.object?.userData?.noteAction === "rubik-drag") { rubikExtension.beginDrag(event); return; }
       if (hit?.object?.userData?.noteAction !== "waveform") return;
       waveformDragInputSource = event.inputSource;
       const ratio = THREE.MathUtils.clamp(hit.uv?.x ?? 0, 0, 1);
@@ -8774,6 +8798,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     }
 
     function onSelectEnd(event) {
+      rubikExtension.endDrag(event.inputSource);
       if (waveformDragInputSource === event.inputSource) {
         waveformDragInputSource = null;
       }
@@ -8857,41 +8882,31 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       return true;
     }
 
-    function updateJointDoubleThumbTap(frame, inputSource, time) {
-      if (!inputSource.hand || graphHierarchy?.expandedHubId || arSearchKeyboardActive) return false;
-      let state = thumbTapGestureStates.get(inputSource);
-      if (!state) {
-        state = {
-          wrist: new THREE.Vector3(),
-          thumb: new THREE.Vector3(),
-          indexBase: new THREE.Vector3(),
-          middleBase: new THREE.Vector3(),
-          contact: false,
-          lastReleaseAt: 0,
-          lastThumbTapAt: 0
-        };
-        thumbTapGestureStates.set(inputSource, state);
+    function iwSdkGamepadFor(inputSource) {
+      const handedness = inputSource?.handedness;
+      if (!iwInputManager || (handedness !== "left" && handedness !== "right")) return null;
+      return iwInputManager.gamepads?.[handedness]
+        ?? iwInputManager.xr?.gamepads?.[handedness]
+        ?? iwInputManager.input?.xr?.gamepads?.[handedness]
+        ?? null;
+    }
+
+    function iwSdkMicrogestureStarted(inputSource, componentId) {
+      const gamepad = iwSdkGamepadFor(inputSource);
+      if (!gamepad) return false;
+      try {
+        return Boolean(
+          gamepad.getButtonDown?.(componentId)
+          ?? gamepad.getButtonEnteringPressed?.(componentId)
+          ?? false
+        );
+      } catch {
+        return false;
       }
-      const valid =
-        jointPosition(frame, inputSource.hand.get("wrist"), state.wrist) &&
-        jointPosition(frame, inputSource.hand.get("thumb-tip"), state.thumb) &&
-        jointPosition(frame, inputSource.hand.get("index-finger-phalanx-proximal") ?? inputSource.hand.get("index-finger-metacarpal"), state.indexBase) &&
-        jointPosition(frame, inputSource.hand.get("middle-finger-metacarpal") ?? inputSource.hand.get("middle-finger-phalanx-proximal"), state.middleBase);
-      if (!valid) return false;
-      const handScale = THREE.MathUtils.clamp(state.wrist.distanceTo(state.middleBase), 0.055, 0.14);
-      const distance = state.thumb.distanceTo(state.indexBase);
-      const touching = state.contact
-        ? distance < handScale * 0.58
-        : distance < handScale * 0.42;
-      if (touching && !state.contact && time - state.lastReleaseAt >= 110) {
-        registerDoubleThumbTap(state, time);
-      }
-      if (!touching && state.contact) state.lastReleaseAt = time;
-      state.contact = touching;
-      return touching;
     }
 
     function hasNativeMicroGestures(inputSource) {
+      if (iwSdkGamepadFor(inputSource)) return true;
       const profiles = Array.from(inputSource.profiles ?? []);
       const buttons = inputSource.gamepad?.buttons;
       return profiles.includes("oculus-hand") &&
@@ -8917,16 +8932,16 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         nativeMicroGestureStates.set(inputSource, state);
       }
 
-      const buttons = inputSource.gamepad.buttons;
+      const buttons = inputSource.gamepad?.buttons ?? [];
       const tapButton = buttons[NATIVE_MICRO_GESTURE_BUTTONS.tapThumb];
       const leftButton = buttons[NATIVE_MICRO_GESTURE_BUTTONS.swipeLeft];
       const rightButton = buttons[NATIVE_MICRO_GESTURE_BUTTONS.swipeRight];
-      const tapPressed = tapButton.pressed || tapButton.value > 0.5;
-      const leftPressed = leftButton.pressed || leftButton.value > 0.5;
-      const rightPressed = rightButton.pressed || rightButton.value > 0.5;
-      const tapStarted = tapPressed && !state.tapPressed;
-      const leftStarted = leftPressed && !state.leftPressed;
-      const rightStarted = rightPressed && !state.rightPressed;
+      const tapPressed = Boolean(tapButton?.pressed || tapButton?.value > 0.5);
+      const leftPressed = Boolean(leftButton?.pressed || leftButton?.value > 0.5);
+      const rightPressed = Boolean(rightButton?.pressed || rightButton?.value > 0.5);
+      const tapStarted = iwSdkMicrogestureStarted(inputSource, "tap-thumb") || (tapPressed && !state.tapPressed);
+      const leftStarted = iwSdkMicrogestureStarted(inputSource, "swipe-left") || (leftPressed && !state.leftPressed);
+      const rightStarted = iwSdkMicrogestureStarted(inputSource, "swipe-right") || (rightPressed && !state.rightPressed);
 
       state.pressed = tapPressed || leftPressed || rightPressed;
       if (tapStarted && !graphHierarchy?.expandedHubId) {
@@ -8980,9 +8995,6 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
       for (const inputSource of xrSession.inputSources) {
         if (!inputSource.hand) continue;
-        // Detect the thumb-to-index-base tap from joints even when the Quest exposes
-        // a native microgesture profile with a different gamepad button mapping.
-        updateJointDoubleThumbTap(frame, inputSource, time);
         if (arSearchKeyboardActive) continue;
         // Prefer native swipe states for paging; retain the joint recognizer below.
         if (updateNativeNoteMicroGestures(inputSource, time)) continue;
@@ -9017,6 +9029,13 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
             screenTravel: 0,
             peakNormalizedSpeed: 0,
             thumbTapContact: false,
+            thumbTapAxis: new THREE.Vector3(),
+            thumbTapOrigin: new THREE.Vector3(),
+            thumbTapPhase: "idle",
+            thumbTapPeak: 0,
+            thumbTapStartedAt: 0,
+            thumbTapCooldownUntil: 0,
+            thumbTapReady: false,
             lastThumbTapAt: 0,
             handedness: inputSource.handedness || "none"
           };
@@ -9085,11 +9104,6 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           0.055,
           0.14
         );
-        const thumbTapContact = state.thumb.distanceTo(state.proximals[0]) < state.handScale * 0.38;
-        if (thumbTapContact && !state.thumbTapContact && graphSearchGestureActive) {
-          registerDoubleThumbTap(state, time);
-        }
-        state.thumbTapContact = thumbTapContact;
         let closedFingers = 0;
         for (let index = 0; index < fingerNames.length; index += 1) {
           const pipAngle = jointAngle(
@@ -9116,6 +9130,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         const handClosed = state.handClosed;
 
         if (!handClosed) {
+          state.thumbTapReady = false;
+          state.thumbTapPhase = "idle";
           state.tracking = false;
           state.filterReady = false;
           state.awaitingNeutral = false;
@@ -9124,6 +9140,38 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         }
 
         microGestureRelative.copy(state.thumb).sub(state.wrist);
+        setMicroGestureLateralAxis(inputSource, state);
+        state.thumbTapAxis.copy(state.bases[1]).sub(state.wrist).normalize();
+        if (!state.thumbTapReady) {
+          state.thumbTapOrigin.copy(microGestureRelative);
+          state.thumbTapReady = true;
+          state.thumbTapPhase = "idle";
+        }
+        const thumbTapDelta = microGestureDisplacement.copy(microGestureRelative).sub(state.thumbTapOrigin);
+        const thumbTapVertical = thumbTapDelta.dot(state.thumbTapAxis);
+        const thumbTapOffAxis = Math.sqrt(Math.max(0, thumbTapDelta.lengthSq() - thumbTapVertical * thumbTapVertical));
+        if (time >= state.thumbTapCooldownUntil) {
+          if (state.thumbTapPhase === "idle") {
+            if (Math.abs(thumbTapVertical) >= state.handScale * 0.13 && thumbTapOffAxis <= state.handScale * 0.12) {
+              state.thumbTapPhase = "returning";
+              state.thumbTapPeak = Math.abs(thumbTapVertical);
+              state.thumbTapStartedAt = time;
+            } else if (Math.abs(thumbTapVertical) <= state.handScale * 0.05) {
+              state.thumbTapOrigin.lerp(microGestureRelative, 0.08);
+            }
+          } else if (state.thumbTapPhase === "returning") {
+            state.thumbTapPeak = Math.max(state.thumbTapPeak, Math.abs(thumbTapVertical));
+            if (time - state.thumbTapStartedAt >= 65 && time - state.thumbTapStartedAt <= 650 && Math.abs(thumbTapVertical) <= state.handScale * 0.055 && state.thumbTapPeak >= state.handScale * 0.13) {
+              registerDoubleThumbTap(state, time);
+              state.thumbTapPhase = "idle";
+              state.thumbTapCooldownUntil = time + 180;
+              state.thumbTapOrigin.copy(microGestureRelative);
+            } else if (time - state.thumbTapStartedAt > 650) {
+              state.thumbTapPhase = "idle";
+              state.thumbTapOrigin.copy(microGestureRelative);
+            }
+          }
+        }
         if (!state.filterReady) {
           state.filteredThumb.copy(microGestureRelative);
           state.filterReady = true;
@@ -9286,6 +9334,12 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       for (const inputSource of xrSession.inputSources) {
         const point = getPinchPoint(frame, inputSource);
         if (point) pinchPoints.push(point);
+      }
+
+      if (pinchPoints.length && graphAutoRotating && time >= graphAutoRotationIgnorePinchUntil) {
+        graphAutoRotating = false;
+        graphAutoRotationLastTime = 0;
+        setXrMessage("Rotação automática interrompida pela interação.");
       }
 
       if (gestureMode === "await-release") {
@@ -9642,7 +9696,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         for (const control of arNoteControls) {
           const active = control === pointedNoteControl;
           control.scale.setScalar(active && control.userData.highlightScale !== false ? 1.35 : 1);
-          if (control.material && control.userData.noteAction !== "note-media" && !control.userData.noteAction?.startsWith("media-track:") && !control.userData.noteAction?.startsWith("music-abc:")) {
+          if (control.material && control.userData.preserveOpacity !== true && control.userData.noteAction !== "note-media" && !control.userData.noteAction?.startsWith("media-track:") && !control.userData.noteAction?.startsWith("music-abc:")) {
             control.material.opacity = active ? 1 : 0.82;
           }
         }
@@ -9678,7 +9732,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
                     ? "apagar a última letra"
                   : action.startsWith("search-")
                     ? "digitar esta tecla"
-                : action === "next" ? "avançar" : "voltar";
+                : action === "rubik-drag" ? "girar o cubo" : action === "next" ? "avançar" : "voltar";
           setXrMessage(`Faça uma pinça para ${label}.`);
         }
         return;
@@ -9887,10 +9941,17 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         weatherField.position.copy(weatherCenter);
       }
       if (isPlaced) synapsePulseTime.value = time * 0.001;
+      if (graphAutoRotating && isPlaced && !arNoteGroup.visible) {
+        const elapsed = graphAutoRotationLastTime
+          ? Math.min((time - graphAutoRotationLastTime) / 1000, 0.05)
+          : 0;
+        contentRoot.rotation.y += elapsed * 0.10;
+        graphAutoRotationLastTime = time;
+      } else graphAutoRotationLastTime = 0;
       updateVideoAmbilight(time);
       updateAbcHighlightPulse(time);
       updateMidiViz(time);
-      rubikExtension.update(time);
+      rubikExtension.update(time,frame);
       if (forceGraph && dynamicGraphTicking) {
         forceGraph.tickFrame();
         syncDynamicNodeProxies();
