@@ -472,6 +472,10 @@ test("mantém a busca digitada dentro da sessão WebXR", async () => {
   assert.match(html, /function iwSdkMicrogestureStarted/);
   assert.match(html, /getButtonDown\?\.\(componentId\)/);
   assert.match(html, /iwSdkMicrogestureStarted\(inputSource, "tap-thumb"\)/);
+  assert.match(html, /tapThumb: 9/);
+  assert.doesNotMatch(html, /tapThumb: 4/);
+  assert.match(html, /graphAutoRotating && isPlaced\)/);
+  assert.match(html, /!arNoteGroup\.visible &&\s+!arSearchKeyboardActive/);
   assert.match(html, /closedFingers === 4/);
   assert.doesNotMatch(html, /        updateJointDoubleThumbTap\(frame, inputSource, time\);/);
   assert.match(html, /function keyboardTexture/);

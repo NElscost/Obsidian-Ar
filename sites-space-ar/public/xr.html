@@ -6366,8 +6366,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     });
     let noteMicroGestureStates = new WeakMap();
     let nativeMicroGestureStates = new WeakMap();
+    // oculus-hand profile: 4 is left-hand menu; thumb tap is button 9.
     const NATIVE_MICRO_GESTURE_BUTTONS = Object.freeze({
-      tapThumb: 4,
+      tapThumb: 9,
       swipeLeft: 5,
       swipeRight: 6
     });
@@ -9336,7 +9337,13 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         if (point) pinchPoints.push(point);
       }
 
-      if (pinchPoints.length && graphAutoRotating && time >= graphAutoRotationIgnorePinchUntil) {
+      if (
+        pinchPoints.length &&
+        graphAutoRotating &&
+        !arNoteGroup.visible &&
+        !arSearchKeyboardActive &&
+        time >= graphAutoRotationIgnorePinchUntil
+      ) {
         graphAutoRotating = false;
         graphAutoRotationLastTime = 0;
         setXrMessage("Rotação automática interrompida pela interação.");
@@ -9941,7 +9948,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         weatherField.position.copy(weatherCenter);
       }
       if (isPlaced) synapsePulseTime.value = time * 0.001;
-      if (graphAutoRotating && isPlaced && !arNoteGroup.visible) {
+      if (graphAutoRotating && isPlaced) {
         const elapsed = graphAutoRotationLastTime
           ? Math.min((time - graphAutoRotationLastTime) / 1000, 0.05)
           : 0;
