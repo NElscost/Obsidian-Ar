@@ -218,7 +218,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /videoClose[\s\S]*?color: 0xff6b6b/);
   assert.match(html, /videoCloseIcon\.renderOrder = 1004/);
   assert.match(html, /activeNoteVideoGroup\.name = "note-video-window"/);
-  assert.match(html, /activeNoteVideoGroup\.add\(videoBackdrop, activeNoteVideoSurface, videoClose\)/);
+  assert.match(html, /activeNoteVideoGroup\.add\(videoBackdrop, activeNoteVideoSurface, stereoControl, videoClose\)/);
   assert.match(html, /new THREE\.VideoTexture\(video\)/);
   assert.match(html, /noteVideoTracks\[0\] \?\? noteAudioTracks\[0\]/);
   assert.match(html, /function describeVideoPlaybackError/);
@@ -482,6 +482,12 @@ test("mantém a busca digitada dentro da sessão WebXR", async () => {
   assert.doesNotMatch(html, /tapThumb: 4/);
   assert.match(html, /graphAutoRotating && isPlaced\)/);
 assert.match(html, /remoteVideoPlatform/);
+assert.match(html, /function setVideoStereoMode/);
+assert.match(html, /surface\.layers\.set\(eye \+ 1\)/);
+assert.match(html, /left\.layers\.enable\(1\)/);
+assert.match(html, /right\.layers\.enable\(2\)/);
+assert.match(html, /action === "video-stereo"/);
+assert.match(html, /aspect > 2\.4/);
 assert.match(html, /streamable\\.com/);
 assert.match(html, /graphAutoRotating\) \{\s+arSearchRealGlassPanel\.visible = false/);
 assert.match(html, /arSearchKeyboardActive \? 1 : 0\.1/);

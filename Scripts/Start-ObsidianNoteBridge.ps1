@@ -254,11 +254,23 @@ $serverErrorLog = Join-Path $logDir "server-error.log"
 $tunnelLog = Join-Path $logDir "tunnel.log"
 $tunnelErrorLog = Join-Path $logDir "tunnel-error.log"
 
+$remoteVideoHosts = @($bridgeConfig.remoteVideoHosts | ForEach-Object { ([string]$_).Trim().TrimStart("*.").ToLowerInvariant() } | Where-Object { $_ })
+if (-not $remoteVideoHosts.Count) { $remoteVideoHosts = @("youtube.com", "youtu.be", "streamable.com") }
+$remoteVideoMaxHeight = 720
+if ($null -ne $bridgeConfig.remoteVideoMaxHeight) { $remoteVideoMaxHeight = [int]$bridgeConfig.remoteVideoMaxHeight }
+$remoteVideoMaxHeight = [Math]::Min(1080, [Math]::Max(360, $remoteVideoMaxHeight))
+$remoteVideoMaxSizeMb = 256
+if ($null -ne $bridgeConfig.remoteVideoMaxSizeMb) { $remoteVideoMaxSizeMb = [int]$bridgeConfig.remoteVideoMaxSizeMb }
+$remoteVideoMaxSizeMb = [Math]::Min(512, [Math]::Max(32, $remoteVideoMaxSizeMb))
+
 $serverEnvironment = @{
   SPACE_NOTE_PORT = "$Port"
   SPACE_NOTE_TOKEN = $token
   SPACE_VAULT_PATH = $vaultPath
   SPACE_PENDING_OPTIMIZATION_PATH = $pendingOptimizationPath
+  SPACE_REMOTE_VIDEO_HOSTS = ($remoteVideoHosts -join ",")
+  SPACE_REMOTE_VIDEO_MAX_HEIGHT = "$remoteVideoMaxHeight"
+  SPACE_REMOTE_VIDEO_MAX_SIZE_MB = "$remoteVideoMaxSizeMb"
 }
 if (Test-Path -LiteralPath $graphPath) {
   $serverEnvironment.SPACE_GRAPH_PATH = $graphPath

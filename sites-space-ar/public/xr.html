@@ -2477,6 +2477,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let activeNoteVideoLayerSession = null;
     let activeNoteVideoBackdrop = null;
     let activeNoteVideoCloseControl = null;
+    let activeNoteVideoStereoControl = null;
+    let activeNoteVideoStereoMode = "mono";
+    let activeNoteVideoStereoSurfaces = [];
     let preserveVideoOnNextNote = false;
     let activeNoteAmbilightTimeline = null;
     let activeNoteAmbilightUniforms = null;
@@ -2917,6 +2920,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       activeNoteVideoSurface = null;
       activeNoteVideoBackdrop = null;
       activeNoteVideoCloseControl = null;
+      activeNoteVideoStereoControl = null;
+      activeNoteVideoStereoMode = "mono";
+      activeNoteVideoStereoSurfaces = [];
       activeNoteVideoGroup = null;
       activeNoteAmbilightTimeline = null;
       activeNoteAmbilightUniforms = null;
@@ -3661,6 +3667,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       const addMatch = (match, value, label = "", kind = "video") =>
         ordered.push({ index: match.index ?? Number.MAX_SAFE_INTEGER, value, label, kind });
       const markdown = String(source ?? "");
+      for (const match of markdown.matchAll(/\x60\x60\x60timestamp-url\s*\r?\n(https:\/\/[^\s]+)[\s\S]*?\x60\x60\x60/gi)) addMatch(match, match[1], "Remote video", remoteVideoPlatform(match[1]) === "youtube" ? "youtube" : "remote-video");
       for (const match of markdown.matchAll(/https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be|streamable\.com)\/[^\s)\]>]+/gi)) {
         const platform = remoteVideoPlatform(match[0]);
         addMatch(match, match[0], platform === "streamable" ? "Streamable" : "YouTube", platform === "youtube" ? "youtube" : "remote-video");
@@ -4888,7 +4895,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
     async function prepareAudioWaveform(track, notePath, panelWidth, panelHeight) {
       if (!track || isBrowserLocalSource(track.source)) return;
-      if (isNetworkSource(track.source) && !youtubeVideoId(track.source)) return;
+      if (isNetworkSource(track.source) && !remoteVideoPlatform(track.source) && track.kind !== "remote-video") return;
       const config = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
       if (!config?.url || !config?.token) return;
       const generation = audioWaveformGeneration;
@@ -5032,7 +5039,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       // until the compositor can preserve this parent/child transform reliably.
       return false;
       /* istanbul ignore next */
-      if (!xrSession || !referenceSpace || typeof XRMediaBinding === "undefined") return false;
+      if (activeNoteVideoStereoMode !== "mono" || !xrSession || !referenceSpace || typeof XRMediaBinding === "undefined") return false;
       const currentLayers = Array.from(xrSession.renderState?.layers ?? []);
       // Three.js precisa manter sua projection layer; sem ela usamos VideoTexture.
       if (!currentLayers.length) return false;
@@ -5056,8 +5063,70 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       }
     }
 
+    function stereoVideoMaterial(offset) {
+      return new THREE.ShaderMaterial({
+        uniforms: { map: { value: activeNoteVideoTexture }, eyeOffset: { value: offset } },
+        vertexShader: "varying vec2 vUv; void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}",
+        fragmentShader: "uniform sampler2D map;uniform float eyeOffset;varying vec2 vUv;void main(){gl_FragColor=texture2D(map,vec2(vUv.x*.5+eyeOffset,vUv.y));}",
+        depthTest: false, depthWrite: false, toneMapped: false
+      });
+    }
+
+    function clearVideoStereoSurfaces() {
+      for (const surface of activeNoteVideoStereoSurfaces) {
+        surface.removeFromParent();
+        surface.geometry?.dispose();
+        surface.material?.dispose();
+      }
+      activeNoteVideoStereoSurfaces = [];
+    }
+
+    function updateVideoStereoControl() {
+      if (!activeNoteVideoStereoControl?.userData?.noteIcon) return;
+      const label = activeNoteVideoStereoMode === "mono" ? "2D" : activeNoteVideoStereoMode === "sbs-lr" ? "3D" : "3D↔";
+      const icon = activeNoteVideoStereoControl.userData.noteIcon;
+      icon.material.map?.dispose();
+      icon.material.map = keyboardTexture(label, { width:128, height:64, background:"transparent", color:"#07111f", font:"800 28px system-ui" });
+      icon.material.needsUpdate = true;
+    }
+
+    function setVideoStereoMode(mode, announce = true) {
+      if (!activeNoteVideoSurface || !activeNoteVideoGroup) return;
+      const next = ["mono", "sbs-lr", "sbs-rl"].includes(mode) ? mode : "mono";
+      clearVideoStereoSurfaces();
+      activeNoteVideoStereoMode = next;
+      activeNoteVideoSurface.visible = next === "mono";
+      if (next !== "mono") {
+        const offsets = next === "sbs-lr" ? [0, 0.5] : [0.5, 0];
+        activeNoteVideoStereoSurfaces = offsets.map((offset, eye) => {
+          const surface = new THREE.Mesh(activeNoteVideoSurface.geometry.clone(), stereoVideoMaterial(offset));
+          surface.position.copy(activeNoteVideoSurface.position);
+          surface.quaternion.copy(activeNoteVideoSurface.quaternion);
+          surface.renderOrder = activeNoteVideoSurface.renderOrder;
+          surface.layers.set(eye + 1);
+          surface.raycast = () => {};
+          activeNoteVideoGroup.add(surface);
+          return surface;
+        });
+      }
+      updateVideoStereoControl();
+      if (announce) setXrMessage(next === "mono" ? "Video mode: 2D." : next === "sbs-lr" ? "Video mode: 3D side-by-side." : "Video mode: 3D side-by-side with swapped eyes.");
+    }
+
+    function cycleVideoStereoMode() {
+      setVideoStereoMode(activeNoteVideoStereoMode === "mono" ? "sbs-lr" : activeNoteVideoStereoMode === "sbs-lr" ? "sbs-rl" : "mono");
+    }
+
     function updateVideoPresentation(time) {
       if (!activeNoteVideoGroup || !activeNoteVideoSurface) return;
+      if (renderer.xr.isPresenting) {
+        const xrCamera = renderer.xr.getCamera(camera);
+        const left = xrCamera.cameras?.[0], right = xrCamera.cameras?.[1];
+        if (left && right) {
+          left.layers.enable(1); left.layers.disable(2);
+          right.layers.enable(2); right.layers.disable(1);
+        }
+      }
       if (activeNoteVideoLayer) {
         if (time - videoSurfaceVisibilityCheckedAt > 33) {
           try { activeNoteVideoLayer.transform = videoLayerTransform(); } catch {}
@@ -5071,7 +5140,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       videoVisibilityMatrix.multiplyMatrices(xrCamera.projectionMatrix, xrCamera.matrixWorldInverse);
       videoVisibilityFrustum.setFromProjectionMatrix(videoVisibilityMatrix);
       activeNoteVideoGroup.getWorldPosition(videoVisibilitySphere.center);
-      activeNoteVideoSurface.visible = videoVisibilityFrustum.intersectsSphere(videoVisibilitySphere);
+      const videoVisible = videoVisibilityFrustum.intersectsSphere(videoVisibilitySphere);
+      activeNoteVideoSurface.visible = videoVisible && activeNoteVideoStereoMode === "mono";
+      for (const surface of activeNoteVideoStereoSurfaces) surface.visible = videoVisible;
       videoSurfaceVisibilityCheckedAt = time;
     }
 
@@ -5289,8 +5360,20 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       videoCloseIcon.raycast = () => {};
       videoClose.add(videoCloseIcon);
       activeNoteVideoCloseControl = videoClose;
-      activeNoteVideoGroup.add(videoBackdrop, activeNoteVideoSurface, videoClose);
-      arNoteControls.push(videoClose);
+      const stereoControl = new THREE.Mesh(new THREE.CircleGeometry(0.019, 14), new THREE.MeshBasicMaterial({ color:0x75a7ff, transparent:true, depthTest:false, toneMapped:false }));
+      stereoControl.position.set(AR_VIDEO_WIDTH / 2 - 0.078, AR_VIDEO_HEIGHT / 2 - 0.03, 0.034);
+      stereoControl.renderOrder = 1003;
+      stereoControl.userData.noteAction = "video-stereo";
+      const stereoIcon = new THREE.Mesh(new THREE.PlaneGeometry(0.030, 0.020), new THREE.MeshBasicMaterial({ transparent:true, depthTest:false, toneMapped:false }));
+      stereoIcon.position.z = 0.003;
+      stereoIcon.renderOrder = 1004;
+      stereoIcon.raycast = () => {};
+      stereoControl.userData.noteIcon = stereoIcon;
+      stereoControl.add(stereoIcon);
+      activeNoteVideoStereoControl = stereoControl;
+      activeNoteVideoGroup.add(videoBackdrop, activeNoteVideoSurface, stereoControl, videoClose);
+      arNoteControls.push(stereoControl, videoClose);
+      updateVideoStereoControl();
       layoutVideoReadingPair(activeNoteVideoGroup);
       if (activeNoteAudioControl) activeNoteAudioControl.visible = false;
       placeAudioWaveformGroup(AR_VIDEO_HEIGHT);
@@ -5305,6 +5388,10 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         }
         activeNoteVideoSurface.geometry.dispose();
         activeNoteVideoSurface.geometry = curvedPanelGeometry(width, height);
+        if (activeNoteVideoStereoMode === "mono" && aspect > 2.4) setVideoStereoMode("sbs-lr", false);
+        else if (activeNoteVideoStereoMode !== "mono") {
+          for (const surface of activeNoteVideoStereoSurfaces) { surface.geometry.dispose(); surface.geometry = curvedPanelGeometry(width, height); }
+        }
         if (activeNoteVideoLayer) {
           try {
             activeNoteVideoLayer.width = width;
@@ -5615,6 +5702,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       activeNoteVideoSurface = null;
       activeNoteVideoBackdrop = null;
       activeNoteVideoCloseControl = null;
+      activeNoteVideoStereoControl = null;
+      activeNoteVideoStereoMode = "mono";
+      activeNoteVideoStereoSurfaces = [];
       activeNoteVideoGroup = null;
       activeNoteAmbilightTimeline = null;
       activeNoteAmbilightUniforms = null;
@@ -5897,6 +5987,10 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       }
       if (action === "video-close") {
         closeActiveVideo();
+        return;
+      }
+      if (action === "video-stereo") {
+        cycleVideoStereoMode();
         return;
       }
       if (action === "audio") {
@@ -9754,6 +9848,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
             ? "fechar"
             : action === "video-close"
               ? "fechar o vídeo"
+            : action === "video-stereo"
+              ? "alternar vídeo 2D/3D"
             : action === "pin"
               ? (noteWindowPinned ? "soltar a janela" : "fixar a janela")
               : action.startsWith("music-abc:")

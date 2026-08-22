@@ -11,7 +11,7 @@ local Rust bridge, creates an HTTPS tunnel, and displays a QR code for pairing.
 - WebXR hit testing and anchors;
 - hand gestures for placement, scale, rotation, selection, and pagination;
 - fuzzy keyboard search with selectable 3D suggestions;
-- Markdown, tables, LaTeX, code, images, audio, video, and interactive Chesser boards in a 3D note window;
+- Markdown, tables, LaTeX, code, images, audio, and video in a 3D note window;
 - spatial HRTF audio, audio/video waveform seeking, and media bookmarks;
 - cached note rendering and preprocessing to reduce frame drops;
 - progress reporting with elapsed and estimated remaining time;
@@ -68,7 +68,7 @@ yt-dlp --version
 Install [Homebrew](https://brew.sh/) and then run:
 
 ```sh
-brew install git node rustup cmake llvm cloudflared ffmpeg yt-dlp
+brew install git node rustup cmake llvm cloudflared ffmpeg yt-dlp yt-dlp
 rustup-init -y
 ```
 
@@ -163,7 +163,7 @@ startup cost, encode attachments as MP4/H.264/AAC or WebM/VP9/Opus.
 
 Audio and video attachments share the same seek bar. Point and pinch to jump to
 a position, keep the pinch held while moving to scrub, and release to store a
-bookmark. Local and YouTube videos use one GPU-only ambilight mesh driven by
+bookmark. Local and allowed remote videos use one GPU-only ambilight mesh driven by
 tiny 24x14 edge-color samples generated once per second by the Rust bridge. For
 YouTube, the bridge reuses the same cached 720p MP4 prepared for playback, so no
 second download is required. The halo uses a soft environmental gradient and
@@ -193,21 +193,38 @@ the card also opens a lazily drawn score panel to the left. A fixed 12-voice Web
 Audio pool plays the visible events through a spatial HRTF panner, while a note-
 density waveform below the Synthesia panel supports seeking and bookmarks. Long
 or malformed note durations are visually capped and clipped to the panel. The
-score redraws only when its eight-second page changes. Closing or switching media
+score redraws only when playback enters another four-measure page. Closing or switching media
 disposes the meshes, textures, oscillators, and waveform immediately. This keeps
 MIDI independent from LaTeX, code, image, audio, and video rendering in the same
 note.
 
-Chesser-compatible `chesser` blocks (and the shorter `chess` alias) accept a direct FEN, a direct PGN, or the plugin's YAML-style configuration:
+The bridge preserves the MIDI tempo map, time and key-signature metadata,
+PPQ timing, adaptive quantization, hand assignment,
+polyphonic voices, enharmonic spelling, measures, dots, rests, stems, ledger
+lines and ties. Exact event times remain separate from the quantized score, so
+engraving improvements do not alter playback synchronization. The score texture
+is rebuilt only when playback enters another four-measure page.
+
+Rubik's Cube algorithms can be embedded as an interactive 3D window:
 
 ````md
-```chesser
-fen: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1
-orientation: white
+```rubik
+algorithm: R U R' U'
+speed: 0.42
+autoplay: true
 ```
 ````
 
-For PGN, use `pgn: |` followed by indented PGN lines, as Chesser does. The board engine is loaded only when such a block is present. Pinching the captured board opens a separate curved 3D window beside the reading panel, using Chesser-compatible board themes, highlighted legal destinations, previous/next navigation, board flipping, and automatic PGN replay with pause/resume. The inline board preview is decoded to a 500 px PNG and paginated as one atomic block, so it is never split between pages. Invisible raycast-only targets keep MIDI and chess blocks selectable without drawing white click surfaces; changing the reading page does not close an already-open board. Board textures, timers, controls, and window geometry are reused during the session and disposed when the note or page changes.
+The block also accepts `solution:`, a 54-character `facelets:` state in
+URFDLB order, per-face color overrides such as `colorU: #ffffff`, nine stickers
+per face (`U: UUUUUUUUU`) and corner overrides such as `URF: URF`. Invalid
+or physically impossible solver states are rejected. Previous, play/pause,
+next, reset and solve controls are available in AR. Only the moving layer is
+updated during animation; the two-phase 3×3 solver is MIT-licensed, bundled
+locally and initialized inside a Web Worker, keeping its tables and search off
+the Quest rendering thread. Wide turns and standard U/R/F/D/L/B prime/double
+notation are supported.
+
 The viewer starts in English and includes a language selector for Portuguese, Spanish, French, Italian, and Romanian.
 
 During AR, use the keyboard search to find notes by title. Selecting a suggested result with a pinch opens the note through the same cached bridge path used by the main graph.
@@ -251,6 +268,18 @@ advertising, payment system, or first-party account.
 
 Quick Tunnel DNS can take a few seconds to propagate. Retry once, or stop and
 start the session to obtain a fresh URL. Use a Named Tunnel for a stable address.
+
+### Remote video quality and allowed platforms
+
+The bridge accepts remote downloads only from an explicit hostname allowlist. Configure it in `note-bridge.config.json`:
+
+```json
+"remoteVideoHosts": ["youtube.com", "youtu.be", "streamable.com"],
+"remoteVideoMaxHeight": 720,
+"remoteVideoMaxSizeMb": 256
+```
+
+Add a hostname only when you trust that platform. Wildcards and an unrestricted “allow all” mode are intentionally unsupported. Subdomains of an allowed hostname are accepted. Full HD can be enabled with `remoteVideoMaxHeight: 1080`; 720p remains the default because it downloads faster, uses less cache, and is usually sufficient for the Quest video window. The hard limits are 1080p and 512 MB.
 
 ### A video is black
 

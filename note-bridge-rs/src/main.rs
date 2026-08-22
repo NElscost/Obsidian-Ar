@@ -68,6 +68,9 @@ struct AppState {
     video_cache: Arc<RwLock<HashMap<String, CachedVideo>>>,
     media_tickets: Arc<RwLock<HashMap<String, MediaTicket>>>,
     remote_client: reqwest::Client,
+    remote_video_hosts: Arc<HashSet<String>>,
+    remote_video_max_height: u16,
+    remote_video_max_size_mb: u64,
 }
 
 #[derive(Default)]
@@ -252,15 +255,11 @@ mod origin_tests {
 
     #[test]
     fn restricts_youtube_video_hosts() {
-        assert!(youtube_video_url_allowed(
-            "https://www.youtube.com/watch?v=abc"
-        ));
-        assert!(youtube_video_url_allowed("https://youtu.be/abc"));
-        assert!(youtube_video_url_allowed("https://streamable.com/abc123"));
-        assert!(!youtube_video_url_allowed("http://youtube.com/watch?v=abc"));
-        assert!(!youtube_video_url_allowed(
-            "https://youtube.com.evil.test/watch?v=abc"
-        ));
+        assert!(remote_video_url_allowed("https://www.youtube.com/watch?v=abc", &default_remote_video_hosts()));
+        assert!(remote_video_url_allowed("https://youtu.be/abc", &default_remote_video_hosts()));
+        assert!(remote_video_url_allowed("https://streamable.com/abc123", &default_remote_video_hosts()));
+        assert!(!remote_video_url_allowed("http://youtube.com/watch?v=abc", &default_remote_video_hosts()));
+        assert!(!remote_video_url_allowed("https://youtube.com.evil.test/watch?v=abc", &default_remote_video_hosts()));
     }
 }
 
@@ -1424,8 +1423,8 @@ async fn read_video_ambilight(
     if !matches!(note_is_allowed(&state, &note_path).await, Ok(true)) {
         return error(StatusCode::NOT_FOUND, "Nota não permitida.");
     }
-    let path = if youtube_video_url_allowed(&payload.asset_path) {
-        let downloaded = match prepare_youtube_video(&payload.asset_path).await {
+    let path = if remote_video_url_allowed(&payload.asset_path, &state.remote_video_hosts) {
+        let downloaded = match prepare_remote_video(&payload.asset_path, state.remote_video_max_height, state.remote_video_max_size_mb).await {
             Ok(path) => path,
             Err(err) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
         };
@@ -1957,29 +1956,29 @@ async fn stream_media_file(path: &Path, headers: &HeaderMap, cache_control: &str
     response.body(Body::from_stream(stream)).unwrap()
 }
 
-fn youtube_video_url_allowed(value: &str) -> bool {
-    let Ok(url) = reqwest::Url::parse(value) else {
-        return false;
-    };
-    if url.scheme() != "https" {
-        return false;
-    }
-    matches!(
-        url.host_str()
-            .map(|host| host.to_ascii_lowercase())
-            .as_deref(),
-        Some("youtube.com" | "www.youtube.com" | "m.youtube.com" | "youtu.be" | "streamable.com" | "www.streamable.com")
-    )
+fn default_remote_video_hosts() -> HashSet<String> {
+    ["youtube.com", "youtu.be", "streamable.com"]
+        .into_iter().map(str::to_string).collect()
 }
 
-async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
+fn remote_video_url_allowed(value: &str, allowed_hosts: &HashSet<String>) -> bool {
+    let Ok(url) = reqwest::Url::parse(value) else { return false; };
+    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() || url.port().is_some_and(|port| port != 443) { return false; }
+    let Some(host) = url.host_str().map(|host| host.trim_end_matches('.').to_ascii_lowercase()) else { return false; };
+    if host.parse::<std::net::IpAddr>().is_ok() || host == "localhost" { return false; }
+    allowed_hosts.iter().any(|allowed| host == *allowed || host.ends_with(&format!(".{allowed}")))
+}
+
+async fn prepare_remote_video(url: &str, max_height: u16, max_size_mb: u64) -> Result<PathBuf> {
     if let Some((until, message)) = youtube_failure_cache().read().await.get(url).cloned() {
         if until > Instant::now() {
             bail!("{message}");
         }
     }
     let mut hasher = DefaultHasher::new();
-    "youtube-video-v6-atomic".hash(&mut hasher);
+    "remote-video-v7-configurable".hash(&mut hasher);
+    max_height.hash(&mut hasher);
+    max_size_mb.hash(&mut hasher);
     url.hash(&mut hasher);
     let cache_dir = env::temp_dir().join("obsidian-ar-youtube-cache");
     tokio::fs::create_dir_all(&cache_dir).await?;
@@ -2010,6 +2009,8 @@ async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
     let _ = tokio::fs::remove_file(&partial_path).await;
 
     println!("[REMOTE VIDEO] preparando vídeo compatível para a janela WebXR: {url}");
+    let format_selector = format!("bv*[ext=mp4][vcodec^=avc1][height<={max_height}]+ba[ext=m4a]/bv*[ext=mp4][height<={max_height}]+ba/bv*[height<={max_height}]+ba/22/18");
+    let max_filesize = format!("{max_size_mb}M");
     let status = Command::new("yt-dlp")
         .args([
             "--no-playlist",
@@ -2021,9 +2022,9 @@ async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
             "--fragment-retries",
             "2",
             "--max-filesize",
-            "256M",
+            &max_filesize,
             "--format",
-            "18/22/bv*[ext=mp4][vcodec^=avc1][height<=720]+ba[ext=m4a]/bv*[ext=mp4][height<=720]+ba/bv*[height<=720]+ba",
+            &format_selector,
             "--merge-output-format",
             "mp4",
             "--output",
@@ -2049,9 +2050,9 @@ async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
     let metadata = tokio::fs::metadata(&partial_path)
         .await
         .context("yt-dlp terminou sem criar o arquivo de vídeo.")?;
-    if metadata.len() == 0 || metadata.len() > 256 * 1024 * 1024 {
+    if metadata.len() == 0 || metadata.len() > max_size_mb * 1024 * 1024 {
         let _ = tokio::fs::remove_file(&partial_path).await;
-        bail!("O vídeo remoto está vazio ou excede o limite de 256 MB.");
+        bail!("O vídeo remoto está vazio ou excede o limite configurado.");
     }
     tokio::fs::rename(&partial_path, &output_path)
         .await
@@ -2072,13 +2073,13 @@ async fn create_youtube_ticket(
     if !matches!(note_is_allowed(&state, &note_path).await, Ok(true)) {
         return error(StatusCode::NOT_FOUND, "Nota não permitida.");
     }
-    if !youtube_video_url_allowed(&payload.url) {
+    if !remote_video_url_allowed(&payload.url, &state.remote_video_hosts) {
         return error(
             StatusCode::BAD_REQUEST,
             "Somente URLs HTTPS de plataformas de vídeo permitidas são aceitas.",
         );
     }
-    let path = match prepare_youtube_video(&payload.url).await {
+    let path = match prepare_remote_video(&payload.url, state.remote_video_max_height, state.remote_video_max_size_mb).await {
         Ok(path) => path,
         Err(err) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
     };
@@ -2393,6 +2394,11 @@ async fn main() -> Result<()> {
         .map(PathBuf::from)
         .filter(|path| path.is_file());
     let pending = env::var_os("SPACE_PENDING_OPTIMIZATION_PATH").map(PathBuf::from);
+    let remote_video_hosts = env::var("SPACE_REMOTE_VIDEO_HOSTS")
+        .ok().map(|value| value.split(',').map(|host| host.trim().trim_start_matches("*.").to_ascii_lowercase()).filter(|host| !host.is_empty()).collect::<HashSet<_>>())
+        .filter(|hosts| !hosts.is_empty()).unwrap_or_else(default_remote_video_hosts);
+    let remote_video_max_height = env::var("SPACE_REMOTE_VIDEO_MAX_HEIGHT").ok().and_then(|value| value.parse::<u16>().ok()).unwrap_or(720).clamp(360, 1080);
+    let remote_video_max_size_mb = env::var("SPACE_REMOTE_VIDEO_MAX_SIZE_MB").ok().and_then(|value| value.parse::<u64>().ok()).unwrap_or(256).clamp(32, 512);
     let state = AppState {
         token,
         vault: Arc::new(vault),
@@ -2407,6 +2413,9 @@ async fn main() -> Result<()> {
         ambilight_cache: Default::default(),
         video_cache: Default::default(),
         media_tickets: Default::default(),
+        remote_video_hosts: Arc::new(remote_video_hosts),
+        remote_video_max_height,
+        remote_video_max_size_mb,
         remote_client: reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .user_agent("Obsidian-Ar/1.0")
@@ -2425,6 +2434,7 @@ async fn main() -> Result<()> {
             header::HeaderName::from_static("cf-access-client-id"),
             header::HeaderName::from_static("cf-access-client-secret"),
         ]);
+    println!("Vídeo remoto: até {}p / {} MB; hosts: {:?}", state.remote_video_max_height, state.remote_video_max_size_mb, state.remote_video_hosts);
     let app = Router::new()
         .route("/health", get(health))
         .route("/verify", get(verify))

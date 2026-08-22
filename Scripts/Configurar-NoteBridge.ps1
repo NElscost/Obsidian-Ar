@@ -108,6 +108,9 @@ if ($TunnelMode -eq "named") {
   tunnelMode = $TunnelMode
   tunnelUrl = if ($TunnelMode -eq "named") { $TunnelUrl } else { "" }
   tunnelTokenFile = ".cloudflare-tunnel-token"
+  remoteVideoHosts = @("youtube.com", "youtu.be", "streamable.com")
+  remoteVideoMaxHeight = 720
+  remoteVideoMaxSizeMb = 256
 } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
 
 Write-Host ""
