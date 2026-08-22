@@ -6368,6 +6368,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let nativeMicroGestureStates = new WeakMap();
     // oculus-hand profile: 4 is left-hand menu; thumb tap is button 9.
     const NATIVE_MICRO_GESTURE_BUTTONS = Object.freeze({
+      menu: 4,
       tapThumb: 9,
       swipeLeft: 5,
       swipeRight: 6
@@ -6915,6 +6916,11 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       arSearchDisplay = null;
     }
 
+    function toggleKeyboardSearch() {
+      if (arSearchKeyboardActive) closeKeyboardSearch();
+      else openKeyboardSearch();
+    }
+
     function openKeyboardSearch() {
       if (!xrSession || arSearchKeyboardActive) return;
       disposeArNote();
@@ -7160,18 +7166,6 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       setXrMessage("Teclado posicionado na superfície. Toque ou use a pinça para digitar.");
     }
     function registerDoubleThumbTap(state, time) {
-      if (
-        !arNoteGroup.visible &&
-        time - (state.lastCompletedDoubleTapAt ?? 0) <= 900
-      ) {
-        state.lastCompletedDoubleTapAt = 0;
-        state.lastThumbTapAt = 0;
-        graphAutoRotating = false;
-        graphAutoRotationLastTime = 0;
-        openKeyboardSearch();
-        setXrMessage("Busca 3D aberta pelo terceiro thumb tap.");
-        return;
-      }
       const repeated = time - (state.lastThumbTapAt ?? 0) <= 900;
       state.lastThumbTapAt = repeated ? 0 : time;
       if (repeated) {
@@ -7180,15 +7174,15 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           graphAutoRotating = !graphAutoRotating;
           graphAutoRotationLastTime = 0;
           graphAutoRotationIgnorePinchUntil = time + 850;
-          state.lastCompletedDoubleTapAt = time;
+          state.lastCompletedDoubleTapAt = 0;
           setXrMessage(graphAutoRotating
-            ? "Rotação suave ativada. Mais um thumb tap abre a busca; uma pinça posterior interrompe."
-            : "Rotação automática pausada. Mais um thumb tap abre a busca.");
-        } else openKeyboardSearch();
+            ? "Rotação suave ativada. Uma interação direta com o grafo interrompe."
+            : "Rotação automática pausada.");
+        }
       } else {
         setXrMessage(arNoteGroup.visible
           ? "Toque novamente o polegar para abrir o dashboard."
-          : "Toque novamente para alternar a rotação; três toques abrem a busca 3D.");
+          : "Toque novamente para alternar a rotação. Use o gesto menu para a busca 3D.");
       }
     }
     function rememberRecentNote(path) {
@@ -7378,6 +7372,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           if (!material) continue;
           const isLabelText = material.name === "label_text";
           material.side = isLabelText ? THREE.DoubleSide : THREE.FrontSide;
+          material.depthTest = true;
+          if (!material.transparent || isLabelText) material.depthWrite = true;
           material.dithering = true;
           if (isLabelText) {
             material.color?.set(0xffffff);
@@ -7709,7 +7705,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         `,
         transparent: true,
         depthTest: options.depthTest ?? true,
-        depthWrite: false,
+        // The shader discards transparent texels, so writing depth gives labels
+        // correct mutual occlusion without drawing their rectangular quads.
+        depthWrite: options.depthWrite ?? true,
         toneMapped: false
       });
       if (options.trackGlobal !== false) dynamicLabelMaterial = material;
@@ -8922,6 +8920,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       let state = nativeMicroGestureStates.get(inputSource);
       if (!state) {
         state = {
+          menuPressed: false,
           tapPressed: false,
           leftPressed: false,
           rightPressed: false,
@@ -8934,18 +8933,27 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       }
 
       const buttons = inputSource.gamepad?.buttons ?? [];
+      const menuButton = buttons[NATIVE_MICRO_GESTURE_BUTTONS.menu];
       const tapButton = buttons[NATIVE_MICRO_GESTURE_BUTTONS.tapThumb];
       const leftButton = buttons[NATIVE_MICRO_GESTURE_BUTTONS.swipeLeft];
       const rightButton = buttons[NATIVE_MICRO_GESTURE_BUTTONS.swipeRight];
+      const menuPressed = inputSource.handedness === "left" && Boolean(menuButton?.pressed || menuButton?.value > 0.5);
       const tapPressed = Boolean(tapButton?.pressed || tapButton?.value > 0.5);
       const leftPressed = Boolean(leftButton?.pressed || leftButton?.value > 0.5);
       const rightPressed = Boolean(rightButton?.pressed || rightButton?.value > 0.5);
+      const menuStarted = inputSource.handedness === "left" && (
+        iwSdkMicrogestureStarted(inputSource, "menu") || (menuPressed && !state.menuPressed)
+      );
       const tapStarted = iwSdkMicrogestureStarted(inputSource, "tap-thumb") || (tapPressed && !state.tapPressed);
       const leftStarted = iwSdkMicrogestureStarted(inputSource, "swipe-left") || (leftPressed && !state.leftPressed);
       const rightStarted = iwSdkMicrogestureStarted(inputSource, "swipe-right") || (rightPressed && !state.rightPressed);
 
-      state.pressed = tapPressed || leftPressed || rightPressed;
-      if (tapStarted && !graphHierarchy?.expandedHubId) {
+      state.pressed = menuPressed || tapPressed || leftPressed || rightPressed;
+      if (menuStarted) {
+        toggleKeyboardSearch();
+        setXrMessage(arSearchKeyboardActive ? "Busca 3D aberta pelo gesto menu." : "Busca 3D fechada pelo gesto menu.");
+      }
+      if (!arSearchKeyboardActive && tapStarted && !graphHierarchy?.expandedHubId) {
         registerDoubleThumbTap(state, time);
       }
       if (state.pressed) state.suppressRayUntil = time + 260;
@@ -8976,6 +8984,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         }
       }
 
+      state.menuPressed = menuPressed;
       state.tapPressed = tapPressed;
       state.leftPressed = leftPressed;
       state.rightPressed = rightPressed;
@@ -8996,9 +9005,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
       for (const inputSource of xrSession.inputSources) {
         if (!inputSource.hand) continue;
-        if (arSearchKeyboardActive) continue;
-        // Prefer native swipe states for paging; retain the joint recognizer below.
+        // Native menu remains available while the keyboard is open so it can close it.
         if (updateNativeNoteMicroGestures(inputSource, time)) continue;
+        if (arSearchKeyboardActive) continue;
         let state = noteMicroGestureStates.get(inputSource);
         if (!state) {
           state = {
