@@ -480,7 +480,7 @@ test("mantém a busca digitada dentro da sessão WebXR", async () => {
   assert.match(html, /depthWrite: options\.depthWrite \?\? true/);
   assert.match(html, /material\.depthTest = true/);
   assert.doesNotMatch(html, /tapThumb: 4/);
-  assert.match(html, /graphAutoRotating && isPlaced\)/);
+  assert.match(html, /\(graphAutoRotating \|\| keyboardPreservedGraphRotation\) && isPlaced\)/);
 assert.match(html, /remoteVideoPlatform/);
 assert.match(html, /function setVideoStereoMode/);
 assert.match(html, /surface\.layers\.set\(eye \+ 1\)/);
@@ -493,6 +493,9 @@ assert.match(html, /graphAutoRotating\) \{\s+arSearchRealGlassPanel\.visible = f
 assert.match(html, /arSearchKeyboardActive \? 1 : 0\.1/);
   assert.match(html, /!arNoteGroup\.visible &&\s+!arSearchKeyboardActive/);
 assert.match(html, /const keepGraphRotating = graphAutoRotating/);
+assert.match(html, /keyboardPreservedGraphRotation = graphAutoRotating/);
+assert.match(html, /graphAutoRotating \|\| keyboardPreservedGraphRotation/);
+assert.match(html, /if \(resumeGraphRotation\) \{ graphAutoRotating = true/);
 assert.match(html, /graphAutoRotating = keepGraphRotating/);
 assert.match(html, /if \(!menuStarted && !arSearchKeyboardActive && tapStarted/);
   assert.match(html, /closedFingers === 4/);

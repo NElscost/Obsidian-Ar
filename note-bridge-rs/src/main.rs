@@ -2009,7 +2009,7 @@ async fn prepare_remote_video(url: &str, max_height: u16, max_size_mb: u64) -> R
     let _ = tokio::fs::remove_file(&partial_path).await;
 
     println!("[REMOTE VIDEO] preparando vídeo compatível para a janela WebXR: {url}");
-    let format_selector = format!("bv*[ext=mp4][vcodec^=avc1][height<={max_height}]+ba[ext=m4a]/bv*[ext=mp4][height<={max_height}]+ba/bv*[height<={max_height}]+ba/22/18");
+    let format_selector = format!("bv*[ext=mp4][vcodec^=avc1][height<={max_height}]+ba[ext=m4a]/bv*[ext=mp4][height<={max_height}]+ba/bv*[height<={max_height}]+ba/b[ext=mp4][height<={max_height}]/b[height<={max_height}]/22/18");
     let max_filesize = format!("{max_size_mb}M");
     let status = Command::new("yt-dlp")
         .args([

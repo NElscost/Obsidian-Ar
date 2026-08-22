@@ -6411,6 +6411,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let graphAutoRotating = false;
     let graphAutoRotationLastTime = 0;
     let graphAutoRotationIgnorePinchUntil = 0;
+    let keyboardPreservedGraphRotation = false;
     let searchHighlightedNode = null;
     let searchHighlightUntil = 0;
     const synapsePulseTime = { value: 0 };
@@ -6841,7 +6842,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       if (!realGlassBlurToggle.checked || realGlassSuspended || !arSearchKeyboardActive || !arSearchRealGlassPanel) return;
       // Capturing the complete scene for blur competes with the graph animation on Quest.
       // Keep the lightweight frosted layer while automatic rotation is active.
-      if (graphAutoRotating) {
+      if (graphAutoRotating || keyboardPreservedGraphRotation) {
         arSearchRealGlassPanel.visible = false;
         realGlassPreviousFrameAt = time;
         return;
@@ -7026,6 +7027,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       });
     }
     function closeKeyboardSearch() {
+      const resumeGraphRotation = keyboardPreservedGraphRotation;
       disposeRealGlassBlur();
       xrSearch.classList.remove("visible");
       xrSearchInput.blur();
@@ -7033,6 +7035,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       arSearchKeyboardActive = false;
       arSearchQuery = "";
       arSearchDisplay = null;
+      keyboardPreservedGraphRotation = false;
+      if (resumeGraphRotation) { graphAutoRotating = true; graphAutoRotationLastTime = performance.now(); }
     }
 
     function toggleKeyboardSearch() {
@@ -7042,6 +7046,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
     function openKeyboardSearch() {
       if (!xrSession || arSearchKeyboardActive) return;
+      keyboardPreservedGraphRotation = graphAutoRotating || keyboardPreservedGraphRotation;
       disposeArNote();
       arSearchKeyboardActive = true;
       arSearchQuery = "";
@@ -10083,7 +10088,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         weatherField.position.copy(weatherCenter);
       }
       if (isPlaced) synapsePulseTime.value = time * 0.001;
-      if (graphAutoRotating && isPlaced) {
+      if ((graphAutoRotating || keyboardPreservedGraphRotation) && isPlaced) {
         const elapsed = graphAutoRotationLastTime
           ? Math.min((time - graphAutoRotationLastTime) / 1000, arSearchKeyboardActive ? 1 : 0.1)
           : 0;
