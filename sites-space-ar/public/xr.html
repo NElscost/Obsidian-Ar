@@ -2434,6 +2434,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let activeNoteAudioControl = null;
     let activeNoteVideoSurface = null;
     let activeNoteVideoGroup = null;
+    let activeVideoWindowSlot = null;
     let spatialReadingGroup = null;
     const spatialAuxWindows = [];
     let midiVizGroup = null;
@@ -2959,6 +2960,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         arNoteControls = arNoteControls.filter((control) => control !== activeNoteVideoCloseControl);
       }
       releaseActiveMedia();
+      activeVideoWindowSlot = null;
       if (waveformOwnedByVideo) {
         audioWaveformGroup = null;
         audioWaveformTexture = null;
@@ -5234,10 +5236,13 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         entry.group.rotation.y = angle;
       });
     }
-    function registerSpatialAuxWindow(group, width = AR_VIDEO_WIDTH) {
+    function registerSpatialAuxWindow(group, width = AR_VIDEO_WIDTH, preferredIndex = null) {
       if (!group) return;
       const entry = spatialAuxWindows.find((item) => item.group === group);
-      if (entry) entry.width = width; else spatialAuxWindows.push({ group, width });
+      if (entry) entry.width = width;
+      else if (Number.isInteger(preferredIndex)) {
+        spatialAuxWindows.splice(THREE.MathUtils.clamp(preferredIndex, 0, spatialAuxWindows.length), 0, { group, width });
+      } else spatialAuxWindows.push({ group, width });
       if (group.parent !== arNoteGroup) arNoteGroup.add(group);
       layoutSpatialWindows();
     }
@@ -5253,7 +5258,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       layoutSpatialWindows();
     }
     function layoutVideoReadingPair(videoGroup) {
-      registerSpatialAuxWindow(videoGroup, AR_VIDEO_WIDTH);
+      registerSpatialAuxWindow(videoGroup, AR_VIDEO_WIDTH, activeVideoWindowSlot);
+      const index = spatialAuxWindows.findIndex((entry) => entry.group === videoGroup);
+      if (index >= 0) activeVideoWindowSlot = index;
     }
 
     function createArVideoLoadingWindow() {
@@ -5687,13 +5694,16 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         activeNoteVideoGroup && audioWaveformGroup?.parent === activeNoteVideoGroup
       );
       if (activeNoteVideoGroup) {
+        const currentVideoSlot = spatialAuxWindows.findIndex((entry) => entry.group === activeNoteVideoGroup);
+        if (currentVideoSlot >= 0) activeVideoWindowSlot = currentVideoSlot;
+        unregisterSpatialAuxWindow(activeNoteVideoGroup, false);
         activeNoteVideoGroup.traverse((object) => {
           if (!object.isMesh) return;
           object.geometry?.dispose();
           object.material?.map?.dispose();
           object.material?.dispose();
         });
-        arNoteGroup.remove(activeNoteVideoGroup);
+        activeNoteVideoGroup.removeFromParent();
       }
       if (activeNoteVideoCloseControl) {
         arNoteControls = arNoteControls.filter((control) => control !== activeNoteVideoCloseControl);
@@ -6410,6 +6420,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let graphIntroPulseStartedAt = null;
     let graphAutoRotating = false;
     let graphAutoRotationLastTime = 0;
+    let graphAutoRotationLastActiveAt = 0;
     let graphAutoRotationIgnorePinchUntil = 0;
     let keyboardPreservedGraphRotation = false;
     let searchHighlightedNode = null;
@@ -7046,7 +7057,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
     function openKeyboardSearch() {
       if (!xrSession || arSearchKeyboardActive) return;
-      keyboardPreservedGraphRotation = graphAutoRotating || keyboardPreservedGraphRotation;
+      keyboardPreservedGraphRotation = graphAutoRotating
+        || performance.now() - graphAutoRotationLastActiveAt < 500
+        || keyboardPreservedGraphRotation;
       disposeArNote();
       arSearchKeyboardActive = true;
       arSearchQuery = "";
@@ -7297,6 +7310,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         else if (!graphHierarchy?.expandedHubId) {
           graphAutoRotating = !graphAutoRotating;
           graphAutoRotationLastTime = 0;
+          if (!graphAutoRotating) graphAutoRotationLastActiveAt = 0;
           graphAutoRotationIgnorePinchUntil = time + 850;
           state.lastCompletedDoubleTapAt = 0;
           setXrMessage(graphAutoRotating
@@ -9484,6 +9498,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       ) {
         graphAutoRotating = false;
         graphAutoRotationLastTime = 0;
+        graphAutoRotationLastActiveAt = 0;
         setXrMessage("Rotação automática interrompida pela interação.");
       }
 
@@ -10094,6 +10109,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           : 0;
         contentRoot.rotation.y += elapsed * 0.10;
         graphAutoRotationLastTime = time;
+        graphAutoRotationLastActiveAt = time;
       } else graphAutoRotationLastTime = 0;
       updateVideoAmbilight(time);
       updateAbcHighlightPulse(time);
