@@ -1117,9 +1117,24 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       return "";
     }
 
+    function remoteVideoPlatform(value) {
+      try {
+        const host = new URL(String(value ?? "").trim()).hostname.toLowerCase();
+        if (host === "youtu.be" || host === "youtube.com" || host.endsWith(".youtube.com")) return "youtube";
+        if (host === "streamable.com" || host.endsWith(".streamable.com")) return "streamable";
+      } catch {}
+      return "";
+    }
+
+    function remoteVideoCardHtml(source, label = "") {
+      const platform = remoteVideoPlatform(source);
+      if (!platform) return escapeNoteHtml(label || source);
+      const title = platform === "youtube" ? "YouTube" : "Streamable";
+      return `<div class="note-video-card note-remote-video-card" data-note-video-source="${encodeURIComponent(source)}">▶ ${title}: ${escapeNoteHtml(label || source)}</div>`;
+    }
+
     function youtubeCardHtml(source, label = "") {
-      if (!youtubeVideoId(source)) return escapeNoteHtml(label || source);
-      return `<div class="note-video-card note-youtube-card" data-note-video-source="${encodeURIComponent(source)}">▶ YouTube: ${escapeNoteHtml(label || source)}</div>`;
+      return youtubeVideoId(source) ? remoteVideoCardHtml(source, label) : escapeNoteHtml(label || source);
     }
 
 
@@ -1288,7 +1303,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           if (kind === "smiles") return '<div class="note-smiles" data-note-smiles="' + encodeURIComponent(body) + '">SMILES: ' + escapeNoteHtml(body) + '</div>';
           if (kind === "timestamp-url") {
             mediaSource = body.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
-            return youtubeVideoId(mediaSource) ? youtubeCardHtml(mediaSource, "Timestamp video") : videoCardHtml(mediaSource, "Timestamp video");
+            return remoteVideoPlatform(mediaSource) ? remoteVideoCardHtml(mediaSource, "Timestamp video") : videoCardHtml(mediaSource, "Timestamp video");
           }
           const range = body.match(/(\d{1,2}(?::\d{1,2}){1,2})(?:\s*(?:-|–|—|to)\s*(\d{1,2}(?::\d{1,2}){1,2}))?/i);
           const start = parseTimestampSeconds(range?.[1]);
@@ -1829,11 +1844,11 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       await rubikExtension.renderBlocks(noteContent);
       for (const link of noteContent.querySelectorAll("a")) {
         const href = link.getAttribute("href")?.trim() ?? "";
-        if (youtubeVideoId(href)) {
+        if (remoteVideoPlatform(href)) {
           const card = document.createElement("div");
-          card.className = "note-video-card note-youtube-card";
+          card.className = "note-video-card note-remote-video-card";
           card.dataset.noteVideoSource = encodeURIComponent(href);
-          card.textContent = "YouTube: " + (link.textContent?.trim() || href);
+          card.textContent = (remoteVideoPlatform(href) === "youtube" ? "YouTube: " : "Streamable: ") + (link.textContent?.trim() || href);
           link.replaceWith(card);
           continue;
         }
@@ -3646,7 +3661,10 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       const addMatch = (match, value, label = "", kind = "video") =>
         ordered.push({ index: match.index ?? Number.MAX_SAFE_INTEGER, value, label, kind });
       const markdown = String(source ?? "");
-      for (const match of markdown.matchAll(/https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\/[^\s)\]>]+/gi)) addMatch(match, match[0], "YouTube", "youtube");
+      for (const match of markdown.matchAll(/https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be|streamable\.com)\/[^\s)\]>]+/gi)) {
+        const platform = remoteVideoPlatform(match[0]);
+        addMatch(match, match[0], platform === "streamable" ? "Streamable" : "YouTube", platform === "youtube" ? "youtube" : "remote-video");
+      }
       for (const match of markdown.matchAll(/!\[\[([^\]|#]+\.(?:m4v|mov|mp4|ogv|webm))(?:\|([^\]]+))?\]\]/gi)) addMatch(match, match[1], match[2]);
       for (const match of markdown.matchAll(/!\[([^\]]*)\]\(([^)]+\.(?:m4v|mov|mp4|ogv|webm))\)/gi)) addMatch(match, match[2], match[1]);
       for (const match of markdown.matchAll(/<video\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi)) addMatch(match, match[1]);
@@ -5395,12 +5413,12 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           let objectUrl = null;
           let streaming = false;
           let preparedWaveform = null;
-          if (track.kind === "youtube") {
+          if (track.kind === "youtube" || track.kind === "remote-video") {
             const config = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
             if (!config?.url || !config?.token) throw new Error("Configure a ponte para preparar o vídeo do YouTube.");
             const bridge = await ensureVideoBridge(config);
-            if (!bridge.capabilities?.includes("youtube-video")) throw new Error("Reinicie a ponte para habilitar vídeo do YouTube na janela 3D.");
-            setXrMessage("Preparando YouTube para a janela 3D…");
+            if (!bridge.capabilities?.includes("remote-video") && !bridge.capabilities?.includes("youtube-video")) throw new Error("Reinicie a ponte para habilitar vídeo remoto na janela 3D.");
+            setXrMessage("Preparando vídeo remoto para a janela 3D…");
             const ticket = await fetchYoutubeMediaTicket(config, notePath, track.source);
             source = ticket.source;
             streaming = true;
@@ -5680,7 +5698,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     async function toggleNoteAudio(requestedTrack = null) {
       const track = requestedTrack ?? activeNoteTrack ?? noteVideoTracks[0] ?? noteAudioTracks[0];
       if (!track) return;
-      const isVideo = track.kind === "video" || track.kind === "youtube";
+      const isVideo = track.kind === "video" || track.kind === "youtube" || track.kind === "remote-video";
       const switchingTrack = activeNoteTrack?.source !== track.source
         || activeNoteMediaPath !== arNotePath;
       if (switchingTrack) {
@@ -6727,6 +6745,13 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
     function updateRealGlassBlur(time) {
       if (!realGlassBlurToggle.checked || realGlassSuspended || !arSearchKeyboardActive || !arSearchRealGlassPanel) return;
+      // Capturing the complete scene for blur competes with the graph animation on Quest.
+      // Keep the lightweight frosted layer while automatic rotation is active.
+      if (graphAutoRotating) {
+        arSearchRealGlassPanel.visible = false;
+        realGlassPreviousFrameAt = time;
+        return;
+      }
       const frameDelta = realGlassPreviousFrameAt ? time - realGlassPreviousFrameAt : 0;
       realGlassPreviousFrameAt = time;
       if (frameDelta > 26) realGlassSlowFrames += 1;
@@ -9964,7 +9989,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       if (isPlaced) synapsePulseTime.value = time * 0.001;
       if (graphAutoRotating && isPlaced) {
         const elapsed = graphAutoRotationLastTime
-          ? Math.min((time - graphAutoRotationLastTime) / 1000, 0.05)
+          ? Math.min((time - graphAutoRotationLastTime) / 1000, arSearchKeyboardActive ? 1 : 0.1)
           : 0;
         contentRoot.rotation.y += elapsed * 0.10;
         graphAutoRotationLastTime = time;

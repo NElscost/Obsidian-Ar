@@ -125,6 +125,7 @@ fn bridge_capabilities(_state: &AppState) -> Vec<&'static str> {
         "byte-ranges",
         "media-tickets",
         "youtube-video",
+        "remote-video",
         "waveform",
         "midi-viz",
         "video-ambilight",
@@ -255,6 +256,7 @@ mod origin_tests {
             "https://www.youtube.com/watch?v=abc"
         ));
         assert!(youtube_video_url_allowed("https://youtu.be/abc"));
+        assert!(youtube_video_url_allowed("https://streamable.com/abc123"));
         assert!(!youtube_video_url_allowed("http://youtube.com/watch?v=abc"));
         assert!(!youtube_video_url_allowed(
             "https://youtube.com.evil.test/watch?v=abc"
@@ -292,6 +294,35 @@ struct MidiVizNote {
     velocity: u8,
     channel: u8,
     track: u16,
+    quantized_start_beat: f64,
+    quantized_duration_beats: f64,
+    measure: u32,
+    beat_in_measure: f64,
+    hand: u8,
+    voice: u8,
+    spelling: String,
+    dotted: bool,
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MidiTempoPoint {
+    beat: f64,
+    bpm: f64,
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MidiTimeSignaturePoint {
+    beat: f64,
+    numerator: u8,
+    denominator: u8,
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MidiKeySignaturePoint {
+    beat: f64,
+    sharps: i8,
+    minor: bool,
+    name: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -302,6 +333,10 @@ struct MidiVizResponse {
     track_count: usize,
     beats_per_measure: u8,
     beat_unit: u8,
+    ppq: u64,
+    tempo_map: Vec<MidiTempoPoint>,
+    time_signatures: Vec<MidiTimeSignaturePoint>,
+    key_signatures: Vec<MidiKeySignaturePoint>,
     notes: Vec<MidiVizNote>,
 }
 #[derive(Clone, Serialize)]
@@ -1535,6 +1570,8 @@ fn parse_midi_file(path: &Path) -> Result<MidiVizResponse> {
     let mut final_tick = 0_u64;
     let mut beats_per_measure = 4_u8;
     let mut beat_unit = 4_u8;
+    let mut time_signatures_raw = vec![(0_u64, 4_u8, 4_u8)];
+    let mut key_signatures_raw = vec![(0_u64, 0_i8, false)];
     for (track_index, track) in smf.tracks.iter().enumerate() {
         let mut tick = 0_u64;
         for event in track {
@@ -1547,6 +1584,10 @@ fn parse_midi_file(path: &Path) -> Result<MidiVizResponse> {
                 TrackEventKind::Meta(MetaMessage::TimeSignature(numerator, denominator, _, _)) => {
                     beats_per_measure = numerator.max(1);
                     beat_unit = 2_u8.saturating_pow(u32::from(denominator.min(6)));
+                    time_signatures_raw.push((tick, beats_per_measure, beat_unit));
+                }
+                TrackEventKind::Meta(MetaMessage::KeySignature(sharps, minor)) => {
+                    key_signatures_raw.push((tick, sharps.clamp(-7, 7), minor))
                 }
                 TrackEventKind::Midi { channel, message } => match message {
                     MidiMessage::NoteOn { key, vel } => events.push(RawNoteEvent {
@@ -1584,7 +1625,7 @@ fn parse_midi_file(path: &Path) -> Result<MidiVizResponse> {
     let mut segment_tick = 0_u64;
     let mut segment_seconds = 0_f64;
     let mut micros_per_beat = 500_000_u32;
-    for (tick, micros) in tempos {
+    for &(tick, micros) in &tempos {
         segment_seconds += (tick.saturating_sub(segment_tick)) as f64 * micros_per_beat as f64
             / ticks_per_beat as f64
             / 1_000_000.0;
@@ -1623,10 +1664,19 @@ fn parse_midi_file(path: &Path) -> Result<MidiVizResponse> {
                 start,
                 duration: (end - start).max(0.02),
                 start_beat: started.0 as f64 / ticks_per_beat as f64,
-                duration_beats: event.tick.saturating_sub(started.0).max(1) as f64 / ticks_per_beat as f64,
+                duration_beats: event.tick.saturating_sub(started.0).max(1) as f64
+                    / ticks_per_beat as f64,
                 velocity: started.1,
                 channel: event.channel,
                 track: event.track,
+                quantized_start_beat: 0.0,
+                quantized_duration_beats: 0.0,
+                measure: 0,
+                beat_in_measure: 0.0,
+                hand: 0,
+                voice: 0,
+                spelling: String::new(),
+                dotted: false,
             });
         }
         if notes.len() > 50_000 {
@@ -1641,14 +1691,112 @@ fn parse_midi_file(path: &Path) -> Result<MidiVizResponse> {
                 start,
                 duration: (tick_seconds(final_tick) - start).max(0.02),
                 start_beat: tick as f64 / ticks_per_beat as f64,
-                duration_beats: final_tick.saturating_sub(tick).max(1) as f64 / ticks_per_beat as f64,
+                duration_beats: final_tick.saturating_sub(tick).max(1) as f64
+                    / ticks_per_beat as f64,
                 velocity,
                 channel,
                 track,
+                quantized_start_beat: 0.0,
+                quantized_duration_beats: 0.0,
+                measure: 0,
+                beat_in_measure: 0.0,
+                hand: 0,
+                voice: 0,
+                spelling: String::new(),
+                dotted: false,
             });
         }
     }
     notes.sort_by(|left, right| left.start.total_cmp(&right.start));
+    let mut pitches: Vec<u8> = notes.iter().map(|n| n.pitch).collect();
+    pitches.sort_unstable();
+    let split = pitches
+        .get(pitches.len() / 2)
+        .copied()
+        .unwrap_or(60)
+        .clamp(54, 66);
+    let grids = [0.25_f64, 1.0 / 3.0, 0.125];
+    let quantize = |beat: f64| {
+        grids
+            .iter()
+            .map(|g| (beat / g).round() * g)
+            .min_by(|a, b| (a - beat).abs().total_cmp(&(b - beat).abs()))
+            .unwrap_or(beat)
+    };
+    let measure_beats = beats_per_measure as f64 * 4.0 / beat_unit as f64;
+    let sharps = key_signatures_raw.last().map(|v| v.1).unwrap_or(0);
+    let sharp = [
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    ];
+    let flat = [
+        "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B",
+    ];
+    let mut ends = [[0_f64; 3]; 2];
+    for n in &mut notes {
+        let start = quantize(n.start_beat);
+        let length = (quantize(n.duration_beats).max(0.125) * 8.0).round() / 8.0;
+        let hand = usize::from(n.pitch >= split);
+        let mut voice = 0;
+        for c in 0..3 {
+            if ends[hand][c] <= start + 0.01 {
+                voice = c;
+                break;
+            }
+            if ends[hand][c] < ends[hand][voice] {
+                voice = c
+            }
+        }
+        ends[hand][voice] = start + length;
+        n.quantized_start_beat = start;
+        n.quantized_duration_beats = length;
+        n.measure = (start / measure_beats).floor().max(0.0) as u32 + 1;
+        n.beat_in_measure = start % measure_beats;
+        n.hand = hand as u8;
+        n.voice = voice as u8;
+        n.spelling = (if sharps < 0 { flat } else { sharp })[(n.pitch % 12) as usize].to_string();
+        n.dotted = [0.25, 0.5, 1.0, 2.0, 4.0]
+            .iter()
+            .any(|b| (length - b * 1.5).abs() < 0.04);
+    }
+    let key_name = |s: i8, m: bool| {
+        const A: [&str; 15] = [
+            "Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#",
+        ];
+        const B: [&str; 15] = [
+            "Abm", "Ebm", "Bbm", "Fm", "Cm", "Gm", "Dm", "Am", "Em", "Bm", "F#m", "C#m", "G#m",
+            "D#m", "A#m",
+        ];
+        let i = (s + 7).clamp(0, 14) as usize;
+        if m {
+            B[i]
+        } else {
+            A[i]
+        }
+    };
+    let tempo_map = tempos
+        .iter()
+        .map(|(t, m)| MidiTempoPoint {
+            beat: *t as f64 / ticks_per_beat as f64,
+            bpm: 60_000_000.0 / f64::from(*m),
+        })
+        .collect();
+    let time_signatures = time_signatures_raw
+        .iter()
+        .map(|(t, a, b)| MidiTimeSignaturePoint {
+            beat: *t as f64 / ticks_per_beat as f64,
+            numerator: *a,
+            denominator: *b,
+        })
+        .collect();
+    let key_signatures = key_signatures_raw
+        .iter()
+        .map(|(t, s, m)| MidiKeySignaturePoint {
+            beat: *t as f64 / ticks_per_beat as f64,
+            sharps: *s,
+            minor: *m,
+            name: key_name(*s, *m).to_string(),
+        })
+        .collect();
     let duration = notes
         .iter()
         .map(|note| note.start + note.duration)
@@ -1663,6 +1811,10 @@ fn parse_midi_file(path: &Path) -> Result<MidiVizResponse> {
         track_count: smf.tracks.len(),
         beats_per_measure,
         beat_unit,
+        ppq: ticks_per_beat,
+        tempo_map,
+        time_signatures,
+        key_signatures,
         notes,
     })
 }
@@ -1816,7 +1968,7 @@ fn youtube_video_url_allowed(value: &str) -> bool {
         url.host_str()
             .map(|host| host.to_ascii_lowercase())
             .as_deref(),
-        Some("youtube.com" | "www.youtube.com" | "m.youtube.com" | "youtu.be")
+        Some("youtube.com" | "www.youtube.com" | "m.youtube.com" | "youtu.be" | "streamable.com" | "www.streamable.com")
     )
 }
 
@@ -1857,7 +2009,7 @@ async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
     let partial_path = output_path.with_extension("download.mp4");
     let _ = tokio::fs::remove_file(&partial_path).await;
 
-    println!("[YOUTUBE] preparando vídeo compatível para a janela WebXR: {url}");
+    println!("[REMOTE VIDEO] preparando vídeo compatível para a janela WebXR: {url}");
     let status = Command::new("yt-dlp")
         .args([
             "--no-playlist",
@@ -1881,10 +2033,10 @@ async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
         .status()
         .await
         .context(
-            "yt-dlp não está disponível. Instale-o para reproduzir YouTube dentro da janela 3D.",
+            "yt-dlp não está disponível. Instale-o para reproduzir vídeos remotos dentro da janela 3D.",
         )?;
     if !status.success() {
-        let message = "O YouTube recusou o download temporariamente (limite ou verificação anti-bot). Aguarde alguns minutos e tente novamente.".to_string();
+        let message = "A plataforma recusou a preparação temporariamente (limite ou verificação anti-bot). Aguarde alguns minutos e tente novamente.".to_string();
         youtube_failure_cache().write().await.insert(
             url.to_string(),
             (
@@ -1899,11 +2051,11 @@ async fn prepare_youtube_video(url: &str) -> Result<PathBuf> {
         .context("yt-dlp terminou sem criar o arquivo de vídeo.")?;
     if metadata.len() == 0 || metadata.len() > 256 * 1024 * 1024 {
         let _ = tokio::fs::remove_file(&partial_path).await;
-        bail!("O vídeo do YouTube está vazio ou excede o limite de 256 MB.");
+        bail!("O vídeo remoto está vazio ou excede o limite de 256 MB.");
     }
     tokio::fs::rename(&partial_path, &output_path)
         .await
-        .context("Não foi possível finalizar o vídeo do YouTube no cache.")?;
+        .context("Não foi possível finalizar o vídeo remoto no cache.")?;
     youtube_failure_cache().write().await.remove(url);
     Ok(output_path)
 }
@@ -1923,7 +2075,7 @@ async fn create_youtube_ticket(
     if !youtube_video_url_allowed(&payload.url) {
         return error(
             StatusCode::BAD_REQUEST,
-            "Somente URLs HTTPS do YouTube são permitidas.",
+            "Somente URLs HTTPS de plataformas de vídeo permitidas são aceitas.",
         );
     }
     let path = match prepare_youtube_video(&payload.url).await {
@@ -1970,7 +2122,7 @@ async fn create_youtube_ticket(
         },
     );
     println!(
-        "[YOUTUBE] janela 3D pronta: {} ({} bytes)",
+        "[REMOTE VIDEO] janela 3D pronta: {} ({} bytes)",
         payload.url,
         metadata.len()
     );

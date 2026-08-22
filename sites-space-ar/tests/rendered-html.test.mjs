@@ -196,7 +196,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /fetchYoutubeMediaTicket/);
   assert.match(html, /cc_load_policy: "1"/);
   assert.match(html, /cc_lang_pref: captionLanguage/);
-  assert.match(html, /if \(track\.kind === "youtube"\)/);
+  assert.match(html, /track\.kind === "youtube" \|\| track\.kind === "remote-video"/);
   assert.match(html, /const preparedVideoSessionCache = new Map\(\)/);
   assert.match(html, /PREPARED_VIDEO_CACHE_TTL_MS = 25 \* 60 \* 1000/);
   assert.match(html, /activeNoteMediaPath !== arNotePath/);
@@ -205,7 +205,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /queueMicrotask\(\(\) => void toggleNoteAudio\(track\)\)/);
   assert.match(html, /videoCloseIcon[\s\S]*?color: 0x000000/);
   assert.match(html, /preparedNoteVideo\?\.notePath === arNotePath/);
-  assert.match(html, /track\.kind === "video" \|\| track\.kind === "youtube"/);
+  assert.match(html, /track\.kind === "video" \|\| track\.kind === "youtube" \|\| track\.kind === "remote-video"/);
   assert.match(html, /activateNoteMediaAtUv/);
   assert.match(html, /function rebuildArNoteMediaHotspotControls/);
   assert.match(html, /noteAction = `media-track:/);
@@ -481,6 +481,10 @@ test("mantém a busca digitada dentro da sessão WebXR", async () => {
   assert.match(html, /material\.depthTest = true/);
   assert.doesNotMatch(html, /tapThumb: 4/);
   assert.match(html, /graphAutoRotating && isPlaced\)/);
+assert.match(html, /remoteVideoPlatform/);
+assert.match(html, /streamable\\.com/);
+assert.match(html, /graphAutoRotating\) \{\s+arSearchRealGlassPanel\.visible = false/);
+assert.match(html, /arSearchKeyboardActive \? 1 : 0\.1/);
   assert.match(html, /!arNoteGroup\.visible &&\s+!arSearchKeyboardActive/);
 assert.match(html, /const keepGraphRotating = graphAutoRotating/);
 assert.match(html, /graphAutoRotating = keepGraphRotating/);
