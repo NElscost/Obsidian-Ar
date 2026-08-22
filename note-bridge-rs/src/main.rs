@@ -66,6 +66,7 @@ struct AppState {
     midi_cache: Arc<RwLock<HashMap<String, CachedMidi>>>,
     ambilight_cache: Arc<RwLock<HashMap<String, CachedAmbilight>>>,
     video_cache: Arc<RwLock<HashMap<String, CachedVideo>>>,
+    stock_cache: Arc<RwLock<HashMap<String, CachedStock>>>,
     media_tickets: Arc<RwLock<HashMap<String, MediaTicket>>>,
     remote_client: reqwest::Client,
     remote_video_hosts: Arc<HashSet<String>>,
@@ -115,6 +116,42 @@ struct CachedVideo {
 }
 
 #[derive(Clone)]
+struct CachedStock {
+    expires_at: Instant,
+    response: StockChartResponse,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StockChartRequest {
+    symbol: String,
+    days: Option<u16>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StockPoint {
+    timestamp: i64,
+    open: f64,
+    high: f64,
+    low: f64,
+    close: f64,
+    volume: u64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StockChartResponse {
+    symbol: String,
+    name: String,
+    currency: String,
+    price: f64,
+    change_percent: f64,
+    updated_at: i64,
+    points: Vec<StockPoint>,
+}
+
+#[derive(Clone)]
 struct MediaTicket {
     path: PathBuf,
     expires_at: Instant,
@@ -132,6 +169,7 @@ fn bridge_capabilities(_state: &AppState) -> Vec<&'static str> {
         "waveform",
         "midi-viz",
         "video-ambilight",
+        "stock-chart",
     ]
 }
 
@@ -2381,6 +2419,90 @@ async fn read_remote_image(
         .unwrap()
 }
 
+
+fn valid_stock_symbol(symbol: &str) -> bool {
+    !symbol.is_empty()
+        && symbol.len() <= 32
+        && symbol.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"-._^=".contains(&byte))
+}
+
+async fn read_stock_chart(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<StockChartRequest>,
+) -> Response {
+    if !authorized(&headers, &state.token) {
+        return error(StatusCode::UNAUTHORIZED, "Token inválido.");
+    }
+    let symbol = payload.symbol.trim().to_ascii_uppercase();
+    if !valid_stock_symbol(&symbol) {
+        return error(StatusCode::BAD_REQUEST, "Símbolo financeiro inválido.");
+    }
+    let days = payload.days.unwrap_or(30).clamp(2, 3650);
+    let key = format!("{symbol}:{days}");
+    if let Some(cached) = state.stock_cache.read().await.get(&key)
+        .filter(|cached| cached.expires_at > Instant::now()).cloned()
+    {
+        return Json(cached.response).into_response();
+    }
+    let range = match days {
+        0..=7 => "7d", 8..=31 => "1mo", 32..=93 => "3mo",
+        94..=186 => "6mo", 187..=366 => "1y", 367..=732 => "2y",
+        733..=1826 => "5y", _ => "10y",
+    };
+    let url = format!("https://query1.finance.yahoo.com/v8/finance/chart/{symbol}");
+    let response = match state.remote_client.get(url)
+        .query(&[("range", range), ("interval", "1d"), ("events", "div,splits")])
+        .send().await
+    {
+        Ok(response) if response.status().is_success() => response,
+        Ok(response) => return error(StatusCode::BAD_GATEWAY, format!("Yahoo Finance: HTTP {}", response.status())),
+        Err(err) => return error(StatusCode::BAD_GATEWAY, err.to_string()),
+    };
+    let json: Value = match response.json().await {
+        Ok(value) => value,
+        Err(err) => return error(StatusCode::BAD_GATEWAY, err.to_string()),
+    };
+    let Some(result) = json.pointer("/chart/result/0") else {
+        let message = json.pointer("/chart/error/description").and_then(Value::as_str).unwrap_or("Cotação indisponível.");
+        return error(StatusCode::BAD_GATEWAY, message);
+    };
+    let timestamps = result.get("timestamp").and_then(Value::as_array).cloned().unwrap_or_default();
+    let quote = result.pointer("/indicators/quote/0").unwrap_or(&Value::Null);
+    let values = |name: &str| quote.get(name).and_then(Value::as_array).cloned().unwrap_or_default();
+    let opens = values("open"); let highs = values("high"); let lows = values("low");
+    let closes = values("close"); let volumes = values("volume");
+    let mut points = Vec::with_capacity(timestamps.len().min(512));
+    for index in 0..timestamps.len() {
+        let Some(close) = closes.get(index).and_then(Value::as_f64) else { continue };
+        points.push(StockPoint {
+            timestamp: timestamps[index].as_i64().unwrap_or_default(),
+            open: opens.get(index).and_then(Value::as_f64).unwrap_or(close),
+            high: highs.get(index).and_then(Value::as_f64).unwrap_or(close),
+            low: lows.get(index).and_then(Value::as_f64).unwrap_or(close),
+            close,
+            volume: volumes.get(index).and_then(Value::as_u64).unwrap_or_default(),
+        });
+    }
+    if points.is_empty() { return error(StatusCode::NOT_FOUND, "Yahoo Finance não retornou preços."); }
+    if points.len() > usize::from(days) { points = points.split_off(points.len() - usize::from(days)); }
+    let meta = result.get("meta").unwrap_or(&Value::Null);
+    let price = meta.get("regularMarketPrice").and_then(Value::as_f64).unwrap_or_else(|| points.last().unwrap().close);
+    let baseline = points.first().map(|point| point.close).unwrap_or(price);
+    let response = StockChartResponse {
+        symbol: symbol.clone(),
+        name: meta.get("longName").or_else(|| meta.get("shortName")).and_then(Value::as_str).unwrap_or(&symbol).to_string(),
+        currency: meta.get("currency").and_then(Value::as_str).unwrap_or("USD").to_string(),
+        price,
+        change_percent: if baseline.abs() > f64::EPSILON { (price - baseline) / baseline * 100.0 } else { 0.0 },
+        updated_at: meta.get("regularMarketTime").and_then(Value::as_i64).unwrap_or_default(),
+        points,
+    };
+    println!("[STOCK] {}: {} pontos ({})", response.symbol, response.points.len(), range);
+    state.stock_cache.write().await.insert(key, CachedStock { expires_at: Instant::now() + Duration::from_secs(60), response: response.clone() });
+    Json(response).into_response()
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let port = env::var("SPACE_NOTE_PORT")
@@ -2412,6 +2534,7 @@ async fn main() -> Result<()> {
         midi_cache: Default::default(),
         ambilight_cache: Default::default(),
         video_cache: Default::default(),
+        stock_cache: Default::default(),
         media_tickets: Default::default(),
         remote_video_hosts: Arc::new(remote_video_hosts),
         remote_video_max_height,
@@ -2449,6 +2572,7 @@ async fn main() -> Result<()> {
         .route("/waveform", post(read_waveform))
         .route("/midi", post(read_midi))
         .route("/video-ambilight", post(read_video_ambilight))
+        .route("/stock-chart", post(read_stock_chart))
         .route("/remote-image", post(read_remote_image))
         .layer(CompressionLayer::new())
         .layer(cors)

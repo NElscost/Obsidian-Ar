@@ -752,3 +752,13 @@ test("renders semantic MIDI measures without changing exact playback", async () 
   assert.match(html, /tempoMap/);
   assert.match(html, /midiVizScoreLayout/);
 });
+
+
+test("supports transparent Stock Blocks charts through the Rust bridge", async () => {
+  const html = await readRenderedHtml();
+  assert.match(html, /stock-block-list\|stock-block/);
+  assert.match(html, /async function renderNoteStockBlocks/);
+  assert.match(html, /fetchBridge\(bridge, "\/stock-chart"/);
+  assert.match(html, /background:transparent/);
+  assert.match(html, /liveStockBlocks \? null : cached\.pages/);
+});

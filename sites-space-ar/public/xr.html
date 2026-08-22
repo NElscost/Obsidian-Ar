@@ -526,7 +526,9 @@
     .note-content .note-music-abc svg { position:static; inset:auto; display:block; width:100%; height:auto; max-height:410px; background:transparent; color:#eef5ff; border-radius:6px; }
     .note-content .note-music-abc svg path { fill:#eef5ff; }
     .note-content .note-music-abc svg text { fill:#eef5ff; }
-    .note-content .note-music-abc-image { display:block; width:100%; height:auto; background:transparent; }
+    .note-content .note-stock-chart { margin:10px 0; padding:4px 0; background:transparent; border:0; break-inside:avoid; }
+.note-content .note-stock-chart img { display:block; width:100%; height:auto; background:transparent; }
+.note-content .note-music-abc-image { display:block; width:100%; height:auto; background:transparent; }
 .note-content .note-midi-viz { margin:10px 0; padding:14px 16px; border:1px solid rgba(117,167,255,.45); border-radius:12px; color:#dce8ff; background:linear-gradient(135deg,rgba(20,35,62,.86),rgba(7,13,24,.9)); cursor:pointer; }
 .note-content .note-midi-viz::before { content:"♪ Synthesia · "; color:#75a7ff; font-weight:700; }
     .note-content .note-smiles { margin:10px 0; padding:8px; border:1px solid rgba(99,230,190,.25); border-radius:10px; background:rgba(7,11,18,.82); break-inside:avoid; overflow:hidden; }
@@ -1274,7 +1276,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function preprocessNotePluginBlocks(source) {
       const markdown = String(source ?? "");
       let mediaSource = "";
-      return markdown.replace(/\x60\x60\x60(timestamp-url|timestamp|smiles|avatar|music-abc|midiviz|chess|chesser|rubik|rubikcube)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi,
+      return markdown.replace(/\x60\x60\x60(timestamp-url|timestamp|smiles|avatar|music-abc|midiviz|chess|chesser|rubik|rubikcube|stock-block-list|stock-block)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi,
         (whole, rawKind, rawBody, offset) => {
           const kind = rawKind.toLowerCase();
           const body = rawBody.trim();
@@ -1293,6 +1295,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
               : '<div aria-hidden="true" style="font-size:42px">👤</div>';
             return '<div class="note-avatar ' + side + '" style="--avatar-size:' + size + 'px">' + image + '<div class="note-avatar-body">' + escapeNoteHtml(description) + '</div></div>';
           }
+          if (kind === "stock-block" || kind === "stock-block-list") return '<div class="note-stock-chart" data-note-stock-kind="' + kind + '" data-note-stock="' + encodeURIComponent(body) + '">Loading market data…</div>';
           if (kind === "music-abc") return '<div class="note-music-abc" data-note-abc="' + encodeURIComponent(body) + '">Loading score…</div>';
           if (kind === "chess" || kind === "chesser") return '<div class="note-chess" data-note-chess="' + encodeURIComponent(body) + '">Loading chessboard…</div>';
           if (kind === "rubik" || kind === "rubikcube") return '<div class="note-rubik" data-note-rubik="' + encodeURIComponent(body) + '">Loading Rubik cube…</div>';
@@ -1312,6 +1315,71 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           const label = timestampLabelFromPrefix(markdown.slice(0, offset));
           return '<div class="note-timestamp-card" data-note-timestamp="1" data-timestamp-source="' + encodeURIComponent(mediaSource) + '" data-timestamp-start="' + start + '" data-timestamp-end="' + (end ?? "") + '" data-timestamp-label="' + encodeURIComponent(label) + '">⏱ ' + escapeNoteHtml(body) + ' · ' + escapeNoteHtml(label) + '</div>';
         });
+    }
+
+
+    function parseStockBlockConfig(source) {
+      const config = { symbols: [], days: 30, useCandles: false, refreshInterval: 0, title: "" };
+      for (const line of String(source ?? "").split(/\r?\n/)) {
+        const match = line.match(/^([A-Za-z]+)\s*:\s*(.*)$/); if (!match) continue;
+        const key = match[1].toLowerCase(), value = match[2].trim();
+        if (["stock","stocks","symbol","symbols","ticker","tickers","crypto","cryptos"].includes(key)) {
+          config.symbols.push(...value.split(",").map((item) => item.trim().toUpperCase()).filter(Boolean).map((item) => key.startsWith("crypto") && !item.includes("-") ? item + "-USD" : item));
+        } else if (key === "days") config.days = THREE.MathUtils.clamp(Number.parseInt(value) || 30, 2, 3650);
+        else if (key === "usecandles") config.useCandles = /^true$/i.test(value);
+        else if (key === "refreshinterval") config.refreshInterval = Math.max(0, Number.parseInt(value) || 0);
+        else if (key === "title") config.title = value;
+      }
+      config.symbols = [...new Set(config.symbols)].slice(0, 12);
+      return config;
+    }
+    function stockNumber(value, currency = "USD") {
+      try { return new Intl.NumberFormat(undefined, { style:"currency", currency, maximumFractionDigits: value < 1 ? 6 : 2 }).format(value); }
+      catch { return Number(value).toFixed(2) + " " + currency; }
+    }
+    function drawStockChart(data, config, compact = false) {
+      const canvas = document.createElement("canvas"); canvas.width = 900; canvas.height = compact ? 112 : 440;
+      const context = canvas.getContext("2d", { alpha:true }); context.clearRect(0, 0, canvas.width, canvas.height);
+      const points = data.points ?? [], closes = points.map((point) => point.close), lows = points.map((point) => point.low), highs = points.map((point) => point.high);
+      const min = Math.min(...lows), max = Math.max(...highs), range = Math.max(1e-9, max - min), positive = data.changePercent >= 0;
+      context.fillStyle = "#eef5ff"; context.font = compact ? "700 30px system-ui" : "700 34px system-ui"; context.textBaseline = "middle";
+      context.fillText(data.symbol, 14, compact ? 32 : 34); context.font = compact ? "600 25px system-ui" : "600 28px system-ui";
+      context.fillText(stockNumber(data.price, data.currency), compact ? 190 : 210, compact ? 32 : 34);
+      context.fillStyle = positive ? "#63e6be" : "#ff7b7b"; context.fillText((positive ? "+" : "") + Number(data.changePercent).toFixed(2) + "%", compact ? 430 : 475, compact ? 32 : 34);
+      const left = compact ? 590 : 55, top = compact ? 14 : 78, width = compact ? 292 : 810, height = compact ? 82 : 325;
+      const x = (index) => left + index / Math.max(1, points.length - 1) * width;
+      const y = (price) => top + height - (price - min) / range * height;
+      if (!compact) { context.strokeStyle = "rgba(190,210,240,.13)"; context.lineWidth = 1; for (let row=0;row<5;row++){const py=top+row*height/4;context.beginPath();context.moveTo(left,py);context.lineTo(left+width,py);context.stroke();} }
+      if (config.useCandles && !compact) {
+        const candleWidth = Math.max(2, Math.min(12, width / Math.max(1, points.length) * .62));
+        points.forEach((point,index)=>{const px=x(index),up=point.close>=point.open,color=up?"#63e6be":"#ff7b7b";context.strokeStyle=color;context.fillStyle=color;context.lineWidth=2;context.beginPath();context.moveTo(px,y(point.high));context.lineTo(px,y(point.low));context.stroke();const py=Math.min(y(point.open),y(point.close)),body=Math.max(2,Math.abs(y(point.open)-y(point.close)));context.fillRect(px-candleWidth/2,py,candleWidth,body);});
+      } else {
+        context.strokeStyle = positive ? "#63e6be" : "#ff7b7b"; context.lineWidth = compact ? 3 : 4; context.lineJoin = "round"; context.beginPath(); closes.forEach((price,index)=>{const px=x(index),py=y(price);if(index)context.lineTo(px,py);else context.moveTo(px,py);}); context.stroke();
+      }
+      return canvas;
+    }
+    async function fetchStockChart(config, symbol) {
+      const bridge = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
+      if (!bridge?.url || !bridge?.token) throw new Error("Obsidian bridge is not configured.");
+      const response = await fetchBridge(bridge, "/stock-chart", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ symbol, days:config.days }) });
+      if (!response.ok) throw new Error((await response.json().catch(()=>null))?.error || "HTTP " + response.status);
+      return response.json();
+    }
+    async function renderNoteStockBlocks() {
+      const blocks = [...noteContent.querySelectorAll("[data-note-stock]")];
+      await Promise.all(blocks.map(async (block) => {
+        let source = block.dataset.noteStock || ""; try { source = decodeURIComponent(source); } catch {}
+        const config = parseStockBlockConfig(source), list = block.dataset.noteStockKind === "stock-block-list";
+        if (!config.symbols.length) { block.textContent = "No stock symbol configured."; return; }
+        try {
+          const datasets = await Promise.all(config.symbols.map((symbol) => fetchStockChart(config, symbol)));
+          const canvas = document.createElement("canvas"); canvas.width = 900; canvas.height = list ? datasets.length * 112 + (config.title ? 58 : 0) : 440;
+          const context = canvas.getContext("2d", { alpha:true }); context.clearRect(0,0,canvas.width,canvas.height);
+          let offset = 0; if (config.title) { context.fillStyle="#eef5ff";context.font="700 32px system-ui";context.fillText(config.title,14,38);offset=58; }
+          datasets.forEach((data,index)=>context.drawImage(drawStockChart(data,config,list),0,offset+index*(list?112:0)));
+          const image = document.createElement("img"); image.alt = config.title || datasets.map((item)=>item.symbol).join(", ") + " market chart"; image.src = canvas.toDataURL("image/png"); await image.decode(); block.replaceChildren(image);
+        } catch (error) { block.textContent = "Market data unavailable: " + error.message; console.warn("Stock Blocks rendering failed.", error); }
+      }));
     }
 
     let chessModulePromise = null;
@@ -1839,6 +1907,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           }
         }
       }
+      await renderNoteStockBlocks();
       await renderNoteAbcBlocks();
       await renderNoteChessBlocks();
       await rubikExtension.renderBlocks(noteContent);
@@ -9979,7 +10048,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           rememberRecentNote(path);
           setXrMessage(`Abrindo ${path} do cache…`);
           noteTitle.textContent = cached.title;
-          await showNoteInAr(cached.title, cached.source, path, cached.pages);
+          const liveStockBlocks = /```stock-block(?:-list)?\s/i.test(cached.source);
+          if (liveStockBlocks) { await renderNoteMarkdown(cached.source); await highlightNoteCode(); }
+          await showNoteInAr(cached.title, cached.source, path, liveStockBlocks ? null : cached.pages);
           setXrMessage(`Nota aberta do cache: ${cached.title}.`);
           if (!cached.complete) void completeCachedNote(path, cached, config);
           else void refreshCachedNoteBanner(path, cached.source, config);
