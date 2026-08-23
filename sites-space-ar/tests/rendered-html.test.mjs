@@ -740,6 +740,8 @@ test("supports interactive Rubik blocks and worker solver", async () => {
   assert.match(rubik, /new Worker/);
   assert.match(rubik, /cornerIndices|const corners=/);
   assert.match(rubik, /register\(group,(?:WINDOW_WIDTH|hooks\.width)\)/);
+  assert.match(rubik, /beginDrag/);
+  assert.match(rubik, /updateMoveLabel/);
 });
 
 test("renders semantic MIDI measures without changing exact playback", async () => {
@@ -773,6 +775,7 @@ test("supports Chronos timelines in a spatial 2D window", async () => {
   assert.match(html, /chronosExtension\.renderBlocks/);
   assert.match(chronos, /DEFAULTVIEW/);
   assert.match(chronos, /chronos-event:/);
+  assert.match(chronos, /rowAssignments/);
   assert.match(chronos, /register\(group,api\.width\)/);
 });
 

@@ -30,19 +30,22 @@ export function createChronosExtension(THREE, api) {
     const W=canvas.width,H=canvas.height,pad=compact?24:90,top=compact?38:82,bottom=compact?28:78;
     ctx.fillStyle=compact?"rgba(8,16,29,.72)":"rgba(8,16,29,.9)";ctx.fillRect(0,0,W,H);
     ctx.fillStyle="#f4f7ff";ctx.font=`700 ${compact?22:34}px system-ui`;ctx.textAlign="center";ctx.fillText(`Timeline · ${s.events.length} events`,W/2,compact?27:43);
-    const groups=[...new Set(s.events.map(e=>e.group))],laneH=Math.max(compact?28:42,(H-top-bottom)/Math.max(1,groups.length));
+    const groups=[...new Set(s.events.map(e=>e.group))];
     const x=v=>pad+(v-s.min)/Math.max(1e-9,s.max-s.min)*(W-pad*2);
+    const rowAssignments=new Map(),groupRows=new Map(),maxRows=compact?3:5;
+    for(const name of groups){const ends=[];const items=s.events.map((event,index)=>({event,index})).filter(item=>item.event.group===name).sort((a,b)=>a.event.start-b.event.start);for(const item of items){const startX=x(item.event.start),estimated=Math.min(compact?125:220,Math.max(46,item.event.label.length*(compact?7:9)));let row=ends.findIndex(end=>startX>end+8);if(row<0&&ends.length<maxRows){row=ends.length;ends.push(-Infinity);}if(row<0)row=ends.indexOf(Math.min(...ends));ends[row]=Math.max(x(item.event.end),startX+estimated);rowAssignments.set(item.index,row);}groupRows.set(name,Math.max(1,ends.length));}
+    const totalRows=Math.max(1,[...groupRows.values()].reduce((sum,value)=>sum+value,0)),rowH=(H-top-bottom)/totalRows;
     ctx.strokeStyle="rgba(190,215,255,.22)";ctx.lineWidth=1;
     for(let i=0;i<=5;i++){const px=pad+(W-pad*2)*i/5;ctx.beginPath();ctx.moveTo(px,top-8);ctx.lineTo(px,H-bottom+8);ctx.stroke();ctx.fillStyle="#9fb0c8";ctx.font=`${compact?13:18}px system-ui`;ctx.textAlign="center";ctx.fillText(yearLabel(s.min+(s.max-s.min)*i/5),px,H-bottom+(compact?18:28));}
     s.hitboxes=[];
-    groups.forEach((name,lane)=>{const cy=top+laneH*(lane+.5);if(!compact){ctx.fillStyle="#9fb0c8";ctx.font="600 17px system-ui";ctx.textAlign="right";ctx.fillText(ellipsis(ctx,name,pad-14),pad-10,cy+5);}ctx.strokeStyle="rgba(190,215,255,.12)";ctx.beginPath();ctx.moveTo(pad,cy+laneH*.36);ctx.lineTo(W-pad,cy+laneH*.36);ctx.stroke();
-      s.events.forEach((e,index)=>{if(e.group!==name)return;const x1=x(e.start),x2=x(e.end),selected=index===s.selected,color=e.color;
+    let rowOffset=0;groups.forEach((name)=>{const rows=groupRows.get(name)||1,groupTop=top+rowOffset*rowH,groupHeight=rows*rowH;if(!compact){ctx.fillStyle="#9fb0c8";ctx.font="600 15px system-ui";ctx.textAlign="right";ctx.fillText(ellipsis(ctx,name,pad-14),pad-10,groupTop+Math.min(groupHeight/2,20)+5);}ctx.strokeStyle="rgba(190,215,255,.12)";ctx.beginPath();ctx.moveTo(pad,groupTop+groupHeight);ctx.lineTo(W-pad,groupTop+groupHeight);ctx.stroke();
+      s.events.forEach((e,index)=>{if(e.group!==name)return;const eventRow=rowAssignments.get(index)||0,cy=groupTop+(eventRow+.5)*rowH,laneH=rowH,x1=x(e.start),x2=x(e.end),selected=index===s.selected,color=e.color;
         if(e.type==="="){ctx.strokeStyle=color;ctx.lineWidth=selected?6:3;ctx.beginPath();ctx.moveTo(x1,top-4);ctx.lineTo(x1,H-bottom+5);ctx.stroke();}
         else if(e.type==="@"||e.end>e.start+.00001){ctx.fillStyle=e.type==="@"?color+"35":color+(selected?"ff":"c8");ctx.fillRect(x1,cy-(selected?13:9),Math.max(5,x2-x1),selected?26:18);}
         else {ctx.fillStyle=color;ctx.beginPath();ctx.arc(x1,cy,selected?11:7,0,Math.PI*2);ctx.fill();}
         const bx=Math.min(x1,x2)-10,bw=Math.max(22,Math.abs(x2-x1)+20),by=cy-laneH*.42,bh=laneH*.84;s.hitboxes.push({index,x:bx,y:by,width:bw,height:bh});
         ctx.fillStyle=selected?"#ffffff":"#dce8ff";ctx.font=`${selected?700:600} ${compact?12:16}px system-ui`;ctx.textAlign="left";ctx.fillText(ellipsis(ctx,e.label,compact?120:210),Math.min(x1+7,W-pad-100),cy-(selected?15:11));
-      });
+      });rowOffset+=rows;
     });
     if(!compact&&s.selected>=0){const e=s.events[s.selected];ctx.fillStyle="rgba(8,16,29,.94)";ctx.fillRect(pad,H-54,W-pad*2,44);ctx.fillStyle=e.color;ctx.font="700 17px system-ui";ctx.textAlign="left";ctx.fillText(ellipsis(ctx,`${e.rawStart}${e.rawEnd!==e.rawStart?` – ${e.rawEnd}`:""} · ${e.label}${e.description?` — ${e.description}`:""}`,W-pad*2-18),pad+9,H-27);}
     return canvas;
