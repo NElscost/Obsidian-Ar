@@ -780,6 +780,8 @@ test("supports Chronos timelines in a spatial 2D window", async () => {
   assert.match(chronos, /SphereGeometry/);
   assert.match(chronos, /beginDrag/);
   assert.match(chronos, /rows\*36/);
+  assert.match(chronos, /gridMaterial/);
+  assert.match(chronos, /width\/Math\.max\(\.001,height\)/);
   assert.match(html, /chronosExtension\.update\(time,frame\)/);
   assert.match(chronos, /register\(group,api\.width\)/);
 });
