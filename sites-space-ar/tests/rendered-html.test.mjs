@@ -489,7 +489,7 @@ assert.match(html, /right\.layers\.enable\(2\)/);
 assert.match(html, /action === "video-stereo"/);
 assert.match(html, /aspect > 2\.4/);
 assert.match(html, /streamable\\.com/);
-assert.match(html, /graphAutoRotating\) \{\s+arSearchRealGlassPanel\.visible = false/);
+assert.match(html, /graphAutoRotating \|\| keyboardPreservedGraphRotation\) \{\s+arSearchRealGlassPanel\.visible = false/);
 assert.match(html, /arSearchKeyboardActive \? 1 : 0\.1/);
   assert.match(html, /!arNoteGroup\.visible &&\s+!arSearchKeyboardActive/);
 assert.match(html, /const keepGraphRotating = graphAutoRotating/);
@@ -739,7 +739,7 @@ test("supports interactive Rubik blocks and worker solver", async () => {
   assert.match(rubik, /Cube\.initSolver\(\)/);
   assert.match(rubik, /new Worker/);
   assert.match(rubik, /cornerIndices|const corners=/);
-  assert.match(rubik, /register\(group,WINDOW_WIDTH\)/);
+  assert.match(rubik, /register\(group,(?:WINDOW_WIDTH|hooks\.width)\)/);
 });
 
 test("renders semantic MIDI measures without changing exact playback", async () => {
@@ -755,10 +755,31 @@ test("renders semantic MIDI measures without changing exact playback", async () 
 
 
 test("supports transparent Stock Blocks charts through the Rust bridge", async () => {
-  const html = await readRenderedHtml();
+  const html = await readFile(xrUrl, "utf8");
   assert.match(html, /stock-block-list\|stock-block/);
   assert.match(html, /async function renderNoteStockBlocks/);
   assert.match(html, /fetchBridge\(bridge, "\/stock-chart"/);
   assert.match(html, /background:transparent/);
   assert.match(html, /liveStockBlocks \? null : cached\.pages/);
+});
+
+
+test("supports Chronos timelines in a spatial 2D window", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  const chronos = await readFile(new URL("../public/vendor/chronos/chronos-ar.js", import.meta.url), "utf8");
+  assert.match(html, /createChronosExtension/);
+  assert.match(html, /data-note-chronos/);
+  assert.match(html, /chronos-open:/);
+  assert.match(html, /chronosExtension\.renderBlocks/);
+  assert.match(chronos, /DEFAULTVIEW/);
+  assert.match(chronos, /chronos-event:/);
+  assert.match(chronos, /register\(group,api\.width\)/);
+});
+
+test("uses dynamic play and pause icons for every media transport", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /midiVizIconTexture\(playing \|\| midiVizPlaying \? "pause" : "play"\)/);
+  assert.match(html, /context\.fillRect\(19, 18, 9, 28\)/);
+  assert.match(html, /addEventListener\("pause", \(\) => \{ updateAudioControlColor/);
+  assert.match(html, /addEventListener\("play", \(\) => \{ updateAudioControlColor/);
 });
