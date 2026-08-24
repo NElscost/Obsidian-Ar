@@ -441,6 +441,32 @@
       word-break: break-word;
     }
     .note-content pre code { padding: 0; background: none; white-space: inherit; }
+    .note-content pre.note-advanced-codeblock { padding: 9px 12px; }
+    .note-content pre.note-advanced-codeblock code { counter-reset: note-code-line; }
+    .note-content .note-code-line {
+      display: block;
+      min-height: 1.35em;
+      border-radius: 3px;
+      padding: 0 5px;
+    }
+    .note-content pre.note-code-numbered .note-code-line {
+      counter-increment: note-code-line;
+      padding-left: 3.15em;
+      position: relative;
+    }
+    .note-content pre.note-code-numbered .note-code-line::before {
+      content: counter(note-code-line);
+      position: absolute;
+      left: 0;
+      width: 2.45em;
+      color: rgba(214, 222, 235, 0.52);
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .note-content .note-code-line-highlighted {
+      background: rgba(255, 214, 92, 0.17);
+      box-shadow: inset 2px 0 0 rgba(255, 214, 92, 0.78);
+    }
     .note-content code.hljs { color: #d6deeb; }
     .note-content .hljs-keyword,
     .note-content .hljs-selector-tag,
@@ -1801,13 +1827,57 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       return /\\[{}]/.test(latex) || /\^\\\*/.test(latex);
     }
 
+    function advancedCodeblockLines(specification) {
+      const lines = new Set();
+      for (const part of String(specification ?? "").split(",")) {
+        const match = part.trim().match(/^(\d+)(?:\s*-\s*(\d+))?$/);
+        if (!match) continue;
+        const start = Math.max(1, Number(match[1]));
+        const end = Math.max(start, Number(match[2] ?? start));
+        for (let line = start; line <= Math.min(end, start + 500); line += 1) lines.add(line);
+      }
+      return [...lines];
+    }
+
+    function preprocessAdvancedCodeblocks(source, metadata) {
+      return String(source ?? "").replace(
+        /^(\s*)(`{3,}|~{3,})([^\r\n]*)\r?\n([\s\S]*?)^\1\2\s*$/gm,
+        (block, indent, fence, rawInfo, body) => {
+          const info = rawInfo.trim();
+          if (!info) return block;
+          const language = info.match(/^(\S+)/)?.[1] ?? "";
+          const numbered = /(?:^|\s)nums(?=\s|$)/i.test(info);
+          const highlighted = advancedCodeblockLines(info.match(/\{([^}]*)\}/)?.[1]);
+          if (!numbered && highlighted.length === 0) return block;
+          const index = metadata.push({ numbered, highlighted }) - 1;
+          return indent + '<span data-note-advanced-codeblock="' + index + '"></span>\n\n' + indent + fence + language + "\n" + body + indent + fence;
+        }
+      );
+    }
+
+    function bindAdvancedCodeblocks(metadata) {
+      for (const marker of noteContent.querySelectorAll("[data-note-advanced-codeblock]")) {
+        const item = metadata[Number(marker.dataset.noteAdvancedCodeblock)];
+        const markerBlock = marker.closest("p") ?? marker;
+        let pre = markerBlock.nextElementSibling;
+        while (pre && pre.tagName !== "PRE") pre = pre.nextElementSibling;
+        if (item && pre) {
+          pre.classList.add("note-advanced-codeblock");
+          if (item.numbered) pre.classList.add("note-code-numbered");
+          pre.dataset.noteHighlightedLines = item.highlighted.join(",");
+        }
+        markerBlock.remove();
+      }
+    }
+
     async function renderNoteMarkdown(source) {
       const math = [];
+      const advancedCodeblocks = [];
       const stashMath = (latex, displayMode) => {
         const index = math.push({ latex: normalizeNoteLatex(latex), displayMode }) - 1;
         return `<span data-note-math="${index}"></span>`;
       };
-      let markdown = preprocessNotePluginBlocks(source)
+      let markdown = preprocessAdvancedCodeblocks(preprocessNotePluginBlocks(source), advancedCodeblocks)
         .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
         .replace(/%%[\s\S]*?%%/g, "")
         .replace(/^(```|~~~)\[([^\]\n]+)\]\s*$/gm, "$1$2")
@@ -1863,10 +1933,11 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         ],
         ALLOWED_ATTR: [
           "alt", "class", "controls", "height", "href", "preload", "src", "title", "type", "width",
-          "data-note-audio-source", "data-note-video-source", "data-note-math"
+          "data-note-audio-source", "data-note-video-source", "data-note-math", "data-note-advanced-codeblock"
         ],
         ALLOW_DATA_ATTR: true
       });
+      bindAdvancedCodeblocks(advancedCodeblocks);
       let rustMath = null;
       if (math.length && "WebAssembly" in window) {
         try {
@@ -3295,6 +3366,24 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         } catch (error) {
           console.warn(`Realce indisponível para ${language}.`, error);
         }
+      }
+      for (const code of blocks) {
+        const pre = code.parentElement;
+        if (!pre?.classList.contains("note-advanced-codeblock")) continue;
+        const highlighted = new Set(
+          String(pre.dataset.noteHighlightedLines ?? "")
+            .split(",")
+            .map(Number)
+            .filter(Number.isFinite)
+        );
+        const renderedLines = code.innerHTML.split("\n");
+        if (renderedLines.at(-1) === "") renderedLines.pop();
+        code.innerHTML = renderedLines.map((line, index) => {
+          const className = highlighted.has(index + 1)
+            ? "note-code-line note-code-line-highlighted"
+            : "note-code-line";
+          return `<span class="${className}">${line || "&nbsp;"}</span>`;
+        }).join("");
       }
     }
 
@@ -7149,10 +7238,17 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
     function openKeyboardSearch() {
       if (!xrSession || arSearchKeyboardActive) return;
-      keyboardPreservedGraphRotation = graphAutoRotating
-        || performance.now() - graphAutoRotationLastActiveAt < 500
-        || keyboardPreservedGraphRotation;
+      const now = performance.now();
+      const preserveGraphRotation = graphAutoRotating
+        || keyboardPreservedGraphRotation
+        || now - graphAutoRotationLastActiveAt < 500;
       disposeArNote();
+      keyboardPreservedGraphRotation = preserveGraphRotation;
+      graphAutoRotating = preserveGraphRotation;
+      if (preserveGraphRotation) {
+        graphAutoRotationLastTime = now;
+        graphAutoRotationLastActiveAt = now;
+      }
       arSearchKeyboardActive = true;
       arSearchQuery = "";
       arNoteGroup.scale.setScalar(keyboardWindowPinned ? 0.62 : 0.78);
@@ -9182,7 +9278,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
       state.pressed = menuPressed || tapPressed || leftPressed || rightPressed;
       if (menuStarted) {
-        const keepGraphRotating = graphAutoRotating;
+        const keepGraphRotating = graphAutoRotating || keyboardPreservedGraphRotation;
         state.lastThumbTapAt = 0;
         state.lastCompletedDoubleTapAt = 0;
         toggleKeyboardSearch();

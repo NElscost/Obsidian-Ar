@@ -176,6 +176,21 @@ links, embeds, or plain URLs become selectable media cards. The
 preprocessing queue prioritizes notes containing video, fenced code blocks, and
 LaTeX so their first open is less likely to interrupt XR.
 
+Advanced Codeblock syntax is rendered in the reading panel and its 3D texture.
+Append `nums` after the fence language to show line numbers and use braces for
+highlighted lines or ranges:
+
+````md
+```typescript nums {1, 3-5}
+const graph = await loadGraph();
+render(graph);
+```
+````
+
+The viewer keeps the existing bounded syntax highlighting and adds numbering
+and line backgrounds only to blocks that request them, avoiding extra DOM work
+for ordinary fenced code blocks.
+
 MIDI attachments can be presented as a lightweight Synthesia-style piano roll:
 
 ````md
