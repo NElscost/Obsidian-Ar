@@ -232,7 +232,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /MP4 com H\.264 \+ AAC/);
   assert.match(html, /async function toggleNoteAudio\(requestedTrack = null\)/);
   assert.match(html, /function attachNoteMediaHotspots/);
-  assert.match(html, /space-ar-note-cache-v16/);
+  assert.match(html, /space-ar-note-cache-v17/);
   assert.match(html, /pageMeta: pages\.map/);
   assert.match(html, /hasMediaHotspotMetadata/);
   assert.match(html, /if \(isVideo\) void prepareVideoAmbilight\(track, arNotePath\)/);
@@ -287,7 +287,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function setNoteControlIcon/);
   assert.match(html, /new THREE\.PlaneGeometry\(0\.024, 0\.024\)/);
   assert.match(html, /activeNoteAudio\.currentTime = 0/);
-  assert.match(html, /space-ar-note-cache-v16/);
+  assert.match(html, /space-ar-note-cache-v17/);
 });
 
 test("remove a captura de voz e preserva a busca local", async () => {
@@ -759,6 +759,7 @@ test("supports interactive Rubik blocks and worker solver", async () => {
   assert.match(rubik, /worker timeout/);
   assert.match(rubik, /worker\.onerror/);
   assert.match(html, /rubikBlockCount > 8/);
+  assert.match(html, /space-ar-note-cache-v17/);
   assert.match(html, /blocos Rubik ser�o preparados sob demanda/);
   assert.match(rubik, /URFDLBMESxyzurfdlb/);
   assert.match(rubik, /applySetup/);
