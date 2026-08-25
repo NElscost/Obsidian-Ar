@@ -11,7 +11,7 @@ local Rust bridge, creates an HTTPS tunnel, and displays a QR code for pairing.
 - WebXR hit testing and anchors;
 - hand gestures for placement, scale, rotation, selection, and pagination;
 - fuzzy keyboard search with selectable 3D suggestions;
-- Markdown, tables, LaTeX, code, images, audio, and video in a 3D note window;
+- Markdown, tables, LaTeX, Mermaid diagrams, code, images, audio, and video in a 3D note window;
 - spatial HRTF audio, audio/video waveform seeking, and media bookmarks;
 - cached note rendering and preprocessing to reduce frame drops;
 - progress reporting with elapsed and estimated remaining time;
