@@ -750,6 +750,9 @@ test("supports interactive Rubik blocks and worker solver", async () => {
   assert.match(rubik, /caseType==='oll'/);
   assert.match(rubik, /inverseSequence/);
   assert.match(rubik, /workerState/);
+  assert.match(rubik, /renderRange/);
+  assert.match(rubik, /noteRubikReady/);
+  assert.match(rubik, /Rubik preview/);
   assert.match(rubik, /URFDLBMESxyzurfdlb/);
   assert.match(rubik, /applySetup/);
 });

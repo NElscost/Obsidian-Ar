@@ -4078,6 +4078,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           if (generation !== noteCaptureGeneration) return;
           await waitForRenderingIdle();
           if (generation !== noteCaptureGeneration) return;
+          await rubikExtension.renderRange(noteContent, pages[index].top, pages[index].bottom);
           await captureOneNotePage(snapdom, pages[index], index, layoutEntries);
           if (arNotePage === index && arNoteGroup.visible) drawArNotePage();
         }
@@ -4098,6 +4099,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       try {
         await document.fonts?.ready;
         const ranges = calculateNotePageRanges();
+        await rubikExtension.renderRange(noteContent, ranges[0].top, ranges[0].bottom);
         const pages = ranges.map((range) => ({
           canvas: null,
           status: "pending",
@@ -4132,6 +4134,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       try {
         await waitForRenderingIdle();
         if (state.generation !== noteCaptureGeneration || state.path !== arNotePath) return;
+        await rubikExtension.renderRange(noteContent, page.top, page.bottom);
         await captureOneNotePage(state.snapdom, page, pageIndex, state.layoutEntries);
         const complete = state.pages.every((candidate) => candidate.canvas instanceof HTMLCanvasElement);
         cacheRenderedNote(state.path, state.title, state.source, state.pages, complete);
@@ -7588,6 +7591,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
             arNoteTitle !== entry.title
           ) return;
           await waitForRenderingIdle();
+          await rubikExtension.renderRange(noteContent, entry.pages[index].top, entry.pages[index].bottom);
           await captureOneNotePage(snapdom, entry.pages[index], index, layoutEntries);
           if (arNotePage === index) drawArNotePage();
         }
