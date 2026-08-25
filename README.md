@@ -230,6 +230,12 @@ autoplay: true
 ```
 ````
 
+Use `case: oll` when the algorithm solves an OLL case. The viewer applies the
+inverse sequence without animation to construct the starting case, defaults the
+U face to yellow and D to white, then animates the supplied solution. Lowercase
+wide turns, M/E/S slices and x/y/z rotations are supported. The rasterized card
+uses the same prepared state as the interactive cube.
+
 The block also accepts `solution:`, a 54-character `facelets:` state in
 URFDLB order, per-face color overrides such as `colorU: #ffffff`, nine stickers
 per face (`U: UUUUUUUUU`) and corner overrides such as `URF: URF`. Invalid

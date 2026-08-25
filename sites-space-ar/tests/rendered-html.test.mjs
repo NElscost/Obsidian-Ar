@@ -747,6 +747,11 @@ test("supports interactive Rubik blocks and worker solver", async () => {
   assert.match(rubik, /register\(group,(?:WINDOW_WIDTH|hooks\.width)\)/);
   assert.match(rubik, /beginDrag/);
   assert.match(rubik, /updateMoveLabel/);
+  assert.match(rubik, /caseType==='oll'/);
+  assert.match(rubik, /inverseSequence/);
+  assert.match(rubik, /workerState/);
+  assert.match(rubik, /URFDLBMESxyzurfdlb/);
+  assert.match(rubik, /applySetup/);
 });
 
 test("renders semantic MIDI measures without changing exact playback", async () => {
