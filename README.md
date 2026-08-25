@@ -12,6 +12,7 @@ local Rust bridge, creates an HTTPS tunnel, and displays a QR code for pairing.
 - hand gestures for placement, scale, rotation, selection, and pagination;
 - fuzzy keyboard search with selectable 3D suggestions;
 - Markdown, tables, LaTeX, Mermaid diagrams, code, images, audio, and video in a 3D note window;
+- ChemRender3D-compatible molecular blocks and embeds (`.pdb`, `.cif`, `.mmcif`, `.mol`, `.sdf`, `.xyz`, or `3dmol`) rendered with instanced WebXR geometry;
 - spatial HRTF audio, audio/video waveform seeking, and media bookmarks;
 - cached note rendering and preprocessing to reduce frame drops;
 - progress reporting with elapsed and estimated remaining time;
@@ -143,6 +144,20 @@ Wait for graph processing to complete, then enter AR.
 
 The simultaneous node budget is configurable from 800 to 1200. Vaults above
 that budget are grouped into expandable hubs to preserve Quest performance.
+
+### Molecular structures
+
+ChemRender3D-compatible structures can be opened from vault embeds or a `3dmol` block:
+
+```md
+![[proteins/hemoglobin.pdb]]
+
+```3dmol
+CC(=O)OC1=CC=CC=C1C(=O)O
+```
+```
+
+The viewer loads only when selected. It uses instanced atoms and bonds, supports pinch rotation, two-hand scaling, compact scale controls, and a placement control for an independent WebXR anchor. Large structures are capped to protect Quest performance. PDB and mmCIF protein files stay in the vault and are read through the local bridge.
 
 ## Media support
 

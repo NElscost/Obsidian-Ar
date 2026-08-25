@@ -232,7 +232,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /MP4 com H\.264 \+ AAC/);
   assert.match(html, /async function toggleNoteAudio\(requestedTrack = null\)/);
   assert.match(html, /function attachNoteMediaHotspots/);
-  assert.match(html, /space-ar-note-cache-v18/);
+  assert.match(html, /space-ar-note-cache-v19/);
   assert.match(html, /pageMeta: pages\.map/);
   assert.match(html, /hasMediaHotspotMetadata/);
   assert.match(html, /if \(isVideo\) void prepareVideoAmbilight\(track, arNotePath\)/);
@@ -287,7 +287,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function setNoteControlIcon/);
   assert.match(html, /new THREE\.PlaneGeometry\(0\.024, 0\.024\)/);
   assert.match(html, /activeNoteAudio\.currentTime = 0/);
-  assert.match(html, /space-ar-note-cache-v18/);
+  assert.match(html, /space-ar-note-cache-v19/);
 });
 
 test("remove a captura de voz e preserva a busca local", async () => {
@@ -759,7 +759,7 @@ test("supports interactive Rubik blocks and worker solver", async () => {
   assert.match(rubik, /worker timeout/);
   assert.match(rubik, /worker\.onerror/);
   assert.match(html, /rubikBlockCount > 8/);
-  assert.match(html, /space-ar-note-cache-v18/);
+  assert.match(html, /space-ar-note-cache-v19/);
   assert.match(html, /blocos Rubik ser�o preparados sob demanda/);
   assert.match(rubik, /URFDLBMESxyzurfdlb/);
   assert.match(rubik, /applySetup/);
@@ -770,11 +770,13 @@ test("renders Mermaid lazily as a transparent raster", async () => {
   assert.match(html, /data-note-mermaid/);
   assert.match(html, /mermaid@11\.17\.1/);
   assert.match(html, /securityLevel: "strict"/);
+  assert.match(html, /Preserve its embedded SVG/);
+  assert.match(html, /querySelectorAll\("text, tspan"\)/);
   assert.match(html, /htmlLabels: false/);
   assert.match(html, /mermaidRasterCache/);
   assert.match(html, /toDataURL\("image\/webp", 0\.88\)/);
   assert.match(html, /renderNoteMermaidBlocks/);
-  assert.match(html, /space-ar-note-cache-v18/);
+  assert.match(html, /space-ar-note-cache-v19/);
 });
 
 test("renders semantic MIDI measures without changing exact playback", async () => {
@@ -828,4 +830,23 @@ test("uses dynamic play and pause icons for every media transport", async () => 
   assert.match(html, /context\.fillRect\(19, 18, 9, 28\)/);
   assert.match(html, /addEventListener\("pause", \(\) => \{ updateAudioControlColor/);
   assert.match(html, /addEventListener\("play", \(\) => \{ updateAudioControlColor/);
+});
+
+
+test("supports ChemRender3D-compatible molecular windows", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  const proteinUrl = new URL("../public/vendor/chemrender3d/protein-ar.js", import.meta.url);
+  const protein = await readFile(proteinUrl, "utf8");
+  const module = await import(proteinUrl);
+  assert.match(html, /createProteinExtension/);
+  assert.match(html, /data-note-protein/);
+  assert.match(html, /protein-open:/);
+  assert.match(html, /proteinExtension\.isPlacementArmed/);
+  assert.match(protein, /InstancedMesh/);
+  assert.match(protein, /protein-place/);
+  assert.match(protein, /pinchDistance/);
+  assert.deepEqual(module.parseProteinSpec("[[hemoglobin.pdb]]"), { kind:"file", value:"hemoglobin.pdb", format:"pdb" });
+  const parsed = module.parseStructureText("ATOM      1  N   ALA A   1      11.104  13.207  14.099  1.00 20.00           N", "pdb");
+  assert.equal(parsed.atoms.length, 1);
+  assert.equal(parsed.atoms[0].element, "N");
 });

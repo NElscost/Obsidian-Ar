@@ -566,6 +566,9 @@
     .note-content .note-rubik { margin:10px 0; padding:6px; border:1px solid rgba(99,230,190,.28); border-radius:10px; background:transparent; break-inside:avoid; overflow:hidden; }
     .note-content .note-rubik::before { content:"◈ Select to open the interactive 3D cube"; display:block; margin-bottom:6px; color:#63e6be; font-size:12px; font-weight:750; }
     .note-content .note-rubik-image { display:block; width:min(100%,320px); height:auto; margin:auto; object-fit:contain; }
+.note-content .note-protein { margin:10px 0; padding:6px; border:1px solid rgba(117,167,255,.42); border-radius:10px; background:rgba(7,17,31,.45); break-inside:avoid; }
+.note-content .note-protein::before { content:"Molecule · select to open the 3D viewer"; display:block; color:#9fc2ff; font-size:12px; margin:0 0 5px; }
+.note-content .note-protein-image { display:block; width:min(100%,360px); height:auto; margin:0 auto; object-fit:contain; }
     .note-content .note-mermaid { margin:10px 0; padding:8px; border:1px solid rgba(117,167,255,.26); border-radius:10px; background:transparent; break-inside:avoid; overflow:hidden; }
     .note-content .note-mermaid-image { position:static; inset:auto; display:block; width:100%; height:auto; max-height:520px; margin:auto; object-fit:contain; background:transparent; }
     .note-content .note-smiles canvas, .note-content .note-smiles svg, .note-content .note-smiles img { position:static; inset:auto; display:block; width:100%; height:auto; max-height:300px; object-fit:contain; }
@@ -752,6 +755,7 @@
   <script type="module">
     import * as THREE from "three";
     import { createRubikExtension } from "/vendor/cubejs/rubik-ar.js";
+    import { createProteinExtension } from "/vendor/chemrender3d/protein-ar.js";
     import { createChronosExtension } from "/vendor/chronos/chronos-ar.js";
     import { marked } from "https://cdn.jsdelivr.net/npm/marked@15.0.12/+esm";
     import DOMPurify from "https://cdn.jsdelivr.net/npm/dompurify@3.2.6/+esm";
@@ -1307,7 +1311,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function preprocessNotePluginBlocks(source) {
       const markdown = String(source ?? "");
       let mediaSource = "";
-      return markdown.replace(/\x60\x60\x60(timestamp-url|timestamp|smiles|avatar|music-abc|midiviz|chess|chesser|rubik|rubikcube|mermaid|chronos|stock-block-list|stock-block)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi,
+      return markdown.replace(/\x60\x60\x60(timestamp-url|timestamp|smiles|avatar|music-abc|midiviz|chess|chesser|rubik|rubikcube|3dmol|mermaid|chronos|stock-block-list|stock-block)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi,
         (whole, rawKind, rawBody, offset) => {
           const kind = rawKind.toLowerCase();
           const body = rawBody.trim();
@@ -1326,6 +1330,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
               : '<div aria-hidden="true" style="font-size:42px">👤</div>';
             return '<div class="note-avatar ' + side + '" style="--avatar-size:' + size + 'px">' + image + '<div class="note-avatar-body">' + escapeNoteHtml(description) + '</div></div>';
           }
+          if (kind === "3dmol") return '<div class="note-protein" data-note-protein="' + encodeURIComponent(body) + '">Loading molecular structure…</div>';
           if (kind === "mermaid") return '<div class="note-mermaid" data-note-mermaid="' + encodeURIComponent(body) + '">Loading diagram...</div>';
           if (kind === "chronos") return '<div class="note-chronos" data-note-chronos="' + encodeURIComponent(body) + '">Loading timeline…</div>';
           if (kind === "stock-block" || kind === "stock-block-list") return '<div class="note-stock-chart" data-note-stock-kind="' + kind + '" data-note-stock="' + encodeURIComponent(body) + '">Loading market data…</div>';
@@ -1400,10 +1405,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       if (!source || source.length > 50_000) throw new Error("Mermaid diagram is empty or too large.");
       const mermaid = await loadMermaidModule();
       const result = await mermaid.render("note-mermaid-" + (++mermaidRenderCounter), source);
-      const safeSvg = DOMPurify.sanitize(result.svg, {
-        USE_PROFILES: { svg: true, svgFilters: true }
-      });
-      const documentSvg = new DOMParser().parseFromString(safeSvg, "image/svg+xml");
+      // Mermaid strict mode sanitizes diagram input. Preserve its embedded SVG
+      // stylesheet: stripping it here made labels disappear during blob decoding.
+      const documentSvg = new DOMParser().parseFromString(result.svg, "image/svg+xml");
       const svg = documentSvg.documentElement;
       if (svg.localName !== "svg" || documentSvg.querySelector("parsererror")) {
         throw new Error("Mermaid returned invalid SVG.");
@@ -1419,6 +1423,17 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       svg.setAttribute("height", String(sourceHeight));
       svg.style.removeProperty("max-width");
       svg.style.setProperty("background", "transparent");
+      for (const unsafe of svg.querySelectorAll("script, foreignObject")) unsafe.remove();
+      for (const element of svg.querySelectorAll("*")) {
+        for (const attribute of [...element.attributes]) {
+          const name = attribute.name.toLowerCase();
+          if (name.startsWith("on") || ((name === "href" || name.endsWith(":href")) && /^\s*javascript:/i.test(attribute.value))) element.removeAttribute(attribute.name);
+        }
+      }
+      for (const element of svg.querySelectorAll("text, tspan")) {
+        if (!element.getAttribute("fill") || element.getAttribute("fill") === "currentColor") element.setAttribute("fill", "#eef5ff");
+        element.style.setProperty("font-family", "system-ui, sans-serif");
+      }
       const objectUrl = URL.createObjectURL(new Blob([
         new XMLSerializer().serializeToString(svg)
       ], { type: "image/svg+xml" }));
@@ -2002,6 +2017,10 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           `${prefix}${stashMath(latex, false)}`
         )
         .replace(
+          /!\[\[([^\]|#]+\.(?:pdb|cif|mmcif|mol|sdf|xyz))(?:\|[^\]]+)?\]\]/gi,
+          (_, target) => `<div class="note-protein" data-note-protein="${encodeURIComponent(`[[${target}]]`)}">Loading molecular structure…</div>`
+        )
+        .replace(
           /!\[\[([^\]|#]+\.(?:avif|gif|jpe?g|png|svg|webp))(?:\|([^\]]+))?\]\]/gi,
           (_, target, sizeOrLabel) => {
             const numericWidth = /^\d+$/.test(sizeOrLabel ?? "") ? sizeOrLabel : "";
@@ -2104,6 +2123,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       await renderNoteAbcBlocks();
       await renderNoteChessBlocks();
       await rubikExtension.renderBlocks(noteContent);
+      proteinExtension.renderBlocks(noteContent);
       for (const link of noteContent.querySelectorAll("a")) {
         const href = link.getAttribute("href")?.trim() ?? "";
         if (remoteVideoPlatform(href)) {
@@ -3242,6 +3262,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       disposeChessOverlay();
       chronosExtension.dispose();
       rubikExtension.dispose();
+      proteinExtension.dispose();
       const preserveVideo = Boolean(
         options.preserveVideo && activeNoteVideoGroup && activeNoteAudio
       );
@@ -3405,7 +3426,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     const NOTE_CACHE_MAX_BYTES = 48 * 1024 * 1024;
     const NOTE_PERSISTENT_CACHE_MAX_ENTRIES = 12;
     const NOTE_PERSISTENT_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
-    const NOTE_CACHE_DB = "space-ar-note-cache-v18";
+    const NOTE_CACHE_DB = "space-ar-note-cache-v19";
     const NOTE_CACHE_STORE = "rendered-notes";
     let noteCacheDbPromise = null;
     let highlightCorePromise = null;
@@ -3982,7 +4003,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       const contentHeight = Math.max(1, noteContent.scrollHeight);
       const atoms = [];
       for (const element of noteContent.querySelectorAll(
-        "img, table, .note-video-card, .note-timestamp-card, .note-smiles, .note-music-abc, .note-midi-viz, .note-chess, .note-rubik, .note-mermaid, .note-audio-card, .obsidian-callout"
+        "img, table, .note-video-card, .note-timestamp-card, .note-smiles, .note-music-abc, .note-midi-viz, .note-chess, .note-rubik, .note-protein, .note-mermaid, .note-audio-card, .obsidian-callout"
       )) {
         const bounds = element.getBoundingClientRect();
         const height = bounds.height;
@@ -4044,7 +4065,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       }
       for (const page of pages) page.mediaHotspots = [];
       for (const element of noteContent.querySelectorAll(
-        ".note-audio-card, .note-video-card, .note-timestamp-card, .note-music-abc, .note-midi-viz, .note-chess, .note-rubik, .note-mermaid, .note-chronos"
+        ".note-audio-card, .note-video-card, .note-timestamp-card, .note-music-abc, .note-midi-viz, .note-chess, .note-rubik, .note-protein, .note-mermaid, .note-chronos"
       )) {
         const bounds = element.getBoundingClientRect();
         const top = bounds.top - noteBounds.top;
@@ -4062,6 +4083,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
               ? "chess"
               : element.matches(".note-rubik")
                 ? "rubik"
+              : element.matches(".note-protein")
+                ? "protein"
               : element.matches(".note-chronos")
                 ? "chronos"
               : element.matches(".note-timestamp-card")
@@ -4075,6 +4098,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
               ? element.dataset.noteChess
               : kind === "rubik"
                 ? element.dataset.noteRubik
+              : kind === "protein"
+                ? element.dataset.noteProtein
               : kind === "chronos"
                 ? element.dataset.noteChronos
               : kind === "timestamp"
@@ -4082,8 +4107,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
                 : element.dataset[kind === "video" ? "noteVideoSource" : "noteAudioSource"];
         let source = encoded || "";
         try { source = decodeURIComponent(source); } catch {}
-        const boardBounds = kind === "chess" || kind === "rubik"
-          ? element.querySelector(kind === "rubik" ? "[data-note-rubik-preview]" : "[data-note-chess-board]")?.getBoundingClientRect()
+        const boardBounds = kind === "chess" || kind === "rubik" || kind === "protein"
+          ? element.querySelector(kind === "rubik" ? "[data-note-rubik-preview]" : kind === "protein" ? "[data-note-protein-preview]" : "[data-note-chess-board]")?.getBoundingClientRect()
           : null;
         const scoreBounds = kind === "music-abc"
           ? element.querySelector(".note-music-abc-image, svg")?.getBoundingClientRect()
@@ -4662,6 +4687,16 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       register:registerSpatialAuxWindow,unregister:unregisterSpatialAuxWindow,layout:layoutSpatialWindows,message:setXrMessage,
       addControl(control){arNoteControls.push(control);},removeControls(items){arNoteControls=arNoteControls.filter(item=>!items.has(item));},pinchPoint:getPinchPoint
     });
+    const proteinExtension=createProteinExtension(THREE,{
+      width:AR_VIDEO_WIDTH,height:AR_VIDEO_HEIGHT,register:registerSpatialAuxWindow,unregister:unregisterSpatialAuxWindow,layout:layoutSpatialWindows,message:setXrMessage,scene,camera,
+      addControl(control){arNoteControls.push(control);},removeControls(items){const owned=new Set(items);arNoteControls=arNoteControls.filter(item=>!owned.has(item));},pinchPoint:getPinchPoint,
+      armPlacement(){reticle.visible=false;},disarmPlacement(){reticle.visible=false;},
+      async fetchStructure(spec){
+        if(spec.kind==='file'){const config=JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY)??'null');if(!config?.url||!config?.token)throw new Error('Configure the note bridge to load molecular files from the vault.');const blob=await fetchVaultAsset(config,arNotePath,spec.value);if(blob.size>24*1024*1024)throw new Error('Molecular file exceeds the 24 MB safety limit.');return{text:await blob.text(),format:spec.format};}
+        const url=spec.kind==='pdb'?`https://files.rcsb.org/download/${encodeURIComponent(spec.value)}.pdb`:`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/${encodeURIComponent(spec.value)}/SDF?record_type=3d`;
+        const response=await fetch(url,{mode:'cors'});if(!response.ok)throw new Error(`Molecular service returned HTTP ${response.status}.`);return{text:await response.text(),format:spec.format};
+      }
+    });
     const rubikExtension=createRubikExtension(THREE,{
       width:AR_VIDEO_WIDTH,height:AR_VIDEO_HEIGHT,geometry:curvedPanelGeometry,round:applyRoundedPanelMask,
       register:registerSpatialAuxWindow,unregister:unregisterSpatialAuxWindow,layout:layoutSpatialWindows,message:setXrMessage,
@@ -4753,6 +4788,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           control.userData.noteAction = `chess-open:${encodeURIComponent(hotspot.source)}`;
         } else if (hotspot.kind === "rubik") {
           control.userData.noteAction = `rubik-open:${encodeURIComponent(hotspot.source)}`;
+        } else if (hotspot.kind === "protein") {
+          control.userData.noteAction = `protein-open:${encodeURIComponent(hotspot.source)}`;
         } else if (hotspot.kind === "chronos") {
           control.userData.noteAction = `chronos-open:${encodeURIComponent(hotspot.source)}`;
         }
@@ -6320,6 +6357,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       if (chronosExtension.handle(action)) return;
       if (action.startsWith("rubik-open:")) { let source=action.slice("rubik-open:".length);try{source=decodeURIComponent(source);}catch{}rubikExtension.open(source);return; }
       if (rubikExtension.handle(action)) return;
+      if (action.startsWith("protein-open:")) { let source=action.slice("protein-open:".length);try{source=decodeURIComponent(source);}catch{}void proteinExtension.open(source).catch(error=>{console.warn("Molecule failed.",error);setXrMessage(`Could not open molecule: ${error.message}`);});return; }
+      if (proteinExtension.handle(action)) return;
       if (action.startsWith("chess-open:")) {
         let source=action.slice("chess-open:".length);try{source=decodeURIComponent(source);}catch{}
         void openChessOverlay(source).catch((error)=>{console.warn("Chessboard failed.",error);setXrMessage("Could not open this chessboard.");});return;
@@ -9217,6 +9256,11 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         const controlInstanceId = usesPointedControl
           ? pointedNoteControlInstanceId
           : hit?.instanceId;
+        if (!control && proteinExtension.isPlacementArmed() && latestHitResult) {
+          void proteinExtension.place(latestHitResult,event,referenceSpace);
+          resetGestureState("await-release");
+          return;
+        }
         if (!control && keyboardSurfacePlacementArmed && latestHitResult) {
           void placeKeyboardAtHit(latestHitResult, event);
           resetGestureState("await-release");
@@ -9241,6 +9285,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       if (!arNoteGroup.visible) return;
       const hit = controlFromSelectEvent(event);
       if (hit?.object?.userData?.noteAction === "rubik-drag") { rubikExtension.beginDrag(event); return; }
+      if (hit?.object?.userData?.noteAction === "protein-drag") { proteinExtension.beginDrag(event); return; }
       if (hit?.object?.userData?.noteAction === "chronos-drag") { chronosExtension.beginDrag(event); return; }
       if (hit?.object?.userData?.noteAction !== "waveform") return;
       waveformDragInputSource = event.inputSource;
@@ -9251,6 +9296,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
     function onSelectEnd(event) {
       rubikExtension.endDrag(event.inputSource);
+      proteinExtension.endDrag(event.inputSource);
       chronosExtension.endDrag(event.inputSource);
       if (waveformDragInputSource === event.inputSource) {
         waveformDragInputSource = null;
@@ -10388,7 +10434,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         }
       }
 
-      if ((isPlaced && !keyboardSurfacePlacementArmed) || !hitTestSource || !referenceSpace) {
+      if ((isPlaced && !keyboardSurfacePlacementArmed && !proteinExtension.isPlacementArmed()) || !hitTestSource || !referenceSpace) {
         latestHitResult = null;
         if (!isPlaced) reticle.visible = false;
         return;
@@ -10433,6 +10479,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       updateAbcHighlightPulse(time);
       updateMidiViz(time);
       rubikExtension.update(time,frame);
+      proteinExtension.update(time,frame,referenceSpace);
       chronosExtension.update(time,frame);
       if (forceGraph && dynamicGraphTicking) {
         forceGraph.tickFrame();
