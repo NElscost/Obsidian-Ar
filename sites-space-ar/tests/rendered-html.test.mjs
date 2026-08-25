@@ -741,7 +741,9 @@ test("supports interactive Rubik blocks and worker solver", async () => {
   assert.match(html, /rubik-open:/);
   assert.match(html, /rubikExtension\.update\(time,frame\)/);
   const rubik = await readFile(new URL("../public/vendor/cubejs/rubik-ar.js", import.meta.url), "utf8");
-  assert.match(rubik, /Cube\.initSolver\(\)/);
+  const rubikWorker = await readFile(new URL("../public/vendor/cubejs/rubik-worker.js", import.meta.url), "utf8");
+  assert.match(rubikWorker, /Cube\.initSolver\(\)/);
+  assert.match(rubikWorker, /importScripts/);
   assert.match(rubik, /new Worker/);
   assert.match(rubik, /cornerIndices|const corners=/);
   assert.match(rubik, /register\(group,(?:WINDOW_WIDTH|hooks\.width)\)/);
@@ -753,6 +755,11 @@ test("supports interactive Rubik blocks and worker solver", async () => {
   assert.match(rubik, /renderRange/);
   assert.match(rubik, /noteRubikReady/);
   assert.match(rubik, /Rubik preview/);
+  assert.match(rubik, /rubik-worker\.js/);
+  assert.match(rubik, /worker timeout/);
+  assert.match(rubik, /worker\.onerror/);
+  assert.match(html, /rubikBlockCount > 8/);
+  assert.match(html, /blocos Rubik ser�o preparados sob demanda/);
   assert.match(rubik, /URFDLBMESxyzurfdlb/);
   assert.match(rubik, /applySetup/);
 });
