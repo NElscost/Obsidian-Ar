@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+﻿import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
@@ -232,7 +232,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /MP4 com H\.264 \+ AAC/);
   assert.match(html, /async function toggleNoteAudio\(requestedTrack = null\)/);
   assert.match(html, /function attachNoteMediaHotspots/);
-  assert.match(html, /space-ar-note-cache-v20/);
+  assert.match(html, /space-ar-note-cache-v21/);
   assert.match(html, /pageMeta: pages\.map/);
   assert.match(html, /hasMediaHotspotMetadata/);
   assert.match(html, /if \(isVideo\) void prepareVideoAmbilight\(track, arNotePath\)/);
@@ -287,7 +287,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function setNoteControlIcon/);
   assert.match(html, /new THREE\.PlaneGeometry\(0\.024, 0\.024\)/);
   assert.match(html, /activeNoteAudio\.currentTime = 0/);
-  assert.match(html, /space-ar-note-cache-v20/);
+  assert.match(html, /space-ar-note-cache-v21/);
 });
 
 test("remove a captura de voz e preserva a busca local", async () => {
@@ -759,7 +759,7 @@ test("supports interactive Rubik blocks and worker solver", async () => {
   assert.match(rubik, /worker timeout/);
   assert.match(rubik, /worker\.onerror/);
   assert.match(html, /rubikBlockCount > 8/);
-  assert.match(html, /space-ar-note-cache-v20/);
+  assert.match(html, /space-ar-note-cache-v21/);
   assert.match(html, /blocos Rubik ser�o preparados sob demanda/);
   assert.match(rubik, /URFDLBMESxyzurfdlb/);
   assert.match(rubik, /applySetup/);
@@ -772,11 +772,25 @@ test("renders Mermaid lazily as a transparent raster", async () => {
   assert.match(html, /securityLevel: "strict"/);
   assert.match(html, /Preserve its embedded SVG/);
   assert.match(html, /querySelectorAll\("text, tspan"\)/);
+  assert.match(html, /querySelectorAll\("script"\)/);
+  assert.doesNotMatch(html, /querySelectorAll\("script, foreignObject"\)/);
   assert.match(html, /htmlLabels: false/);
   assert.match(html, /mermaidRasterCache/);
   assert.match(html, /toDataURL\("image\/webp", 0\.88\)/);
   assert.match(html, /renderNoteMermaidBlocks/);
-  assert.match(html, /space-ar-note-cache-v20/);
+  assert.match(html, /space-ar-note-cache-v21/);
+});
+
+test("renders gene-code lollipop and pedigree diagrams as cached 2D rasters", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  const geneCode = await readFile(new URL("../public/vendor/gene-code/gene-code.js", import.meta.url), "utf8");
+  assert.match(html, /gene-code/);
+  assert.match(html, /createGeneCodeExtension/);
+  assert.match(html, /geneCodeExtension.renderBlocks/);
+  assert.match(geneCode, /lollipopDiagram/i);
+  assert.match(geneCode, /pedigreeDiagram/i);
+  assert.match(geneCode, /image\/webp/);
+  assert.match(geneCode, /rasterCache/);
 });
 
 test("renders semantic MIDI measures without changing exact playback", async () => {
@@ -850,6 +864,9 @@ test("supports ChemRender3D-compatible molecular windows", async () => {
   assert.match(html, /space-ar-molecule-sdf-v1/);
   assert.match(protein, /local SMILES fallback/);
   assert.match(protein, /labelSprite/);
+  assert.match(protein, /drawPreview/);
+  assert.match(protein, /structureCache/);
+  assert.match(protein, /setColorAt/);
   assert.deepEqual(module.parseProteinSpec("[[hemoglobin.pdb]]"), { kind:"file", value:"hemoglobin.pdb", format:"pdb" });
   const parsed = module.parseStructureText("ATOM      1  N   ALA A   1      11.104  13.207  14.099  1.00 20.00           N", "pdb");
   assert.equal(parsed.atoms.length, 1);
