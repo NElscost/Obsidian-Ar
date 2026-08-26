@@ -232,7 +232,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /MP4 com H\.264 \+ AAC/);
   assert.match(html, /async function toggleNoteAudio\(requestedTrack = null\)/);
   assert.match(html, /function attachNoteMediaHotspots/);
-  assert.match(html, /space-ar-note-cache-v23/);
+  assert.match(html, /space-ar-note-cache-v24/);
   assert.match(html, /pageMeta: pages\.map/);
   assert.match(html, /hasMediaHotspotMetadata/);
   assert.match(html, /if \(isVideo\) void prepareVideoAmbilight\(track, arNotePath\)/);
@@ -287,7 +287,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function setNoteControlIcon/);
   assert.match(html, /new THREE\.PlaneGeometry\(0\.024, 0\.024\)/);
   assert.match(html, /activeNoteAudio\.currentTime = 0/);
-  assert.match(html, /space-ar-note-cache-v23/);
+  assert.match(html, /space-ar-note-cache-v24/);
 });
 
 test("remove a captura de voz e preserva a busca local", async () => {
@@ -759,7 +759,7 @@ test("supports interactive Rubik blocks and worker solver", async () => {
   assert.match(rubik, /worker timeout/);
   assert.match(rubik, /worker\.onerror/);
   assert.match(html, /rubikBlockCount > 8/);
-  assert.match(html, /space-ar-note-cache-v23/);
+  assert.match(html, /space-ar-note-cache-v24/);
   assert.match(html, /blocos Rubik ser�o preparados sob demanda/);
   assert.match(rubik, /URFDLBMESxyzurfdlb/);
   assert.match(rubik, /applySetup/);
@@ -780,7 +780,7 @@ test("renders Mermaid lazily as a transparent raster", async () => {
   assert.match(html, /mermaidRasterCache/);
   assert.match(html, /toDataURL\("image\/webp", 0\.88\)/);
   assert.match(html, /renderNoteMermaidBlocks/);
-  assert.match(html, /space-ar-note-cache-v23/);
+  assert.match(html, /space-ar-note-cache-v24/);
 });
 
 test("renders gene-code lollipop and pedigree diagrams as cached 2D rasters", async () => {
@@ -870,8 +870,10 @@ test("supports ChemRender3D-compatible molecular windows", async () => {
   assert.match(protein, /labelSprite/);
   assert.match(protein, /drawPreview/);
   assert.match(protein, /structureCache/);
-  assert.match(protein, /setColorAt/);
-  assert.match(protein, /MeshBasicMaterial\(\{vertexColors:true,toneMapped:false\}\)/);
+  assert.match(protein, /atomGroups/);
+  assert.match(protein, /groups\.get\(element\)/);
+  assert.match(protein, /frustumCulled=false/);
+  assert.match(protein, /MeshBasicMaterial\(\{color:ELEMENT_COLORS/);
   assert.doesNotMatch(protein, /MeshStandardMaterial/);
   assert.deepEqual(module.parseProteinSpec("[[hemoglobin.pdb]]"), { kind:"file", value:"hemoglobin.pdb", format:"pdb" });
   const parsed = module.parseStructureText("ATOM      1  N   ALA A   1      11.104  13.207  14.099  1.00 20.00           N", "pdb");
