@@ -882,6 +882,9 @@ test("supports ChemRender3D-compatible molecular windows", async () => {
   assert.match(protein, /buildProteinRibbon/);
   assert.match(protein, /CatmullRomCurve3/);
   assert.match(protein, /TubeGeometry/);
+  assert.match(protein, /MeshPhongMaterial/);
+  assert.match(protein, /color:0x109b74/);
+  assert.doesNotMatch(protein, /castShadow=true|receiveShadow=true/);
   assert.match(protein, /atomName:\"?/);
   const parsed = module.parseStructureText("ATOM      1  N   ALA A   1      11.104  13.207  14.099  1.00 20.00           N", "pdb");
   assert.equal(parsed.atoms.length, 1);
