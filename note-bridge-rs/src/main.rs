@@ -717,6 +717,9 @@ mod tests {
         assert!(asset_extension_allowed(Path::new("voz.opus")));
         assert!(asset_extension_allowed(Path::new("demonstracao.mp4")));
         assert!(asset_extension_allowed(Path::new("captura.webm")));
+        assert!(asset_extension_allowed(Path::new("estrutura.cif")));
+        assert!(asset_extension_allowed(Path::new("molecula.sdf")));
+        assert!(asset_extension_allowed(Path::new("proteina.pdb")));
         assert!(!asset_extension_allowed(Path::new("script.exe")));
         assert!(!asset_extension_allowed(Path::new("nota.md")));
         assert!(compatibility_video_candidate(Path::new("video.mp4")));
@@ -976,6 +979,12 @@ fn asset_extension_allowed(path: &Path) -> bool {
                 | "wav"
                 | "webm"
                 | "webp"
+                | "pdb"
+                | "cif"
+                | "mmcif"
+                | "mol"
+                | "sdf"
+                | "xyz"
         )
     )
 }

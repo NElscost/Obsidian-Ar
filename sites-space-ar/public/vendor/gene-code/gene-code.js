@@ -24,29 +24,41 @@ function lollipop(source) {
   const length = Math.max(1, Number(rows.find((line) => /^length\s+/i.test(line))?.split(/\s+/)[1]) || 100);
   const domains = rows.map((line) => line.match(/^domain\s+(\d+)\s+(\d+)\s+(.+)$/i)).filter(Boolean);
   const variants = rows.map((line) => line.match(/^variant\s+(\S+)\s+(\d+)\s+(.+)$/i)).filter(Boolean);
-  const width = 920, height = Math.max(330, 235 + Math.ceil(variants.length / 10) * 32);
+  const width = 920, left = 65, right = width - 65, span = right - left;
+  const measure = document.createElement("canvas").getContext("2d");
+  measure.font = "700 15px system-ui";
+  const occupied = [];
+  const labels = variants.map((match) => {
+    const x = left + Number(match[2]) / length * span;
+    const labelWidth = measure.measureText(match[1]).width + 15;
+    let lane = occupied.findIndex((lastRight) => x - labelWidth / 2 > lastRight + 8);
+    if (lane < 0) { lane = occupied.length; occupied.push(-Infinity); }
+    occupied[lane] = x + labelWidth / 2;
+    return { match, x, lane };
+  });
+  const axisY = 104 + Math.max(1, occupied.length) * 43;
+  const height = Math.max(350, axisY + 118);
   const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
   const c = canvas.getContext("2d", { alpha: true });
-  c.font = "700 30px system-ui"; c.fillStyle = "#eef5ff"; c.textAlign = "center"; c.fillText(gene, width / 2, 42);
-  const left = 65, right = width - 65, axisY = 185, span = right - left;
+  c.font = "700 30px system-ui"; c.fillStyle = "#eef5ff"; c.textAlign = "center"; c.fillText(gene, width / 2, 40);
   c.strokeStyle = "#8da8d2"; c.lineWidth = 7; c.beginPath(); c.moveTo(left, axisY); c.lineTo(right, axisY); c.stroke();
   const palette = ["#20c997", "#6ea8fe", "#b197fc", "#ff922b", "#f06595"];
   domains.forEach((match, index) => {
     const x1 = left + (Number(match[1]) - 1) / length * span, x2 = left + Number(match[2]) / length * span;
     roundRect(c, x1, axisY - 18, Math.max(8, x2 - x1), 36, 10, palette[index % palette.length]);
-    c.font = "700 17px system-ui"; c.fillStyle = "#eef5ff"; c.textAlign = "center"; c.fillText(match[3], (x1 + x2) / 2, axisY + 52);
+    c.font = "700 17px system-ui"; c.fillStyle = "#eef5ff"; c.textAlign = "center"; c.fillText(match[3], (x1 + x2) / 2, axisY + 50);
   });
-  const levels = new Map();
-  variants.forEach((match, index) => {
-    const position = Number(match[2]), bucket = Math.round(position / Math.max(1, length / 25));
-    const level = levels.get(bucket) || 0; levels.set(bucket, level + 1);
-    const x = left + position / length * span, y = axisY - 42 - level * 42;
+  labels.forEach(({ match, x, lane }) => {
+    const y = axisY - 43 - lane * 43;
     const color = /frameshift/i.test(match[3]) ? "#ff922b" : /nonsense/i.test(match[3]) ? "#ff5d73" : "#70d6ff";
     c.strokeStyle = color; c.lineWidth = 3; c.beginPath(); c.moveTo(x, axisY - 18); c.lineTo(x, y); c.stroke();
     c.fillStyle = color; c.beginPath(); c.arc(x, y, 9, 0, Math.PI * 2); c.fill();
-    c.save(); c.translate(x + 5, y - 12); c.rotate(-Math.PI / 4); c.font = "700 15px system-ui"; c.fillStyle = "#eef5ff"; c.textAlign = "left"; c.fillText(match[1], 0, 0); c.restore();
+    c.font = "700 15px system-ui"; c.textAlign = "center";
+    const textWidth = c.measureText(match[1]).width + 12;
+    roundRect(c, x - textWidth / 2, y - 34, textWidth, 22, 6, "rgba(5,12,23,.82)");
+    c.fillStyle = "#eef5ff"; c.fillText(match[1], x, y - 18);
   });
-  c.font = "16px system-ui"; c.fillStyle = "#a9bad4"; c.textAlign = "left"; c.fillText("1", left, axisY + 82); c.textAlign = "right"; c.fillText(String(length), right, axisY + 82);
+  c.font = "16px system-ui"; c.fillStyle = "#a9bad4"; c.textAlign = "left"; c.fillText("1", left, axisY + 80); c.textAlign = "right"; c.fillText(String(length), right, axisY + 80);
   return canvas;
 }
 
