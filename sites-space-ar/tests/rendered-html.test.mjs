@@ -885,6 +885,13 @@ test("supports ChemRender3D-compatible molecular windows", async () => {
   assert.match(protein, /MeshPhongMaterial/);
   assert.match(protein, /chainColors=\[0x109b74,0xd74343/);
   assert.match(protein, /chainEntries=.*localeCompare/);
+  assert.match(protein, /backboneName=nucleic/);
+  assert.match(protein, /atomName===\"C4'\"/);
+  assert.match(protein, /nucleic\?\.0064/);
+  assert.match(protein, /primeSugar>=8/);
+  assert.match(protein, /atomName==='C4\*'/);
+  const molecularBuild = protein.slice(protein.indexOf('function build(data)'));
+  assert.ok(molecularBuild.indexOf('if(ribbon)') < molecularBuild.indexOf('const bonds='));
   assert.doesNotMatch(protein, /castShadow=true|receiveShadow=true/);
   assert.match(protein, /atomName:\"?/);
   const parsed = module.parseStructureText("ATOM      1  N   ALA A   1      11.104  13.207  14.099  1.00 20.00           N", "pdb");
