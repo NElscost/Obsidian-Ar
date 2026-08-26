@@ -3,7 +3,7 @@ const ELEMENT_RADII={H:.55,C:.76,N:.71,O:.66,S:1.05,P:1.07,F:.57,CL:1.02,BR:1.2,
 const FILE_PATTERN=/\.(pdb|cif|mmcif|mol|sdf|xyz)$/i;
 
 function elementName(value,fallback='C'){const raw=String(value||fallback).replace(/[^A-Za-z]/g,'').toUpperCase();return raw.slice(0,2)==='CL'||raw.slice(0,2)==='BR'||raw.slice(0,2)==='FE'||raw.slice(0,2)==='CA'||raw.slice(0,2)==='MG'||raw.slice(0,2)==='ZN'?raw.slice(0,2):raw[0]||fallback;}
-export function parseProteinSpec(source){const raw=String(source??'').trim(),link=raw.match(/!?(?:\[\[)([^\]|#]+)(?:\|[^\]]+)?\]\]/),plain=raw.split(/\r?\n/).map(line=>line.trim()).find(Boolean)||'';if(link||FILE_PATTERN.test(plain)){const path=(link?.[1]||plain).trim();return{kind:'file',value:path,format:path.split('.').pop().toLowerCase()};}const pdb=raw.match(/^(?:pdb(?:id)?\s*:\s*)?([0-9][A-Za-z0-9]{3})$/i);if(pdb)return{kind:'pdb',value:pdb[1].toUpperCase(),format:'pdb'};return{kind:'smiles',value:raw.replace(/^smiles\s*:\s*/i,''),format:'sdf'};}
+export function parseProteinSpec(source){const raw=String(source??'').trim(),link=raw.match(/!?(?:\[\[)([^\]|#]+)(?:\|[^\]]+)?\]\]/),markdown=raw.match(/!\[[^\]]*\]\\?\(<?([^)>]+\.(?:pdb|cif|mmcif|mol|sdf|xyz))>?\)/i),plain=raw.split(/\r?\n/).map(line=>line.trim()).find(Boolean)||'';if(link||markdown||FILE_PATTERN.test(plain)){const path=decodeURIComponent((link?.[1]||markdown?.[1]||plain).trim()).replace(/^<|>$/g,'');return{kind:'file',value:path,format:path.split('.').pop().toLowerCase()};}const pdb=raw.match(/^(?:pdb(?:id)?\s*:\s*)?([0-9][A-Za-z0-9]{3})$/i);if(pdb)return{kind:'pdb',value:pdb[1].toUpperCase(),format:'pdb'};return{kind:'smiles',value:raw.replace(/^smiles\s*:\s*/i,''),format:'sdf'};}
 
 function parsePdb(text){const atoms=[],serials=new Map(),bonds=[];for(const line of String(text).split(/\r?\n/)){const tag=line.slice(0,6).trim();if(tag==='ATOM'||tag==='HETATM'){const atom={x:Number(line.slice(30,38)),y:Number(line.slice(38,46)),z:Number(line.slice(46,54)),element:elementName(line.slice(76,78),line.slice(12,16)),residue:line.slice(17,20).trim(),chain:line.slice(21,22).trim(),residueNumber:line.slice(22,26).trim()};if(Number.isFinite(atom.x+atom.y+atom.z)){serials.set(Number(line.slice(6,11)),atoms.length);atoms.push(atom);}}else if(tag==='CONECT'){const ids=line.slice(6).trim().split(/\s+/).map(Number),a=serials.get(ids[0]);for(const id of ids.slice(1)){const b=serials.get(id);if(a!==undefined&&b!==undefined&&a<b)bonds.push([a,b]);}}}return{atoms,bonds};}
 function tokenizeCifRow(line){return line.match(/'(?:[^']|'')*'|"(?:[^"]|"")*"|\S+/g)?.map(value=>value.replace(/^(['"])(.*)\1$/,'$2'))||[];}
@@ -27,16 +27,17 @@ export function createProteinExtension(THREE,hooks){let group=null,root=null,sta
  function addLabels(target,atoms,center,scale){if(atoms.length<=220){let count=0;for(const atom of atoms){if(atom.element==='C'||atom.element==='H')continue;if(count++>=36)break;target.add(labelSprite(atom.element,new THREE.Vector3((atom.x-center.x)*scale,(atom.y-center.y)*scale+.012,(atom.z-center.z)*scale),.014));}return;}const residues=new Map();for(const atom of atoms){if(!atom.residue)continue;const key=`${atom.chain||'?'}:${atom.residue}${atom.residueNumber||''}`,entry=residues.get(key)||{key,x:0,y:0,z:0,count:0};entry.x+=atom.x;entry.y+=atom.y;entry.z+=atom.z;entry.count++;residues.set(key,entry);}const values=[...residues.values()],step=Math.max(1,Math.ceil(values.length/24));for(let index=0;index<values.length;index+=step){const item=values[index];target.add(labelSprite(item.key,new THREE.Vector3((item.x/item.count-center.x)*scale,(item.y/item.count-center.y)*scale+.015,(item.z/item.count-center.z)*scale),.012));}}
  function build(data){
   const atoms=data.atoms.slice(0,8000);if(!atoms.length)throw new Error('No atoms found in this structure.');
-  const bonds=(data.bonds.length?data.bonds:inferBonds(atoms)).filter(([a,b])=>a<atoms.length&&b<atoms.length).slice(0,18000);
+  const large=atoms.length>1400,bondLimit=large?5200:18000;
+  const bonds=(data.bonds.length?data.bonds:inferBonds(atoms,bondLimit)).filter(([a,b])=>a<atoms.length&&b<atoms.length).slice(0,bondLimit);
   const center=atoms.reduce((v,a)=>v.set(v.x+a.x,v.y+a.y,v.z+a.z),new THREE.Vector3()).multiplyScalar(1/atoms.length);
   const maxRadius=Math.max(...atoms.map(a=>Math.hypot(a.x-center.x,a.y-center.y,a.z-center.z)),1),scale=.17/maxRadius;
   root=new THREE.Group();
   const atomGroups=new Map();atoms.forEach((atom,index)=>{const list=atomGroups.get(atom.element)||[];list.push({atom,index});atomGroups.set(atom.element,list);});
   for(const[element,items]of atomGroups){
-    const geometry=new THREE.SphereGeometry(1,atoms.length<500?10:8,atoms.length<500?8:6);
+    const geometry=new THREE.SphereGeometry(1,atoms.length<500?10:large?6:8,atoms.length<500?8:large?4:6);
     const material=new THREE.MeshBasicMaterial({color:ELEMENT_COLORS[element]||0xa8b3c7,toneMapped:false});
     const mesh=new THREE.InstancedMesh(geometry,material,items.length);mesh.frustumCulled=false;
-    items.forEach(({atom},index)=>{temp.position.set((atom.x-center.x)*scale,(atom.y-center.y)*scale,(atom.z-center.z)*scale);temp.scale.setScalar((atoms.length<500?.0105:.0065)*(ELEMENT_RADII[atom.element]||.78));temp.updateMatrix();mesh.setMatrixAt(index,temp.matrix);});
+    items.forEach(({atom},index)=>{temp.position.set((atom.x-center.x)*scale,(atom.y-center.y)*scale,(atom.z-center.z)*scale);temp.scale.setScalar((atoms.length<500?.0105:large?.0054:.0065)*(ELEMENT_RADII[atom.element]||.78));temp.updateMatrix();mesh.setMatrixAt(index,temp.matrix);});
     mesh.instanceMatrix.needsUpdate=true;root.add(mesh);
   }
   if(bonds.length){
@@ -44,14 +45,14 @@ export function createProteinExtension(THREE,hooks){let group=null,root=null,sta
     for(const[ia,ib,rawOrder=1]of bonds){const order=THREE.MathUtils.clamp(Math.round(rawOrder)||1,1,3);for(let lane=0;lane<order;lane++){const offset=lane-(order-1)/2;for(const half of[0,1]){const element=(half?atoms[ib]:atoms[ia]).element,list=groups.get(element)||[];list.push([ia,ib,offset,half]);groups.set(element,list);}}}
     const axis=new THREE.Vector3(0,0,1),side=new THREE.Vector3();
     for(const[element,sticks]of groups){
-      const geometry=new THREE.CylinderGeometry(atoms.length<500?.00215:.00145,atoms.length<500?.00215:.00145,1,6);
+      const geometry=new THREE.CylinderGeometry(atoms.length<500?.00215:large?.00115:.00145,atoms.length<500?.00215:large?.00115:.00145,1,large?4:6);
       const material=new THREE.MeshBasicMaterial({color:ELEMENT_COLORS[element]||0xa8b3c7,toneMapped:false});
       const mesh=new THREE.InstancedMesh(geometry,material,sticks.length);mesh.frustumCulled=false;
       sticks.forEach(([ia,ib,lane,half],index)=>{const a=atoms[ia],b=atoms[ib],pa=new THREE.Vector3((a.x-center.x)*scale,(a.y-center.y)*scale,(a.z-center.z)*scale),pb=new THREE.Vector3((b.x-center.x)*scale,(b.y-center.y)*scale,(b.z-center.z)*scale),centerPoint=pa.clone().add(pb).multiplyScalar(.5),startPoint=half?centerPoint:pa,endPoint=half?pb:centerPoint;mid.copy(startPoint).add(endPoint).multiplyScalar(.5);dir.copy(endPoint).sub(startPoint);side.crossVectors(dir,axis);if(side.lengthSq()<.001)side.crossVectors(dir,new THREE.Vector3(1,0,0));side.normalize();temp.position.copy(mid).addScaledVector(side,lane*.0052);temp.quaternion.setFromUnitVectors(up,dir.clone().normalize());temp.scale.set(1,dir.length(),1);temp.updateMatrix();mesh.setMatrixAt(index,temp.matrix);});
       mesh.instanceMatrix.needsUpdate=true;root.add(mesh);
     }
   }
-  addLabels(root,atoms,center,scale);root.rotation.set(-.18,.45,0);return root;
+  addLabels(root,atoms,center,scale);root.position.z=.055;root.rotation.set(-.18,.45,0);return root;
 }
  function dispose(){if(anchor?.delete)anchor.delete();anchor=null;placement=false;hooks.disarmPlacement?.();hooks.removeControls(controls);hooks.unregister(group,false);if(group){group.removeFromParent();group.traverse(o=>{o.geometry?.dispose?.();o.material?.map?.dispose?.();o.material?.dispose?.();});}group=root=state=null;controls=[];hooks.layout();}
  async function open(source){dispose();hooks.message('Loading molecular structure…');const{data,spec,usedFallback}=await loadData(source);group=new THREE.Group();group.name='protein-window';const surface=new THREE.Mesh(new THREE.PlaneGeometry(W*.82,H*.76),new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthTest:false,depthWrite:false}));surface.position.z=.015;surface.userData.noteAction='protein-drag';surface.userData.highlightScale=false;surface.userData.preserveOpacity=true;group.add(surface);controls.push(surface);hooks.addControl(surface);group.add(build(data));state={source,spec,scale:1,drags:new Map(),atoms:data.atoms.length,bonds:data.bonds.length};addControl('protein-smaller',-.06,'−');addControl('protein-place',-.02,'⌖',0xffd166);addControl('protein-larger',.02,'+');addControl('protein-reset',.06,'↻');addControl('protein-close',W/2-.016,'×',0xff6b6b);hooks.register(group,W);hooks.message(`Molecule ready · ${data.atoms.length} atoms${usedFallback?' · local fallback':''}.`);}

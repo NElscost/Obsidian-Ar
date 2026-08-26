@@ -876,6 +876,9 @@ test("supports ChemRender3D-compatible molecular windows", async () => {
   assert.match(protein, /MeshBasicMaterial\(\{color:ELEMENT_COLORS/);
   assert.doesNotMatch(protein, /MeshStandardMaterial/);
   assert.deepEqual(module.parseProteinSpec("[[hemoglobin.pdb]]"), { kind:"file", value:"hemoglobin.pdb", format:"pdb" });
+  assert.deepEqual(module.parseProteinSpec("![](1TQN.cif)"), { kind:"file", value:"1TQN.cif", format:"cif" });
+  assert.deepEqual(module.parseProteinSpec("![]\\(1TQN.cif)"), { kind:"file", value:"1TQN.cif", format:"cif" });
+  assert.match(protein, /bondLimit=large\?5200:18000/);
   const parsed = module.parseStructureText("ATOM      1  N   ALA A   1      11.104  13.207  14.099  1.00 20.00           N", "pdb");
   assert.equal(parsed.atoms.length, 1);
   assert.equal(parsed.atoms[0].element, "N");
