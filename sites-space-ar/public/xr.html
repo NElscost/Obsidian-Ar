@@ -755,7 +755,7 @@
   <script type="module">
     import * as THREE from "three";
     import { createRubikExtension } from "/vendor/cubejs/rubik-ar.js";
-    import { createProteinExtension } from "/vendor/chemrender3d/protein-ar.js";
+    import { createProteinExtension } from "/vendor/chemrender3d/protein-ar.js?v=3";
     import { createChronosExtension } from "/vendor/chronos/chronos-ar.js";
     import { marked } from "https://cdn.jsdelivr.net/npm/marked@15.0.12/+esm";
     import DOMPurify from "https://cdn.jsdelivr.net/npm/dompurify@3.2.6/+esm";
@@ -4696,8 +4696,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       addControl(control){arNoteControls.push(control);},removeControls(items){const owned=new Set(items);arNoteControls=arNoteControls.filter(item=>!owned.has(item));},pinchPoint:getPinchPoint,
       armPlacement(){reticle.visible=false;},disarmPlacement(){reticle.visible=false;},
       async fetchStructure(spec){
+        if(spec.kind==='smiles'){const url=`https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(spec.value)}/file?format=sdf&get3d=true`;const memoryKey=spec.value;window.__spaceArMoleculeCache??=new Map();if(window.__spaceArMoleculeCache.has(memoryKey))return{text:window.__spaceArMoleculeCache.get(memoryKey),format:'sdf'};const cache='caches'in window?await caches.open('space-ar-molecule-sdf-v1'):null,cached=cache?await cache.match(url):null;if(cached){const text=await cached.text();window.__spaceArMoleculeCache.set(memoryKey,text);return{text,format:'sdf'};}const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);try{const response=await fetch(url,{mode:'cors',signal:controller.signal});if(!response.ok)throw new Error(`CACTUS returned HTTP ${response.status}.`);const text=await response.text();if(!text||text.length>6*1024*1024)throw new Error('CACTUS returned an invalid or oversized structure.');window.__spaceArMoleculeCache.set(memoryKey,text);if(cache)await cache.put(url,new Response(text,{headers:{'Content-Type':'chemical/x-mdl-sdfile'}}));return{text,format:'sdf'};}finally{clearTimeout(timer);}}
         if(spec.kind==='file'){const config=JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY)??'null');if(!config?.url||!config?.token)throw new Error('Configure the note bridge to load molecular files from the vault.');const blob=await fetchVaultAsset(config,arNotePath,spec.value);if(blob.size>24*1024*1024)throw new Error('Molecular file exceeds the 24 MB safety limit.');return{text:await blob.text(),format:spec.format};}
-        const url=spec.kind==='pdb'?`https://files.rcsb.org/download/${encodeURIComponent(spec.value)}.pdb`:`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/${encodeURIComponent(spec.value)}/SDF?record_type=3d`;
+        const url=`https://files.rcsb.org/download/${encodeURIComponent(spec.value)}.pdb`;
         const response=await fetch(url,{mode:'cors'});if(!response.ok)throw new Error(`Molecular service returned HTTP ${response.status}.`);return{text:await response.text(),format:spec.format};
       }
     });

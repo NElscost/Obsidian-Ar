@@ -846,6 +846,10 @@ test("supports ChemRender3D-compatible molecular windows", async () => {
   assert.match(protein, /InstancedMesh/);
   assert.match(protein, /protein-place/);
   assert.match(protein, /pinchDistance/);
+  assert.match(html, /cactus\.nci\.nih\.gov/);
+  assert.match(html, /space-ar-molecule-sdf-v1/);
+  assert.match(protein, /local SMILES fallback/);
+  assert.match(protein, /labelSprite/);
   assert.deepEqual(module.parseProteinSpec("[[hemoglobin.pdb]]"), { kind:"file", value:"hemoglobin.pdb", format:"pdb" });
   const parsed = module.parseStructureText("ATOM      1  N   ALA A   1      11.104  13.207  14.099  1.00 20.00           N", "pdb");
   assert.equal(parsed.atoms.length, 1);
@@ -853,5 +857,7 @@ test("supports ChemRender3D-compatible molecular windows", async () => {
   const aspirin = module.structureFromSmiles("CC(=O)OC1=CC=CC=C1C(=O)O");
   assert.ok(aspirin.atoms.length >= 10);
   assert.ok(aspirin.bonds.length >= 10);
+  const sdf = `Aspirin\n  Test\n\n  2  1  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.2000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0  0  0  0`;
+  assert.equal(module.parseStructureText(sdf, "sdf").bonds[0][2], 2);
 });
 
