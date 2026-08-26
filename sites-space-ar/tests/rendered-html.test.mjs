@@ -888,6 +888,9 @@ test("supports ChemRender3D-compatible molecular windows", async () => {
   assert.match(protein, /backboneName=nucleic/);
   assert.match(protein, /atomName===\"C4'\"/);
   assert.match(protein, /nucleic\?\.0064/);
+  assert.match(protein, /nucleic\?atoms:atoms\.filter/);
+  assert.match(protein, /nucleic\?1800:600/);
+  assert.match(protein, /nucleic\?\.0038:\.0075/);
   assert.match(protein, /primeSugar>=8/);
   assert.match(protein, /atomName==='C4\*'/);
   const molecularBuild = protein.slice(protein.indexOf('function build(data)'));
