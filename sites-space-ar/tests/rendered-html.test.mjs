@@ -909,3 +909,5 @@ test("supports ChemRender3D-compatible molecular windows", async () => {
 
 
 import "./polymer-detail.test.mjs";
+
+import "./nucleotide-bonds.test.mjs";

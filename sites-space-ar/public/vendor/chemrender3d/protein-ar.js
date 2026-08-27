@@ -1,4 +1,4 @@
-import { polymerResidues, addBasePolygons, addSequenceLabel, baseLabelDescriptors, waterAtoms } from './polymer-detail.js?v=2';
+import { polymerResidues, addBasePolygons, addSequenceLabel, baseLabelDescriptors, waterAtoms } from './polymer-detail.js?v=3';
 const ELEMENT_COLORS={H:0xffffff,C:0x18a889,N:0x4d78ff,O:0xff4b4b,S:0xffd23f,P:0xff8a35,F:0x78d88b,CL:0x47c96b,BR:0xa34b2f,I:0x7d55c7,FE:0xd27a33,CA:0x78c8ff,MG:0x63d7b2,ZN:0x8b9bb3};
 const ELEMENT_RADII={H:.55,C:.76,N:.71,O:.66,S:1.05,P:1.07,F:.57,CL:1.02,BR:1.2,I:1.39,FE:1.24,CA:1.76,MG:1.41,ZN:1.22};
 const FILE_PATTERN=/\.(pdb|cif|mmcif|mol|sdf|xyz)$/i;

@@ -23,3 +23,20 @@ Nucleotide labels show base, residue number and chain (e.g. G2 · A). They follo
 the base while facing the viewer, obey depth testing and are capped at 48 labels.
 In DNA/RNA ribbon mode, spheres now represent only water oxygen sites
 (HOH/WAT/DOD/H2O), colored blue; other polymer atoms are not drawn as spheres.
+
+## Nucleotide chemical detail
+
+Local RCSB CCD bond tables for DA/DC/DG/DT and A/C/G/U describe sugar, phosphate,
+base rings and substituents. DNA/RNA CIF/PDB files use the same residue-based
+rendering, independent of filenames. Legacy prime/star and O1P/OP1 atom names
+are accepted. Chemical bonds are drawn as instanced sticks colored by element
+(carbon follows base color), with double bonds and dashed aromatic indicators
+according to CCD annotations. Base polygons are inset to leave bonds visible.
+The base connects through sugar, never directly to phosphate. Adjacent residues
+are linked only by a plausible same-chain O3'-P bond; missing atoms and chain
+breaks are not bridged. Water remains separate blue oxygen spheres.
+
+Preparation happens once on opening, capped at 9,000 bonds. No server work or
+runtime CCD download is required. Modified nucleotides and nonstandard atom
+naming are not fully supported; this is a standard DNA/RNA renderer, not a
+general crystallographic chemistry engine.

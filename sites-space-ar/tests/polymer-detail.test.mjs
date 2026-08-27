@@ -30,7 +30,7 @@ test('polygon batches have bounded finite geometry and sequence preview preserve
   class Mesh { constructor(geometry,material){Object.assign(this,{geometry,material});} }
   const THREE={BufferGeometry:Geometry,Float32BufferAttribute:Attribute,MeshPhongMaterial:Material,Mesh,DoubleSide:2};
   const children=[], target={add:m=>children.push(m)};
-  addBasePolygons(THREE,target,polymerResidues([...residue('DC',1),...residue('DG',2)]),{x:0,y:0,z:0},.1);
+  addBasePolygons(THREE,target,polymerResidues([...residue('DC',1),...residue('DG',2)]),{x:0,y:0,z:0},.1,false);
   assert.equal(children.length,2);
   assert.ok(children.every(m=>m.geometry.position.array.every(Number.isFinite)));
   assert.equal(children.reduce((n,m)=>n+m.geometry.position.array.length/9,0),11);

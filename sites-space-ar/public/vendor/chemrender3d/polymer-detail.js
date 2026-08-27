@@ -1,3 +1,5 @@
+import { addNucleotideBonds } from './nucleotide-bonds.js?v=1';
+
 // Built once per structure. No layout, canvas work or atom traversal per XR frame.
 const BASES = { A:'A', C:'C', G:'G', T:'T', U:'U', DA:'A', DC:'C', DG:'G', DT:'T', DU:'U' };
 const AMINO = { ALA:'A', ARG:'R', ASN:'N', ASP:'D', CYS:'C', GLN:'Q', GLU:'E', GLY:'G', HIS:'H', ILE:'I', LEU:'L', LYS:'K', MET:'M', PHE:'F', PRO:'P', SER:'S', THR:'T', TRP:'W', TYR:'Y', VAL:'V', MSE:'M' };
@@ -71,11 +73,14 @@ export function baseLabelDescriptors(residues, limit = 48) {
   });
 }
 
-export function addBasePolygons(THREE, target, residues, center, scale) {
+export function addBasePolygons(THREE, target, residues, center, scale, chemicalDetail = true) {
   const { polygons, covered } = basePolygons(residues), batches = new Map();
   for (const polygon of polygons) {
     if (!batches.has(polygon.base)) batches.set(polygon.base, []);
-    const vertices = batches.get(polygon.base), points = polygon.points;
+    const vertices = batches.get(polygon.base), original = polygon.points;
+    const centroid = {x:0,y:0,z:0};
+    for(const p of original){centroid.x+=p.x/original.length;centroid.y+=p.y/original.length;centroid.z+=p.z/original.length;}
+    const points = original.map(p=>({x:centroid.x+(p.x-centroid.x)*.62,y:centroid.y+(p.y-centroid.y)*.62,z:centroid.z+(p.z-centroid.z)*.62}));
     // Each chemical ring is convex; triangulate using its real CIF/PDB coordinates.
     for (let i = 1; i < points.length - 1; i++) {
       for (const p of [points[0], points[i], points[i + 1]]) vertices.push((p.x-center.x)*scale, (p.y-center.y)*scale, (p.z-center.z)*scale);
@@ -90,6 +95,7 @@ export function addBasePolygons(THREE, target, residues, center, scale) {
     mesh.name = 'nucleotide-polygons-' + base;
     target.add(mesh);
   }
+  if(chemicalDetail)addNucleotideBonds(THREE,target,residues,center,scale,BASE_COLORS,polygons);
   return covered;
 }
 
