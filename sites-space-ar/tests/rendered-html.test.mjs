@@ -907,3 +907,5 @@ test("supports ChemRender3D-compatible molecular windows", async () => {
   assert.equal(module.parseStructureText(sdf, "sdf").bonds[0][2], 2);
 });
 
+
+import "./polymer-detail.test.mjs";
