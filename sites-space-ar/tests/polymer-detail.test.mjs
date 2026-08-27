@@ -38,3 +38,14 @@ test('polygon batches have bounded finite geometry and sequence preview preserve
   assert.equal(lines[1].text,'CGTGAATTCACG');
   assert.equal(sequenceLines([{chain:'A',kind:'protein',sequence:'A'.repeat(100)}])[1].text.length,49);
 });
+
+test('labels identify each base once, and spheres select only water oxygen', async () => {
+  const {baseLabelDescriptors,waterAtoms}=await import('../public/vendor/chemrender3d/polymer-detail.js');
+  const residues=polymerResidues([...residue('DG',2),...residue('DC',3,'B')]);
+  const labels=baseLabelDescriptors(residues);
+  assert.deepEqual(labels.map(l=>l.text),['G2 · A','C3 · B']);
+  assert.ok(labels.every(l=>Number.isFinite(l.x+l.y+l.z)));
+  assert.equal(baseLabelDescriptors(residues,1).length,1);
+  const water={residue:'HOH',element:'O'};
+  assert.deepEqual(waterAtoms([water,{residue:'DA',element:'O'},{residue:'HOH',element:'H'},{residue:'NA',element:'NA'}]),[water]);
+});

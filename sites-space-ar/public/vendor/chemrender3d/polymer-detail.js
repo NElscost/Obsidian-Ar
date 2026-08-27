@@ -53,6 +53,24 @@ export function basePolygons(residues, limit = 1200) {
   return { polygons, covered };
 }
 
+export function waterAtoms(atoms) {
+  return atoms.filter(atom => ['HOH','WAT','DOD','H2O'].includes(String(atom.residue || '').toUpperCase()) && atom.element === 'O');
+}
+
+export function baseLabelDescriptors(residues, limit = 48) {
+  const entries = new Map();
+  for (const polygon of basePolygons(residues).polygons) {
+    const key = JSON.stringify([polygon.chain, polygon.number, polygon.base]);
+    if (!entries.has(key)) entries.set(key, { text:polygon.base + polygon.number + ' · ' + polygon.chain, points:new Set() });
+    polygon.points.forEach(point => entries.get(key).points.add(point));
+  }
+  const values = [...entries.values()], step = Math.max(1, Math.ceil(values.length / Math.max(1, limit)));
+  return values.filter((_,index) => index % step === 0).map(entry => {
+    const points = [...entry.points];
+    return { text:entry.text, x:points.reduce((n,p)=>n+p.x,0)/points.length, y:points.reduce((n,p)=>n+p.y,0)/points.length, z:points.reduce((n,p)=>n+p.z,0)/points.length };
+  });
+}
+
 export function addBasePolygons(THREE, target, residues, center, scale) {
   const { polygons, covered } = basePolygons(residues), batches = new Map();
   for (const polygon of polygons) {

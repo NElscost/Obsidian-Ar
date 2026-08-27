@@ -18,3 +18,8 @@ meshes, capped at 1,200 rings and disposed on closing. There is no per-frame
 sequence layout or polygon calculation and no additional dependency or server
 request. The public 1D28 structure produces 24 residues, 36 rings and 132
 triangles, with CGTGAATTCACG in both chains.
+
+Nucleotide labels show base, residue number and chain (e.g. G2 · A). They follow
+the base while facing the viewer, obey depth testing and are capped at 48 labels.
+In DNA/RNA ribbon mode, spheres now represent only water oxygen sites
+(HOH/WAT/DOD/H2O), colored blue; other polymer atoms are not drawn as spheres.
