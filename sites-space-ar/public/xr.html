@@ -757,6 +757,7 @@
   <script type="module">
     import * as THREE from "three";
     import { createRubikExtension } from "/vendor/cubejs/rubik-ar.js";
+    import { shouldPauseGraphRotation } from "./graph-rotation-policy.js?v=1";
     import { contentPageRanges, measureVisibleNoteContent } from "./note-pagination.js?v=1";
     import { createProteinExtension } from "/vendor/chemrender3d/protein-ar.js?v=15";
     import { createGeneCodeExtension } from "/vendor/gene-code/gene-code.js?v=2";
@@ -3337,7 +3338,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       arNoteGroup.traverse((object) => {
         if (!object.isMesh) return;
         object.geometry?.dispose();
-        object.material?.map?.dispose();
+        if (!object.material?.map?.userData?.keyboardShared) object.material?.map?.dispose();
         object.material?.dispose();
       });
       arNoteGroup.clear();
@@ -6782,7 +6783,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let graphAutoRotationLastTime = 0;
     let graphAutoRotationLastActiveAt = 0;
     let graphAutoRotationIgnorePinchUntil = 0;
-    let keyboardPreservedGraphRotation = false;
+    const keyboardKeyTextureCache = new Map();
+    let cachedFrostedKeyboardTexture = null;
     let searchHighlightedNode = null;
     let searchHighlightUntil = 0;
     const synapsePulseTime = { value: 0 };
@@ -7076,6 +7078,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
 
     function keyboardTexture(text, options = {}) {
+      const cacheKey = options.shared ? JSON.stringify([text, options]) : null;
+      if (cacheKey && keyboardKeyTextureCache.has(cacheKey)) return keyboardKeyTextureCache.get(cacheKey);
       const canvas = document.createElement("canvas");
       canvas.height = options.height ?? 256;
       canvas.width = options.width ?? Math.max(128, Math.round(canvas.height * (options.aspect ?? 1)));
@@ -7093,10 +7097,12 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.minFilter = THREE.LinearFilter;
       texture.generateMipmaps = false;
+      if (cacheKey) { texture.userData.keyboardShared = true; keyboardKeyTextureCache.set(cacheKey, texture); }
       return texture;
     }
 
     function frostedKeyboardTexture() {
+      if (cachedFrostedKeyboardTexture) return cachedFrostedKeyboardTexture;
       const canvas = document.createElement("canvas");
       canvas.width = 256;
       canvas.height = 220;
@@ -7136,6 +7142,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.minFilter = THREE.LinearFilter;
       texture.generateMipmaps = false;
+      texture.userData.keyboardShared = true;
+      cachedFrostedKeyboardTexture = texture;
       return texture;
     }
 
@@ -7213,7 +7221,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       if (!realGlassBlurToggle.checked || realGlassSuspended || !arSearchKeyboardActive || !arSearchRealGlassPanel) return;
       // Capturing the complete scene for blur competes with the graph animation on Quest.
       // Keep the lightweight frosted layer while automatic rotation is active.
-      if (graphAutoRotating || keyboardPreservedGraphRotation) {
+      if (graphAutoRotating) {
         arSearchRealGlassPanel.visible = false;
         realGlassPreviousFrameAt = time;
         return;
@@ -7278,15 +7286,26 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       updateArSearchSuggestions();
     }
 
+    function cachedKeyboardKeyTexture(label, width, color) {
+      return keyboardTexture(label, { shared:true, height:128, background:color, aspect: width / 0.052, fontSize:label.length > 2 ? 31 : 49 });
+    }
+
+    async function warmKeyboardTextures() {
+      const specs = [..."1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZÁÉÍÓÚÇ-_.',@#&()+/="].map(label => [label,0.052,"#26354d"]);
+      specs.push(["SURF",.074,"#315d70"],["PIN",.064,"#72572a"],["⌫",.096,"#643548"],["ESPAÇO",.226,"#334866"],["BUSCAR",.15,"#167c68"],["×",.07,"#8b3040"]);
+      for (let index=0; index<specs.length; index++) {
+        if (index % 4 === 0) await waitForRenderingIdle();
+        if (xrSession) return; // Never compete with an immersive frame.
+        renderer.initTexture(cachedKeyboardKeyTexture(...specs[index]));
+      }
+      if (!xrSession) renderer.initTexture(frostedKeyboardTexture());
+    }
+
     function addArSearchKey(label, action, x, y, width = 0.052, color = "#26354d") {
       const key = new THREE.Mesh(
         new THREE.PlaneGeometry(width, 0.052),
         new THREE.MeshBasicMaterial({
-          map: keyboardTexture(label, {
-            background: color,
-            aspect: width / 0.052,
-            fontSize: label.length > 2 ? 62 : 98
-          }),
+          map: cachedKeyboardKeyTexture(label, width, color),
           transparent: true,
           depthTest: false,
           toneMapped: false
@@ -7398,7 +7417,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       });
     }
     function closeKeyboardSearch() {
-      const resumeGraphRotation = keyboardPreservedGraphRotation;
+
       disposeRealGlassBlur();
       xrSearch.classList.remove("visible");
       xrSearchInput.blur();
@@ -7406,8 +7425,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       arSearchKeyboardActive = false;
       arSearchQuery = "";
       arSearchDisplay = null;
-      keyboardPreservedGraphRotation = false;
-      if (resumeGraphRotation) { graphAutoRotating = true; graphAutoRotationLastTime = performance.now(); }
+      resetGestureState("await-release");
     }
 
     function toggleKeyboardSearch() {
@@ -7417,17 +7435,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
     function openKeyboardSearch() {
       if (!xrSession || arSearchKeyboardActive) return;
-      const now = performance.now();
-      const preserveGraphRotation = graphAutoRotating
-        || keyboardPreservedGraphRotation
-        || now - graphAutoRotationLastActiveAt < 500;
       disposeArNote();
-      keyboardPreservedGraphRotation = preserveGraphRotation;
-      graphAutoRotating = preserveGraphRotation;
-      if (preserveGraphRotation) {
-        graphAutoRotationLastTime = now;
-        graphAutoRotationLastActiveAt = now;
-      }
+      resetGestureState("await-release");
       arSearchKeyboardActive = true;
       arSearchQuery = "";
       arNoteGroup.scale.setScalar(keyboardWindowPinned ? 0.62 : 0.78);
@@ -9470,12 +9479,11 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
       state.pressed = menuPressed || tapPressed || leftPressed || rightPressed;
       if (menuStarted) {
-        const keepGraphRotating = graphAutoRotating || keyboardPreservedGraphRotation;
+
         state.lastThumbTapAt = 0;
         state.lastCompletedDoubleTapAt = 0;
         toggleKeyboardSearch();
-        graphAutoRotating = keepGraphRotating;
-        if (keepGraphRotating) graphAutoRotationLastTime = time;
+
         setXrMessage(arSearchKeyboardActive ? "Busca 3D aberta pelo gesto menu." : "Busca 3D fechada pelo gesto menu.");
       }
       if (!menuStarted && !arSearchKeyboardActive && tapStarted && !graphHierarchy?.expandedHubId) {
@@ -9852,7 +9860,15 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       pendingSelectionPath = null;
     }
 
+    function pauseGraphForInteraction(interaction) {
+      if (!graphAutoRotating || !shouldPauseGraphRotation({ keyboardOpen:arSearchKeyboardActive, noteOpen:arNoteGroup.visible, interaction })) return;
+      graphAutoRotating = false;
+      graphAutoRotationLastTime = 0;
+      graphAutoRotationLastActiveAt = 0;
+    }
+
     function beginScaleGesture(points) {
+      pauseGraphForInteraction("scale");
       gestureMode = "scaling";
       previousTwoHandDistance = points[0].distanceTo(points[1]);
       previousRotationPoint = null;
@@ -9864,24 +9880,14 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function updateHandGestures(frame, time) {
       if (!isPlaced || !model || !xrSession) return;
       if (graphIntroPulseStartedAt !== null) return;
+      if (arSearchKeyboardActive || arNoteGroup.visible) return;
 
       const pinchPoints = [];
       for (const inputSource of xrSession.inputSources) {
+        const native = nativeMicroGestureStates.get(inputSource);
+        if (native?.pressed || time < (native?.suppressRayUntil ?? 0)) continue;
         const point = getPinchPoint(frame, inputSource);
         if (point) pinchPoints.push(point);
-      }
-
-      if (
-        pinchPoints.length &&
-        graphAutoRotating &&
-        !arNoteGroup.visible &&
-        !arSearchKeyboardActive &&
-        time >= graphAutoRotationIgnorePinchUntil
-      ) {
-        graphAutoRotating = false;
-        graphAutoRotationLastTime = 0;
-        graphAutoRotationLastActiveAt = 0;
-        setXrMessage("Rotação automática interrompida pela interação.");
       }
 
       if (gestureMode === "await-release") {
@@ -9906,7 +9912,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           const path = pendingSelectionPath;
           resetGestureState("await-release");
           setXrMessage(`Solicitando ${path}…`);
-          void requestNote(path);
+          pauseGraphForInteraction("select");
+            void requestNote(path);
         }
         return;
       }
@@ -9961,6 +9968,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
             const path = pendingSelectionPath;
             resetGestureState();
             setXrMessage(`Solicitando ${path}…`);
+            pauseGraphForInteraction("select");
             void requestNote(path);
           } else {
             resetGestureState();
@@ -9973,6 +9981,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
             time - gestureStartedAt < 600 &&
             pinchTravel < 0.018
           ) {
+            pauseGraphForInteraction("select");
             void requestNote(pendingSelectionPath);
           }
           resetGestureState();
@@ -10016,6 +10025,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         previousRotationPoint = point.clone();
         const rotationDelay = pendingSelectionPath ? 420 : 220;
         if (time - gestureStartedAt < rotationDelay) return;
+        if (graphAutoRotating && pinchTravel < 0.025) return;
+        pauseGraphForInteraction("rotate");
         gestureMode = "rotating";
         setXrMessage("Rotação: mova a mão horizontal ou verticalmente.");
         return;
@@ -10487,9 +10498,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         weatherField.position.copy(weatherCenter);
       }
       if (isPlaced) synapsePulseTime.value = time * 0.001;
-      if ((graphAutoRotating || keyboardPreservedGraphRotation) && isPlaced) {
+      if (graphAutoRotating && isPlaced) {
         const elapsed = graphAutoRotationLastTime
-          ? Math.min((time - graphAutoRotationLastTime) / 1000, arSearchKeyboardActive ? 1 : 0.1)
+          ? Math.min((time - graphAutoRotationLastTime) / 1000, 0.1)
           : 0;
         contentRoot.rotation.y += elapsed * 0.10;
         graphAutoRotationLastTime = time;
@@ -10669,6 +10680,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         setStatus(dynamicGraphToggle.checked ? "Preparando o grafo direto do vault…" : "Preparando o modelo Space.gltf…");
         await loadModel();
         enterButton.disabled = false;
+        void warmKeyboardTextures().catch(error => console.warn("Keyboard prewarm skipped", error));
         const warmWhenIdle = () => void warmRecentNotesDuringModelLoad();
         if ("requestIdleCallback" in window) requestIdleCallback(warmWhenIdle, { timeout: 3000 });
         else setTimeout(warmWhenIdle, 1500);

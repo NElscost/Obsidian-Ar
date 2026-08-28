@@ -480,7 +480,6 @@ test("mantém a busca digitada dentro da sessão WebXR", async () => {
   assert.match(html, /depthWrite: options\.depthWrite \?\? true/);
   assert.match(html, /material\.depthTest = true/);
   assert.doesNotMatch(html, /tapThumb: 4/);
-  assert.match(html, /\(graphAutoRotating \|\| keyboardPreservedGraphRotation\) && isPlaced\)/);
 assert.match(html, /remoteVideoPlatform/);
 assert.match(html, /function setVideoStereoMode/);
 assert.match(html, /surface\.layers\.set\(eye \+ 1\)/);
@@ -489,22 +488,11 @@ assert.match(html, /right\.layers\.enable\(2\)/);
 assert.match(html, /action === "video-stereo"/);
 assert.match(html, /aspect > 2\.4/);
 assert.match(html, /streamable\\.com/);
-assert.match(html, /graphAutoRotating \|\| keyboardPreservedGraphRotation\) \{\s+arSearchRealGlassPanel\.visible = false/);
-assert.match(html, /arSearchKeyboardActive \? 1 : 0\.1/);
-  assert.match(html, /!arNoteGroup\.visible &&\s+!arSearchKeyboardActive/);
-assert.match(html, /const keepGraphRotating = graphAutoRotating \|\| keyboardPreservedGraphRotation/);
 assert.match(html, /function preprocessAdvancedCodeblocks/);
 assert.match(html, /note-code-line-highlighted/);
 assert.match(html, /bindAdvancedCodeblocks\(advancedCodeblocks\)/);
-assert.match(html, /const preserveGraphRotation = graphAutoRotating/);
-assert.match(html, /keyboardPreservedGraphRotation = preserveGraphRotation/);
-assert.match(html, /graphAutoRotating = preserveGraphRotation/);
-assert.match(html, /graphAutoRotating \|\| keyboardPreservedGraphRotation/);
-assert.match(html, /if \(resumeGraphRotation\) \{ graphAutoRotating = true/);
-assert.match(html, /now - graphAutoRotationLastActiveAt < 500/);
 assert.match(html, /unregisterSpatialAuxWindow\(activeNoteVideoGroup, false\)/);
 assert.match(html, /registerSpatialAuxWindow\(videoGroup, AR_VIDEO_WIDTH, activeVideoWindowSlot\)/);
-assert.match(html, /graphAutoRotating = keepGraphRotating/);
 assert.match(html, /if \(!menuStarted && !arSearchKeyboardActive && tapStarted/);
   assert.match(html, /closedFingers === 4/);
   assert.doesNotMatch(html, /        updateJointDoubleThumbTap\(frame, inputSource, time\);/);
@@ -913,3 +901,5 @@ import "./polymer-detail.test.mjs";
 import "./nucleotide-bonds.test.mjs";
 
 import "./note-pagination.test.mjs";
+
+import "./graph-rotation-policy.test.mjs";
