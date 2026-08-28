@@ -757,6 +757,7 @@
   <script type="module">
     import * as THREE from "three";
     import { createRubikExtension } from "/vendor/cubejs/rubik-ar.js";
+    import { contentPageRanges, measureVisibleNoteContent } from "./note-pagination.js?v=1";
     import { createProteinExtension } from "/vendor/chemrender3d/protein-ar.js?v=15";
     import { createGeneCodeExtension } from "/vendor/gene-code/gene-code.js?v=2";
     import { createChronosExtension } from "/vendor/chronos/chronos-ar.js";
@@ -3457,7 +3458,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     const NOTE_CACHE_MAX_BYTES = 48 * 1024 * 1024;
     const NOTE_PERSISTENT_CACHE_MAX_ENTRIES = 12;
     const NOTE_PERSISTENT_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
-    const NOTE_CACHE_DB = "space-ar-note-cache-v24";
+    const NOTE_CACHE_DB = "space-ar-note-cache-v25";
     const NOTE_CACHE_STORE = "rendered-notes";
     let noteCacheDbPromise = null;
     let highlightCorePromise = null;
@@ -4031,10 +4032,10 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
     function calculateNotePageRanges() {
       const noteBounds = noteContent.getBoundingClientRect();
-      const contentHeight = Math.max(1, noteContent.scrollHeight);
+      const visibleContent = measureVisibleNoteContent(noteContent);
       const atoms = [];
       for (const element of noteContent.querySelectorAll(
-        "img, table, .note-video-card, .note-timestamp-card, .note-smiles, .note-music-abc, .note-midi-viz, .note-chess, .note-rubik, .note-protein, .note-mermaid, .note-gene-code, .note-audio-card, .obsidian-callout"
+        "img, table, .note-video-card, .note-timestamp-card, .note-smiles, .note-music-abc, .note-midi-viz, .note-chess, .note-rubik, .note-protein, .note-mermaid, .note-gene-code, .note-chronos, .note-audio-card, .obsidian-callout"
       )) {
         const bounds = element.getBoundingClientRect();
         const height = bounds.height;
@@ -4057,24 +4058,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       }
       atoms.sort((left, right) => left.top - right.top);
 
-      const ranges = [];
-      let pageTop = 0;
-      while (pageTop < contentHeight - 0.5) {
-        let pageBottom = Math.min(pageTop + NOTE_PAGE_HEIGHT, contentHeight);
-        const crossing = atoms.find((atom) =>
-          atom.height <= NOTE_PAGE_HEIGHT &&
-          atom.top > pageTop + 2 &&
-          atom.top < pageBottom - 2 &&
-          atom.bottom > pageBottom + 0.5
-        );
-        if (crossing) pageBottom = crossing.top;
-        if (pageBottom <= pageTop + 2) {
-          pageBottom = Math.min(pageTop + NOTE_PAGE_HEIGHT, contentHeight);
-        }
-        ranges.push({ top: pageTop, bottom: pageBottom });
-        pageTop = pageBottom;
-      }
-      return ranges.length ? ranges : [{ top: 0, bottom: NOTE_PAGE_HEIGHT }];
+      return contentPageRanges(visibleContent, atoms, NOTE_PAGE_HEIGHT);
     }
 
     function attachNoteMediaHotspots(pages) {
@@ -4200,6 +4184,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       const entries = layoutEntries ?? measureNoteCaptureLayout();
       const capture = document.createElement("article");
       capture.className = "note-content xr-page-capture";
+      const viewport = document.createElement("div");
+      Object.assign(viewport.style, { position:"absolute", width:"100%", height:`${Math.min(NOTE_PAGE_HEIGHT, Math.max(0, pageBottom - pageTop))}px`, overflow:"hidden" });
+      capture.appendChild(viewport);
       for (const entry of entries) {
         if (entry.bottom <= pageTop || entry.top >= pageBottom) continue;
         const clone = entry.child.cloneNode(true);
@@ -4208,7 +4195,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         clone.style.top = `${entry.top - pageTop}px`;
         clone.style.width = `${entry.width}px`;
         clone.style.margin = "0";
-        capture.appendChild(clone);
+        viewport.appendChild(clone);
       }
       document.body.appendChild(capture);
       return capture;
