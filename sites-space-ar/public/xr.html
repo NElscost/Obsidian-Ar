@@ -757,6 +757,7 @@
   <script type="module">
     import * as THREE from "three";
     import { createRubikExtension } from "/vendor/cubejs/rubik-ar.js";
+    import { scoreIndex, activeScoreNotes, layoutScorePage, drawScore, drawScoreHighlights, notesInScoreWindow } from "./midi-score.js?v=1";
     import { shouldPauseGraphRotation } from "./graph-rotation-policy.js?v=1";
     import { contentPageRanges, measureVisibleNoteContent } from "./note-pagination.js?v=1";
     import { createProteinExtension } from "/vendor/chemrender3d/protein-ar.js?v=15";
@@ -3082,7 +3083,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       context.strokeStyle='rgba(145,164,191,.16)';context.lineWidth=1;
       for(let row=0;row<5;row++){const y=top+(keyTop-top)*row/4;context.beginPath();context.moveTo(left,y);context.lineTo(right,y);context.stroke();}
       const active=new Set();
-      for(const note of midiVizData.notes){
+      for(const note of notesInScoreWindow(scoreIndex(midiVizData),currentTime,currentTime+MIDI_VIZ_LOOKAHEAD_SECONDS)){
         const start=Number(note.start)||0,duration=Math.min(Number(note.duration)||0.08,MIDI_VIZ_MAX_DISPLAY_DURATION),end=start+duration;
         if(start>currentTime+MIDI_VIZ_LOOKAHEAD_SECONDS)break;
         if(end<currentTime)continue;
@@ -3104,21 +3105,14 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function midiVizMeasureInfo(time){const note=midiVizActiveNoteAt(time),measure=Math.max(1,Number(note?.measure)||1),page=Math.floor((measure-1)/4);return{page,firstMeasure:page*4+1,lastMeasure:page*4+4};}
     function midiScoreNoteKey(note){return `${note.start}|${note.pitch}|${note.track}|${note.channel}`;}
     function drawMidiVizScore(currentTime,force=false){
-      if(!midiVizScoreTexture||!midiVizData)return;const info=midiVizMeasureInfo(currentTime),page=info.page;if(!force&&page===midiVizScoreWindow)return;midiVizScoreWindow=page;midiVizScoreLayout=new Map();
-      const canvas=midiVizScoreTexture.image,context=canvas.getContext('2d'),left=86,right=canvas.width-38,width=right-left,tops=[154,364],gap=18,beats=Math.max(1,Number(midiVizData.beatsPerMeasure)||4),firstBeat=(info.firstMeasure-1)*beats,lastBeat=info.lastMeasure*beats;
-      context.fillStyle='#f6f1e8';context.fillRect(0,0,canvas.width,canvas.height);context.fillStyle='#172033';context.textAlign='center';context.font='600 32px system-ui';context.fillText(`${midiVizData.title||'MIDI'} · engraved score`,canvas.width/2,43);
-      const key=(midiVizData.keySignatures||[]).filter(item=>item.beat<=firstBeat).at(-1)||midiVizData.keySignatures?.[0],tempo=(midiVizData.tempoMap||[]).filter(item=>item.beat<=firstBeat).at(-1)||midiVizData.tempoMap?.[0];context.fillStyle='#617087';context.font='18px system-ui';context.fillText(`${midiVizData.beatsPerMeasure||4}/${midiVizData.beatUnit||4} · ${key?.name||'C'} · ♩=${Math.round(tempo?.bpm||120)}`,canvas.width/2,68);
-      context.strokeStyle='#26354a';context.lineWidth=2;for(const top of tops)for(let line=0;line<5;line++){const y=top+line*gap;context.beginPath();context.moveTo(left,y);context.lineTo(right,y);context.stroke();}
-      context.fillStyle='#172033';context.font='54px "Segoe UI Symbol","Noto Music",serif';context.textAlign='left';context.fillText('𝄞',28,220);context.fillText('𝄢',28,430);context.font='28px serif';for(const top of tops){context.fillText(String(midiVizData.beatsPerMeasure||4),64,top+19);context.fillText(String(midiVizData.beatUnit||4),64,top+45);}
-      for(let measure=info.firstMeasure;measure<=info.lastMeasure+1;measure++){const x=left+(measure-info.firstMeasure)/4*width;context.strokeStyle=measure===info.lastMeasure+1?'#172033':'rgba(38,53,74,.68)';context.lineWidth=measure===info.lastMeasure+1?4:2;for(const top of tops){context.beginPath();context.moveTo(x,top);context.lineTo(x,top+gap*4);context.stroke();}if(measure<=info.lastMeasure){context.fillStyle='#617087';context.font='15px system-ui';context.fillText(String(measure),x+5,tops[0]-10);}}
-      const degree=[0,0,1,1,2,3,3,4,4,5,5,6],position=note=>{const step=(Math.floor(note.pitch/12)-1)*7+degree[note.pitch%12],upper=(note.hand??(note.pitch>=60?1:0))===1;return{upper,y:(upper?tops[0]+gap*4:tops[1]+gap*4)-(step-(upper?30:18))*gap/2};},pageNotes=midiVizData.notes.filter(note=>{const beat=Number(note.quantizedStartBeat??note.startBeat)||0;return beat>=firstBeat&&beat<lastBeat;}),occupied=[new Set(),new Set()];
-      for(const note of pageNotes){const beat=Number(note.quantizedStartBeat??note.startBeat)||0,duration=Number(note.quantizedDurationBeats??note.durationBeats)||1,x=left+(beat-firstBeat)/(lastBeat-firstBeat)*width,pos=position(note),y=pos.y,staff=pos.upper?0:1,filled=duration<2,stemUp=(note.voice??0)===0?y>tops[staff]+gap*2:(note.voice??0)%2===0;
-        context.fillStyle='#172033';context.strokeStyle='#172033';context.lineWidth=2;context.beginPath();context.ellipse(x,y,7,5,-.22,0,Math.PI*2);filled?context.fill():context.stroke();if(duration<4){const stemX=x+(stemUp?6:-6),stemEnd=y+(stemUp?-31:31);context.beginPath();context.moveTo(stemX,y);context.lineTo(stemX,stemEnd);context.stroke();if(duration<=.5){context.beginPath();context.moveTo(stemX,stemEnd);context.quadraticCurveTo(stemX+(stemUp?13:-13),stemEnd+8,stemX+(stemUp?5:-5),stemEnd+19);context.stroke();}}
-        const spelling=String(note.spelling||'');if(/[b#]/.test(spelling)){context.font='20px serif';context.textAlign='center';context.fillText(spelling.includes('b')?'♭':'♯',x-14,y);}if(note.dotted){context.beginPath();context.arc(x+12,y,2.2,0,Math.PI*2);context.fill();}
-        const measureEnd=Math.ceil((beat+.0001)/beats)*beats;if(beat+duration>measureEnd+.01){const tieEnd=left+(Math.min(beat+duration,lastBeat)-firstBeat)/(lastBeat-firstBeat)*width;context.beginPath();context.arc((x+tieEnd)/2,y+9,Math.max(6,(tieEnd-x)/2),Math.PI*.12,Math.PI*.88);context.stroke();}
-        const top=tops[staff],bottom=top+gap*4;if(y<top-3||y>bottom+3){const direction=y<top?-1:1;for(let ledger=top+(direction<0?-gap:gap);direction<0?ledger>=y:ledger<=y;ledger+=direction*gap){context.beginPath();context.moveTo(x-11,ledger);context.lineTo(x+11,ledger);context.stroke();}}midiVizScoreLayout.set(midiScoreNoteKey(note),{x,y});occupied[staff].add(note.measure);}
-      for(let measure=info.firstMeasure;measure<=info.lastMeasure;measure++)for(let staff=0;staff<2;staff++)if(!occupied[staff].has(measure)){const x=left+(measure-info.firstMeasure+.5)/4*width,y=tops[staff]+gap*2;context.fillStyle='#172033';context.fillRect(x-8,y-2,16,5);}
-      context.fillStyle='#617087';context.font='18px system-ui';context.textAlign='center';context.fillText(`Measures ${info.firstMeasure}–${info.lastMeasure} · quantized display, exact MIDI playback`,canvas.width/2,566);midiVizScoreTexture.needsUpdate=true;
+      if(!midiVizScoreTexture||!midiVizData)return;
+      const page=midiVizMeasureInfo(currentTime).page;
+      if(!force&&page===midiVizScoreWindow)return;
+      midiVizScoreWindow=page;
+      midiVizScoreLayout=layoutScorePage(midiVizData,page);
+      drawScore(midiVizScoreTexture.image.getContext('2d'),midiVizScoreLayout,midiVizData);
+      midiVizScoreTexture.needsUpdate=true;
+      if(midiVizScoreHighlight)midiVizScoreHighlight.userData.activeSignature=null;
     }
 
     function createMidiVizScorePanel(data) {
@@ -3130,15 +3124,27 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       applyRoundedPanelMask(panel);panel.raycast=()=>{};
       midiVizScorePlayhead = new THREE.Mesh(new THREE.PlaneGeometry(0.0035, AR_VIDEO_HEIGHT * 0.7), new THREE.MeshBasicMaterial({ color:0x63e6be, transparent:true, opacity:0.7, depthTest:false, depthWrite:false, toneMapped:false }));
       midiVizScorePlayhead.position.z=0.024; midiVizScorePlayhead.renderOrder=1011; midiVizScorePlayhead.raycast=()=>{};
-      midiVizScoreHighlight = new THREE.Mesh(new THREE.CircleGeometry(0.012,16), new THREE.MeshBasicMaterial({ color:0xffd166, transparent:true, opacity:0.9, depthTest:false, depthWrite:false, toneMapped:false }));
-      midiVizScoreHighlight.position.z=0.026; midiVizScoreHighlight.renderOrder=1012; midiVizScoreHighlight.visible=false; midiVizScoreHighlight.raycast=()=>{};
+      const highlightCanvas=document.createElement('canvas');highlightCanvas.width=1024;highlightCanvas.height=600;
+      const highlightTexture=new THREE.CanvasTexture(highlightCanvas);highlightTexture.colorSpace=THREE.SRGBColorSpace;highlightTexture.minFilter=THREE.LinearFilter;highlightTexture.generateMipmaps=false;
+      midiVizScoreHighlight = new THREE.Mesh(curvedPanelGeometry(AR_VIDEO_WIDTH,AR_VIDEO_HEIGHT,0.022,24), new THREE.MeshBasicMaterial({ map:highlightTexture, transparent:true, depthTest:true, depthWrite:false, toneMapped:false }));
+      midiVizScoreHighlight.position.z=0.002; midiVizScoreHighlight.renderOrder=1012; midiVizScoreHighlight.visible=false; midiVizScoreHighlight.raycast=()=>{};
       midiVizScoreGroup.add(panel,midiVizScorePlayhead,midiVizScoreHighlight); registerSpatialAuxWindow(midiVizScoreGroup,AR_VIDEO_WIDTH); drawMidiVizScore(0,true);
     }
 
     function updateMidiVizScoreHighlight(currentTime,time){
-      if(!midiVizScorePlayhead||!midiVizScoreHighlight||!midiVizData)return;if(time-midiVizLastScoreHighlightUpdate<70)return;midiVizLastScoreHighlightUpdate=time;
-      const active=midiVizData.notes.find(note=>note.start<=currentTime&&note.start+Math.min(note.duration,MIDI_VIZ_MAX_DISPLAY_DURATION)>=currentTime);if(!active){midiVizScoreHighlight.visible=false;return;}const layout=midiVizScoreLayout.get(midiScoreNoteKey(active));if(!layout){midiVizScoreHighlight.visible=false;return;}
-      midiVizScorePlayhead.position.x=-AR_VIDEO_WIDTH/2+(layout.x/1024)*AR_VIDEO_WIDTH;midiVizScoreHighlight.position.set(-AR_VIDEO_WIDTH/2+(layout.x/1024)*AR_VIDEO_WIDTH,AR_VIDEO_HEIGHT/2-(layout.y/600)*AR_VIDEO_HEIGHT,.026);midiVizScoreHighlight.visible=true;
+      if(!midiVizScorePlayhead||!midiVizScoreHighlight||!midiVizData)return;
+      if(time-midiVizLastScoreHighlightUpdate<40)return;midiVizLastScoreHighlightUpdate=time;
+      const ids=activeScoreNotes(scoreIndex(midiVizData),currentTime),layout=midiVizScoreLayout;
+      if(!layout?.glyphs)return;
+      const signature=layout.page+':'+ids.join(',');
+      if(signature!==midiVizScoreHighlight.userData.activeSignature){
+        drawScoreHighlights(midiVizScoreHighlight.material.map.image.getContext('2d'),layout,ids);
+        midiVizScoreHighlight.material.map.needsUpdate=true;
+        midiVizScoreHighlight.userData.activeSignature=signature;
+      }
+      const glyph=ids.map(id=>layout.glyphs.get(id)).find(Boolean);
+      midiVizScoreHighlight.visible=Boolean(glyph);midiVizScorePlayhead.visible=Boolean(glyph);
+      if(glyph)midiVizScorePlayhead.position.x=-AR_VIDEO_WIDTH/2+(glyph.x/1024)*AR_VIDEO_WIDTH;
     }
 
     function midiVizWaveform(data) {

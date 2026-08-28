@@ -788,11 +788,11 @@ test("renders gene-code lollipop and pedigree diagrams as cached 2D rasters", as
 test("renders semantic MIDI measures without changing exact playback", async () => {
   const html = await readFile(xrUrl, "utf8");
   assert.match(html, /midiVizMeasureInfo/);
-  assert.match(html, /quantizedStartBeat/);
-  assert.match(html, /quantizedDurationBeats/);
-  assert.match(html, /engraved score/);
-  assert.match(html, /keySignatures/);
-  assert.match(html, /tempoMap/);
+  assert.match(await readFile(new URL('../public/midi-score.js', import.meta.url), 'utf8'), /quantizedStartBeat/);
+  assert.match(await readFile(new URL('../public/midi-score.js', import.meta.url), 'utf8'), /quantizedDurationBeats/);
+  assert.match(await readFile(new URL('../public/midi-score.js', import.meta.url), 'utf8'), /engraved score/);
+  assert.match(await readFile(new URL('../public/midi-score.js', import.meta.url), 'utf8'), /keySignatures/);
+  assert.match(await readFile(new URL('../public/midi-score.js', import.meta.url), 'utf8'), /tempoMap/);
   assert.match(html, /midiVizScoreLayout/);
 });
 
@@ -903,3 +903,5 @@ import "./nucleotide-bonds.test.mjs";
 import "./note-pagination.test.mjs";
 
 import "./graph-rotation-policy.test.mjs";
+
+import "./midi-score.test.mjs";

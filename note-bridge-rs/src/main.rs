@@ -364,6 +364,14 @@ struct MidiKeySignaturePoint {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct MidiPlaybackEvent {
+    time: f64,
+    note: usize,
+    on: bool,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct MidiVizResponse {
     title: String,
     duration: f64,
@@ -375,6 +383,8 @@ struct MidiVizResponse {
     time_signatures: Vec<MidiTimeSignaturePoint>,
     key_signatures: Vec<MidiKeySignaturePoint>,
     notes: Vec<MidiVizNote>,
+    playback_events: Vec<MidiPlaybackEvent>,
+    score_pages: std::collections::BTreeMap<u32, Vec<usize>>,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1770,7 +1780,7 @@ fn parse_midi_file(path: &Path) -> Result<MidiVizResponse> {
             .unwrap_or(beat)
     };
     let measure_beats = beats_per_measure as f64 * 4.0 / beat_unit as f64;
-    let sharps = key_signatures_raw.last().map(|v| v.1).unwrap_or(0);
+    key_signatures_raw.sort_by_key(|point| point.0);
     let sharp = [
         "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
     ];
@@ -1799,6 +1809,7 @@ fn parse_midi_file(path: &Path) -> Result<MidiVizResponse> {
         n.beat_in_measure = start % measure_beats;
         n.hand = hand as u8;
         n.voice = voice as u8;
+        let sharps = key_signatures_raw.iter().filter(|point| point.0 as f64 <= n.start_beat * ticks_per_beat as f64).last().map(|point| point.1).unwrap_or(0);
         n.spelling = (if sharps < 0 { flat } else { sharp })[(n.pitch % 12) as usize].to_string();
         n.dotted = [0.25, 0.5, 1.0, 2.0, 4.0]
             .iter()
@@ -1847,6 +1858,7 @@ fn parse_midi_file(path: &Path) -> Result<MidiVizResponse> {
         .iter()
         .map(|note| note.start + note.duration)
         .fold(0.0_f64, f64::max);
+    let (playback_events, score_pages) = midi_score_indices(&notes);
     Ok(MidiVizResponse {
         title: path
             .file_stem()
@@ -1862,7 +1874,21 @@ fn parse_midi_file(path: &Path) -> Result<MidiVizResponse> {
         time_signatures,
         key_signatures,
         notes,
+        playback_events,
+        score_pages,
     })
+}
+
+fn midi_score_indices(notes: &[MidiVizNote]) -> (Vec<MidiPlaybackEvent>, std::collections::BTreeMap<u32, Vec<usize>>) {
+    let mut events = Vec::with_capacity(notes.len() * 2);
+    let mut pages = std::collections::BTreeMap::new();
+    for (index, note) in notes.iter().enumerate() {
+        events.push(MidiPlaybackEvent { time: note.start, note: index, on: true });
+        events.push(MidiPlaybackEvent { time: note.start + note.duration.max(0.0), note: index, on: false });
+        pages.entry(note.measure.saturating_sub(1) / 4).or_insert_with(Vec::new).push(index);
+    }
+    events.sort_by(|a, b| a.time.total_cmp(&b.time).then(a.on.cmp(&b.on)));
+    (events, pages)
 }
 
 async fn read_midi(
@@ -2593,4 +2619,32 @@ async fn main() -> Result<()> {
     println!("Cache automático por data de modificação; aguardando pedidos do Quest...");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod midi_score_index_tests {
+    use super::*;
+    fn note(start: f64, duration: f64, measure: u32) -> MidiVizNote {
+        MidiVizNote { pitch:60,start,duration,start_beat:start,duration_beats:duration,
+            velocity:100,channel:0,track:0,quantized_start_beat:start,
+            quantized_duration_beats:duration,measure,beat_in_measure:0.0,
+            hand:1,voice:0,spelling:"C".into(),dotted:false }
+    }
+    #[test]
+    fn indices_preserve_chords_note_off_order_and_score_pages() {
+        let notes=vec![note(0.0,1.0,1),note(0.0,2.0,1),note(1.0,1.0,5)];
+        let (events,pages)=midi_score_indices(&notes);
+        assert_eq!(events.len(),6);
+        assert_eq!(pages.get(&0),Some(&vec![0,1]));
+        assert_eq!(pages.get(&1),Some(&vec![2]));
+        let boundary:Vec<_>=events.iter().filter(|e|e.time==1.0).collect();
+        assert!(!boundary[0].on);
+        assert!(boundary[1].on);
+        assert_eq!(boundary[1].note,2);
+    }
+    #[test]
+    fn indices_accept_empty_midi() {
+        let (events,pages)=midi_score_indices(&[]);
+        assert!(events.is_empty()&&pages.is_empty());
+    }
 }
