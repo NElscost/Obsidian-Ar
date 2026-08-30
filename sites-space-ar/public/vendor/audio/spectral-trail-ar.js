@@ -3,6 +3,7 @@ export function createSpectralTrailExtension(THREE, api) {
   const HEIGHT = api.height * 0.72;
   const BINS = 48;
   const LAYERS = 48;
+  const NETWORK_PEAKS = 14;
   const SAMPLE_INTERVAL_MS = 66;
   const LIFETIME_SECONDS = 3.25;
   let group = null;
@@ -142,29 +143,12 @@ export function createSpectralTrailExtension(THREE, api) {
   }
 
   function createNetwork() {
-    const temporalBins = Math.ceil(BINS / 4);
-    const adjacentSegments = LAYERS * (BINS - 1);
-    const segmentCount = adjacentSegments + LAYERS * temporalBins;
+    // Sparse constellation: a bounded pair of local and temporal links per peak.
+    const segmentCount = LAYERS * NETWORK_PEAKS * 2;
     const positions = new Float32Array(segmentCount * 6);
     const colors = new Float32Array(segmentCount * 6);
     const born = new Float32Array(segmentCount * 2);
-    const color = new THREE.Color();
     born.fill(-1000);
-    for (let layer = 0; layer < LAYERS; layer += 1) {
-      for (let bin = 0; bin < BINS - 1; bin += 1) {
-        const vertex = (layer * (BINS - 1) + bin) * 2;
-        for (let end = 0; end < 2; end += 1) {
-          color.setHSL(0.52 + (bin + end) / BINS * 0.26, 0.86, 0.62);
-          colors.set([color.r, color.g, color.b], (vertex + end) * 3);
-        }
-      }
-      for (let slot = 0; slot < temporalBins; slot += 1) {
-        const bin = slot * 4;
-        const vertex = (adjacentSegments + layer * temporalBins + slot) * 2;
-        color.setHSL(0.52 + bin / BINS * 0.26, 0.86, 0.66);
-        colors.set([color.r, color.g, color.b, color.r, color.g, color.b], vertex * 3);
-      }
-    }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
@@ -195,7 +179,7 @@ export function createSpectralTrailExtension(THREE, api) {
           p.z -= max(age, 0.0) * depthSpeed;
           gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
           vColor = color;
-          vAlpha = smoothstep(0.0, 0.2, life) * 0.48;
+          vAlpha = smoothstep(0.0, 0.2, life) * 0.42;
         }
       `,
       fragmentShader: `
@@ -214,7 +198,7 @@ export function createSpectralTrailExtension(THREE, api) {
 
   function applyMode() {
     if (!state) return;
-    if (points) points.visible = state.mode !== 1;
+    if (points) points.visible = true;
     if (network) network.visible = state.mode !== 0;
   }
 
@@ -243,19 +227,6 @@ export function createSpectralTrailExtension(THREE, api) {
     if (group) { dispose(); return; }
     group = new THREE.Group();
     group.name = "spectral-trail-window";
-    const outlineGeometry = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(-WIDTH / 2, -HEIGHT / 2, 0),
-      new THREE.Vector3(WIDTH / 2, -HEIGHT / 2, 0),
-      new THREE.Vector3(WIDTH / 2, HEIGHT / 2, 0),
-      new THREE.Vector3(-WIDTH / 2, HEIGHT / 2, 0),
-      new THREE.Vector3(-WIDTH / 2, -HEIGHT / 2, 0)
-    ]);
-    const outline = new THREE.Line(
-      outlineGeometry,
-      new THREE.LineBasicMaterial({ color: 0x75a7ff, transparent: true, opacity: 0.2, depthTest: true, depthWrite: false, toneMapped: false })
-    );
-    outline.raycast = () => {};
-    group.add(outline);
     const dragSurface = new THREE.Mesh(
       new THREE.PlaneGeometry(WIDTH * 0.9, HEIGHT * 0.72),
       new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthTest: false, depthWrite: false })
@@ -272,7 +243,7 @@ export function createSpectralTrailExtension(THREE, api) {
     content.add(createParticles());
     content.add(createNetwork());
     group.add(content);
-    state = { scale: 1, autoRotate: false, mode: 0, drags: new Map(), layer: 0, lastSample: 0 };
+    state = { scale: 1, autoRotate: false, mode: 0, drags: new Map(), layer: 0, lastSample: 0, previousPeaks: [] };
     applyMode();
     addControl("spectral-smaller", -0.072, "−");
     addControl("spectral-place", -0.036, "⌖", 0xffd166);
@@ -295,39 +266,100 @@ export function createSpectralTrailExtension(THREE, api) {
     const born = points.geometry.attributes.born;
     const timeSeconds = time * 0.001;
     const usable = Math.max(1, Math.floor(frequencyData.length * 0.72));
+    const amplitudes = new Float32Array(BINS);
     for (let bin = 0; bin < BINS; bin += 1) {
       const sourceIndex = Math.min(usable - 1, Math.floor(Math.pow(bin / (BINS - 1), 1.55) * usable));
-      const amplitude = frequencyData[sourceIndex] / 255;
+      amplitudes[bin] = frequencyData[sourceIndex] / 255;
+    }
+
+    const localPeaks = [];
+    for (let bin = 1; bin < BINS - 1; bin += 1) {
+      const amplitude = amplitudes[bin];
+      if (amplitude >= 0.12 && amplitude >= amplitudes[bin - 1] && amplitude >= amplitudes[bin + 1]) {
+        localPeaks.push({ bin, amplitude });
+      }
+    }
+    localPeaks.sort((a, b) => b.amplitude - a.amplitude);
+    if (localPeaks.length < 6) {
+      const used = new Set(localPeaks.map((peak) => peak.bin));
+      [...amplitudes.keys()]
+        .sort((a, b) => amplitudes[b] - amplitudes[a])
+        .some((bin) => {
+          if (!used.has(bin) && amplitudes[bin] > 0.045) localPeaks.push({ bin, amplitude: amplitudes[bin] });
+          return localPeaks.length >= 6;
+        });
+    }
+    localPeaks.length = Math.min(localPeaks.length, NETWORK_PEAKS);
+    localPeaks.sort((a, b) => a.bin - b.bin);
+    const peakBins = new Set(localPeaks.map((peak) => peak.bin));
+
+    for (let bin = 0; bin < BINS; bin += 1) {
+      const amplitude = amplitudes[bin];
       const index = state.layer * BINS + bin;
-      position.setY(index, -HEIGHT * 0.22 + Math.pow(amplitude, 1.35) * HEIGHT * 0.53);
-      born.setX(index, timeSeconds);
+      const isPeak = peakBins.has(bin);
+      const descriptorDepth = isPeak ? Math.sin(bin * 1.73 + state.layer * 0.41) * (0.012 + amplitude * 0.038) : 0;
+      position.setXYZ(
+        index,
+        (bin / (BINS - 1) - 0.5) * WIDTH * 0.82,
+        -HEIGHT * 0.22 + Math.pow(amplitude, 1.35) * HEIGHT * 0.53,
+        descriptorDepth
+      );
+      born.setX(index, state.mode === 1 && !isPeak ? -1000 : timeSeconds);
     }
     position.needsUpdate = true;
     born.needsUpdate = true;
+
     if (network) {
       const linePosition = network.geometry.attributes.position;
+      const lineColor = network.geometry.attributes.color;
       const lineBorn = network.geometry.attributes.born;
-      const adjacentSegments = LAYERS * (BINS - 1);
-      const temporalBins = Math.ceil(BINS / 4);
-      const previousLayer = (state.layer + LAYERS - 1) % LAYERS;
-      for (let bin = 0; bin < BINS - 1; bin += 1) {
-        const vertex = (state.layer * (BINS - 1) + bin) * 2;
-        const left = state.layer * BINS + bin;
-        const right = left + 1;
-        linePosition.setXYZ(vertex, position.getX(left), position.getY(left), 0);
-        linePosition.setXYZ(vertex + 1, position.getX(right), position.getY(right), 0);
-        lineBorn.setX(vertex, timeSeconds); lineBorn.setX(vertex + 1, timeSeconds);
+      const segmentsPerLayer = NETWORK_PEAKS * 2;
+      const firstSegment = state.layer * segmentsPerLayer;
+      for (let slot = 0; slot < segmentsPerLayer; slot += 1) {
+        const vertex = (firstSegment + slot) * 2;
+        lineBorn.setX(vertex, -1000);
+        lineBorn.setX(vertex + 1, -1000);
       }
-      for (let slot = 0; slot < temporalBins; slot += 1) {
-        const bin = Math.min(BINS - 1, slot * 4);
-        const current = state.layer * BINS + bin;
-        const previous = previousLayer * BINS + bin;
-        const vertex = (adjacentSegments + state.layer * temporalBins + slot) * 2;
-        linePosition.setXYZ(vertex, position.getX(current), position.getY(current), 0);
-        linePosition.setXYZ(vertex + 1, position.getX(previous), position.getY(previous), 0);
-        lineBorn.setX(vertex, timeSeconds); lineBorn.setX(vertex + 1, timeSeconds);
+      let slot = 0;
+      const color = new THREE.Color();
+      const pointFor = (peak) => {
+        const index = state.layer * BINS + peak.bin;
+        return { bin: peak.bin, amplitude: peak.amplitude, x: position.getX(index), y: position.getY(index), z: position.getZ(index) };
+      };
+      const currentPeaks = localPeaks.map(pointFor);
+      const writeSegment = (a, b) => {
+        if (slot >= segmentsPerLayer) return;
+        const vertex = (firstSegment + slot) * 2;
+        linePosition.setXYZ(vertex, a.x, a.y, a.z);
+        linePosition.setXYZ(vertex + 1, b.x, b.y, b.z);
+        color.setHSL(0.52 + a.bin / BINS * 0.26, 0.86, 0.62);
+        lineColor.setXYZ(vertex, color.r, color.g, color.b);
+        color.setHSL(0.52 + b.bin / BINS * 0.26, 0.86, 0.62);
+        lineColor.setXYZ(vertex + 1, color.r, color.g, color.b);
+        lineBorn.setX(vertex, timeSeconds);
+        lineBorn.setX(vertex + 1, timeSeconds);
+        slot += 1;
+      };
+
+      // Short links create clusters; broad frequency gaps stay visually independent.
+      for (let index = 0; index < currentPeaks.length - 1; index += 1) {
+        const a = currentPeaks[index];
+        const b = currentPeaks[index + 1];
+        if (b.bin - a.bin <= 9 && Math.abs(b.amplitude - a.amplitude) <= 0.42) writeSegment(a, b);
       }
+      // One nearest predecessor per peak creates the fading 3D trail seen in timbre maps.
+      for (const peak of currentPeaks) {
+        let nearest = null;
+        let distance = Infinity;
+        for (const previous of state.previousPeaks) {
+          const candidate = Math.abs(previous.bin - peak.bin);
+          if (candidate < distance) { distance = candidate; nearest = previous; }
+        }
+        if (nearest && distance <= 5) writeSegment(peak, nearest);
+      }
+      state.previousPeaks = currentPeaks;
       linePosition.needsUpdate = true;
+      lineColor.needsUpdate = true;
       lineBorn.needsUpdate = true;
     }
     state.layer = (state.layer + 1) % LAYERS;
