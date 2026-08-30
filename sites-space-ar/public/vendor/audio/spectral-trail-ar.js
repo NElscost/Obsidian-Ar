@@ -9,6 +9,8 @@ export function createSpectralTrailExtension(THREE, api) {
   let content = null;
   let points = null;
   let material = null;
+  let network = null;
+  let networkMaterial = null;
   let state = null;
   let controls = [];
   let anchor = null;
@@ -139,6 +141,83 @@ export function createSpectralTrailExtension(THREE, api) {
     return points;
   }
 
+  function createNetwork() {
+    const temporalBins = Math.ceil(BINS / 4);
+    const adjacentSegments = LAYERS * (BINS - 1);
+    const segmentCount = adjacentSegments + LAYERS * temporalBins;
+    const positions = new Float32Array(segmentCount * 6);
+    const colors = new Float32Array(segmentCount * 6);
+    const born = new Float32Array(segmentCount * 2);
+    const color = new THREE.Color();
+    born.fill(-1000);
+    for (let layer = 0; layer < LAYERS; layer += 1) {
+      for (let bin = 0; bin < BINS - 1; bin += 1) {
+        const vertex = (layer * (BINS - 1) + bin) * 2;
+        for (let end = 0; end < 2; end += 1) {
+          color.setHSL(0.52 + (bin + end) / BINS * 0.26, 0.86, 0.62);
+          colors.set([color.r, color.g, color.b], (vertex + end) * 3);
+        }
+      }
+      for (let slot = 0; slot < temporalBins; slot += 1) {
+        const bin = slot * 4;
+        const vertex = (adjacentSegments + layer * temporalBins + slot) * 2;
+        color.setHSL(0.52 + bin / BINS * 0.26, 0.86, 0.66);
+        colors.set([color.r, color.g, color.b, color.r, color.g, color.b], vertex * 3);
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute("born", new THREE.BufferAttribute(born, 1));
+    networkMaterial = new THREE.ShaderMaterial({
+      transparent: true,
+      depthTest: true,
+      depthWrite: false,
+      blending: THREE.NormalBlending,
+      uniforms: {
+        time: { value: 0 },
+        lifetime: { value: LIFETIME_SECONDS },
+        depthSpeed: { value: 0.092 }
+      },
+      vertexShader: `
+        attribute vec3 color;
+        attribute float born;
+        varying vec3 vColor;
+        varying float vAlpha;
+        uniform float time;
+        uniform float lifetime;
+        uniform float depthSpeed;
+        void main() {
+          float age = time - born;
+          float alive = step(0.0, age) * step(age, lifetime);
+          float life = clamp(1.0 - age / lifetime, 0.0, 1.0) * alive;
+          vec3 p = position;
+          p.z -= max(age, 0.0) * depthSpeed;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+          vColor = color;
+          vAlpha = smoothstep(0.0, 0.2, life) * 0.48;
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vColor;
+        varying float vAlpha;
+        void main() {
+          if (vAlpha <= 0.001) discard;
+          gl_FragColor = vec4(vColor, vAlpha);
+        }
+      `
+    });
+    network = new THREE.LineSegments(geometry, networkMaterial);
+    network.frustumCulled = false;
+    return network;
+  }
+
+  function applyMode() {
+    if (!state) return;
+    if (points) points.visible = state.mode !== 1;
+    if (network) network.visible = state.mode !== 0;
+  }
+
   function dispose() {
     if (anchor?.delete) anchor.delete();
     anchor = null;
@@ -154,7 +233,7 @@ export function createSpectralTrailExtension(THREE, api) {
         object.material?.dispose?.();
       });
     }
-    group = content = points = material = state = null;
+    group = content = points = material = network = networkMaterial = state = null;
     controls = [];
     frequencyData = null;
     api.layout();
@@ -164,13 +243,19 @@ export function createSpectralTrailExtension(THREE, api) {
     if (group) { dispose(); return; }
     group = new THREE.Group();
     group.name = "spectral-trail-window";
-    const panel = new THREE.Mesh(
-      api.geometry(WIDTH, HEIGHT, 0.018, 18),
-      new THREE.MeshBasicMaterial({ color: 0x07111f, transparent: true, opacity: 0.72, depthTest: true, depthWrite: false, toneMapped: false })
+    const outlineGeometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-WIDTH / 2, -HEIGHT / 2, 0),
+      new THREE.Vector3(WIDTH / 2, -HEIGHT / 2, 0),
+      new THREE.Vector3(WIDTH / 2, HEIGHT / 2, 0),
+      new THREE.Vector3(-WIDTH / 2, HEIGHT / 2, 0),
+      new THREE.Vector3(-WIDTH / 2, -HEIGHT / 2, 0)
+    ]);
+    const outline = new THREE.Line(
+      outlineGeometry,
+      new THREE.LineBasicMaterial({ color: 0x75a7ff, transparent: true, opacity: 0.2, depthTest: true, depthWrite: false, toneMapped: false })
     );
-    api.round?.(panel);
-    panel.raycast = () => {};
-    group.add(panel);
+    outline.raycast = () => {};
+    group.add(outline);
     const dragSurface = new THREE.Mesh(
       new THREE.PlaneGeometry(WIDTH * 0.9, HEIGHT * 0.72),
       new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthTest: false, depthWrite: false })
@@ -185,12 +270,15 @@ export function createSpectralTrailExtension(THREE, api) {
     content = new THREE.Group();
     content.position.z = 0.04;
     content.add(createParticles());
+    content.add(createNetwork());
     group.add(content);
-    state = { scale: 1, autoRotate: false, drags: new Map(), layer: 0, lastSample: 0 };
+    state = { scale: 1, autoRotate: false, mode: 0, drags: new Map(), layer: 0, lastSample: 0 };
+    applyMode();
     addControl("spectral-smaller", -0.072, "−");
     addControl("spectral-place", -0.036, "⌖", 0xffd166);
     addControl("spectral-rotate", 0, "↻", 0x63e6be);
     addControl("spectral-larger", 0.036, "+");
+    addControl("spectral-mode", 0.072, "◇", 0xb197fc);
     addControl("spectral-close", WIDTH / 2 - 0.022, "×", 0xff6b6b);
     api.register(group, WIDTH);
     api.message("Spectral Trail ready. Pinch-drag to rotate or use both hands to scale.");
@@ -216,6 +304,32 @@ export function createSpectralTrailExtension(THREE, api) {
     }
     position.needsUpdate = true;
     born.needsUpdate = true;
+    if (network) {
+      const linePosition = network.geometry.attributes.position;
+      const lineBorn = network.geometry.attributes.born;
+      const adjacentSegments = LAYERS * (BINS - 1);
+      const temporalBins = Math.ceil(BINS / 4);
+      const previousLayer = (state.layer + LAYERS - 1) % LAYERS;
+      for (let bin = 0; bin < BINS - 1; bin += 1) {
+        const vertex = (state.layer * (BINS - 1) + bin) * 2;
+        const left = state.layer * BINS + bin;
+        const right = left + 1;
+        linePosition.setXYZ(vertex, position.getX(left), position.getY(left), 0);
+        linePosition.setXYZ(vertex + 1, position.getX(right), position.getY(right), 0);
+        lineBorn.setX(vertex, timeSeconds); lineBorn.setX(vertex + 1, timeSeconds);
+      }
+      for (let slot = 0; slot < temporalBins; slot += 1) {
+        const bin = Math.min(BINS - 1, slot * 4);
+        const current = state.layer * BINS + bin;
+        const previous = previousLayer * BINS + bin;
+        const vertex = (adjacentSegments + state.layer * temporalBins + slot) * 2;
+        linePosition.setXYZ(vertex, position.getX(current), position.getY(current), 0);
+        linePosition.setXYZ(vertex + 1, position.getX(previous), position.getY(previous), 0);
+        lineBorn.setX(vertex, timeSeconds); lineBorn.setX(vertex + 1, timeSeconds);
+      }
+      linePosition.needsUpdate = true;
+      lineBorn.needsUpdate = true;
+    }
     state.layer = (state.layer + 1) % LAYERS;
   }
 
@@ -240,6 +354,7 @@ export function createSpectralTrailExtension(THREE, api) {
   function update(time, frame, referenceSpace) {
     if (!state || !group) return;
     if (material) material.uniforms.time.value = time * 0.001;
+    if (networkMaterial) networkMaterial.uniforms.time.value = time * 0.001;
     sample(time);
     if (anchor && frame && referenceSpace) {
       const pose = frame.getPose(anchor.anchorSpace, referenceSpace);
@@ -320,6 +435,10 @@ export function createSpectralTrailExtension(THREE, api) {
     } else if (action === "spectral-rotate") {
       state.autoRotate = !state.autoRotate;
       api.message(`Spectral rotation ${state.autoRotate ? "enabled" : "disabled"}.`);
+    } else if (action === "spectral-mode") {
+      state.mode = (state.mode + 1) % 3;
+      applyMode();
+      api.message(`Spectral view: ${["points", "network", "points + network"][state.mode]}.`);
     } else return false;
     return true;
   }
