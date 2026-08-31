@@ -15,4 +15,8 @@ test("renders a transparent spectral window with an optional bounded network", a
   assert.match(source, /const NETWORK_PEAKS = 14/);
   assert.match(source, /const localPeaks = \[\]/);
   assert.match(source, /state\.previousPeaks/);
+  assert.match(source, /createPeakHighlights/);
+  assert.match(source, /frequencyLabels/);
+  assert.match(source, /MAX_LABELS = 8/);
+  assert.match(source, /sampleRate \/ analyser\.fftSize/);
 });

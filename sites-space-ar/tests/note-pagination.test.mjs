@@ -26,3 +26,13 @@ test('nested blocks never produce zero-height ranges and invalid measurements ar
  assert.ok(pages.every(p=>p.bottom>p.top&&p.bottom-p.top<=570));
  assert.ok(pages.every(p=>ink.some(i=>i.top<p.bottom&&i.bottom>p.top)));
 });
+
+test('reserves a capture gutter so the last rendered line is not clipped',()=>{
+ const pages=contentPageRanges([{top:0,bottom:570}],[]);
+ assert.deepEqual(pages,[{top:0,bottom:558},{top:558,bottom:570}]);
+ assert.ok(pages.every(page=>page.bottom-page.top<=558));
+});
+test('lets a tall leading atom use the gutter without cutting it',()=>{
+ const atom={top:0,bottom:565};
+ assert.deepEqual(contentPageRanges([atom],[atom]),[{top:0,bottom:565}]);
+});

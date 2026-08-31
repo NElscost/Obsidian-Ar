@@ -4,6 +4,9 @@ export function createSpectralTrailExtension(THREE, api) {
   const BINS = 48;
   const LAYERS = 48;
   const NETWORK_PEAKS = 14;
+  const MAX_LABELS = 8;
+  const MAX_LABEL_GLYPHS = 56;
+  const GLYPHS = "0123456789.kHz ";
   const SAMPLE_INTERVAL_MS = 66;
   const LIFETIME_SECONDS = 3.25;
   let group = null;
@@ -12,6 +15,8 @@ export function createSpectralTrailExtension(THREE, api) {
   let material = null;
   let network = null;
   let networkMaterial = null;
+  let peakHighlights = null;
+  let frequencyLabels = null;
   let state = null;
   let controls = [];
   let anchor = null;
@@ -142,6 +147,131 @@ export function createSpectralTrailExtension(THREE, api) {
     return points;
   }
 
+  function createPeakHighlights() {
+    const positions = new Float32Array(NETWORK_PEAKS * 3);
+    const colors = new Float32Array(NETWORK_PEAKS * 3);
+    const strengths = new Float32Array(NETWORK_PEAKS);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute("strength", new THREE.BufferAttribute(strengths, 1));
+    geometry.setDrawRange(0, 0);
+    const peakMaterial = new THREE.ShaderMaterial({
+      transparent: true, depthTest: true, depthWrite: false, toneMapped: false,
+      vertexShader: `
+        attribute vec3 color; attribute float strength;
+        varying vec3 vColor;
+        void main() {
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          gl_Position = projectionMatrix * mv;
+          gl_PointSize = min(17.0, (8.0 + strength * 8.0) * (0.55 / max(0.12, -mv.z)));
+          vColor = color;
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vColor;
+        void main() {
+          float radius = length(gl_PointCoord - vec2(0.5));
+          if (radius > 0.5) discard;
+          float halo = 1.0 - smoothstep(0.30, 0.50, radius);
+          float core = 1.0 - smoothstep(0.0, 0.19, radius);
+          gl_FragColor = vec4(mix(vColor, vec3(1.0), core * 0.7), max(core, halo * 0.72));
+        }
+      `
+    });
+    peakHighlights = new THREE.Points(geometry, peakMaterial);
+    peakHighlights.frustumCulled = false;
+    return peakHighlights;
+  }
+
+  function createFrequencyLabels() {
+    const canvas = document.createElement("canvas");
+    const cell = 32;
+    canvas.width = GLYPHS.length * cell;
+    canvas.height = cell;
+    const context = canvas.getContext("2d");
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#ffffff";
+    context.font = "600 21px system-ui";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    for (let index = 0; index < GLYPHS.length; index += 1) context.fillText(GLYPHS[index], index * cell + cell / 2, cell / 2);
+    const atlas = new THREE.CanvasTexture(canvas);
+    atlas.colorSpace = THREE.SRGBColorSpace;
+    atlas.minFilter = THREE.LinearFilter;
+    atlas.magFilter = THREE.LinearFilter;
+    atlas.generateMipmaps = false;
+    const geometry = new THREE.PlaneGeometry(0.008, 0.012);
+    geometry.setAttribute("glyphIndex", new THREE.InstancedBufferAttribute(new Float32Array(MAX_LABEL_GLYPHS), 1));
+    const labelMaterial = new THREE.ShaderMaterial({
+      transparent: true, depthTest: true, depthWrite: false, toneMapped: false,
+      uniforms: { atlas: { value: atlas }, cells: { value: GLYPHS.length } },
+      vertexShader: `
+        attribute float glyphIndex; varying vec2 vUv;
+        uniform float cells;
+        void main() {
+          vUv = vec2((glyphIndex + uv.x) / cells, uv.y);
+          gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D atlas; varying vec2 vUv;
+        void main() {
+          float alpha = texture2D(atlas, vUv).a;
+          if (alpha < 0.08) discard;
+          gl_FragColor = vec4(0.93, 0.97, 1.0, alpha * 0.92);
+        }
+      `
+    });
+    frequencyLabels = new THREE.InstancedMesh(geometry, labelMaterial, MAX_LABEL_GLYPHS);
+    frequencyLabels.count = 0;
+    frequencyLabels.frustumCulled = false;
+    frequencyLabels.renderOrder = 4;
+    return frequencyLabels;
+  }
+
+  function updatePeakPresentation(peaks, analyser) {
+    if (!peakHighlights || !frequencyLabels) return;
+    const peakPosition = peakHighlights.geometry.attributes.position;
+    const peakColor = peakHighlights.geometry.attributes.color;
+    const peakStrength = peakHighlights.geometry.attributes.strength;
+    const color = new THREE.Color();
+    peaks.forEach((peak, index) => {
+      peakPosition.setXYZ(index, peak.x, peak.y, peak.z + 0.008);
+      color.setHSL(0.52 + peak.bin / BINS * 0.26, 0.9, 0.64);
+      peakColor.setXYZ(index, color.r, color.g, color.b);
+      peakStrength.setX(index, peak.amplitude);
+    });
+    peakHighlights.geometry.setDrawRange(0, peaks.length);
+    peakPosition.needsUpdate = peakColor.needsUpdate = peakStrength.needsUpdate = true;
+
+    // Label only strong, spatially separated peaks to keep the constellation readable.
+    const selected = [...peaks].sort((a, b) => b.amplitude - a.amplitude).reduce((items, peak) => {
+      if (items.length < MAX_LABELS && items.every((item) => Math.abs(item.bin - peak.bin) >= 4)) items.push(peak);
+      return items;
+    }, []).sort((a, b) => a.bin - b.bin);
+    const glyphIndex = frequencyLabels.geometry.attributes.glyphIndex;
+    const matrix = new THREE.Matrix4();
+    let instance = 0;
+    const sampleRate = analyser.context?.sampleRate || 48000;
+    const usable = Math.max(1, Math.floor(analyser.frequencyBinCount * 0.72));
+    for (const peak of selected) {
+      const sourceIndex = Math.min(usable - 1, Math.floor(Math.pow(peak.bin / (BINS - 1), 1.55) * usable));
+      const hz = sourceIndex * sampleRate / analyser.fftSize;
+      const label = hz >= 1000 ? `${(hz / 1000).toFixed(1)}kHz` : `${Math.round(hz)}Hz`;
+      const width = label.length * 0.0072;
+      for (let char = 0; char < label.length && instance < MAX_LABEL_GLYPHS; char += 1) {
+        matrix.makeTranslation(peak.x - width / 2 + (char + 0.5) * 0.0072, peak.y + 0.019, peak.z + 0.009);
+        frequencyLabels.setMatrixAt(instance, matrix);
+        glyphIndex.setX(instance, Math.max(0, GLYPHS.indexOf(label[char])));
+        instance += 1;
+      }
+    }
+    frequencyLabels.count = instance;
+    frequencyLabels.instanceMatrix.needsUpdate = true;
+    glyphIndex.needsUpdate = true;
+  }
+
   function createNetwork() {
     // Sparse constellation: a bounded pair of local and temporal links per peak.
     const segmentCount = LAYERS * NETWORK_PEAKS * 2;
@@ -200,6 +330,8 @@ export function createSpectralTrailExtension(THREE, api) {
     if (!state) return;
     if (points) points.visible = true;
     if (network) network.visible = state.mode !== 0;
+    if (peakHighlights) peakHighlights.visible = state.mode !== 0;
+    if (frequencyLabels) frequencyLabels.visible = state.mode !== 0;
   }
 
   function dispose() {
@@ -217,7 +349,7 @@ export function createSpectralTrailExtension(THREE, api) {
         object.material?.dispose?.();
       });
     }
-    group = content = points = material = network = networkMaterial = state = null;
+    group = content = points = material = network = networkMaterial = peakHighlights = frequencyLabels = state = null;
     controls = [];
     frequencyData = null;
     api.layout();
@@ -241,6 +373,8 @@ export function createSpectralTrailExtension(THREE, api) {
     content = new THREE.Group();
     content.position.z = 0.04;
     content.add(createParticles());
+    content.add(createPeakHighlights());
+    content.add(createFrequencyLabels());
     content.add(createNetwork());
     group.add(content);
     state = { scale: 1, autoRotate: false, mode: 0, drags: new Map(), layer: 0, lastSample: 0, previousPeaks: [] };
@@ -358,6 +492,7 @@ export function createSpectralTrailExtension(THREE, api) {
         if (nearest && distance <= 5) writeSegment(peak, nearest);
       }
       state.previousPeaks = currentPeaks;
+      updatePeakPresentation(currentPeaks, analyser);
       linePosition.needsUpdate = true;
       lineColor.needsUpdate = true;
       lineBorn.needsUpdate = true;
