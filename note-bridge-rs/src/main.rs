@@ -728,6 +728,8 @@ mod tests {
         assert!(asset_extension_allowed(Path::new("demonstracao.mp4")));
         assert!(asset_extension_allowed(Path::new("captura.webm")));
         assert!(asset_extension_allowed(Path::new("estrutura.cif")));
+        assert!(asset_extension_allowed(Path::new("alinhamento.fasta")));
+        assert!(asset_extension_allowed(Path::new("proteina.faa")));
         assert!(asset_extension_allowed(Path::new("molecula.sdf")));
         assert!(asset_extension_allowed(Path::new("proteina.pdb")));
         assert!(!asset_extension_allowed(Path::new("script.exe")));
@@ -969,6 +971,10 @@ fn asset_extension_allowed(path: &Path) -> bool {
         Some(
             "aac"
                 | "avif"
+                | "fasta"
+                | "fa"
+                | "faa"
+                | "fna"
                 | "flac"
                 | "gif"
                 | "jpg"

@@ -569,6 +569,9 @@
 .note-content .note-protein { margin:10px 0; padding:6px; border:1px solid rgba(117,167,255,.42); border-radius:10px; background:rgba(7,17,31,.45); break-inside:avoid; }
 .note-content .note-protein::before { content:"Molecule · select to open the 3D viewer"; display:block; color:#9fc2ff; font-size:12px; margin:0 0 5px; }
 .note-content .note-protein-image { display:block; width:min(100%,360px); height:auto; margin:0 auto; object-fit:contain; }
+.note-content .note-fasta { margin:10px 0; padding:6px; border:1px solid rgba(99,230,190,.42); border-radius:10px; background:rgba(7,17,31,.45); break-inside:avoid; }
+.note-content .note-fasta::before { content:"FASTA · select to compare sequences"; display:block; color:#63e6be; font-size:12px; margin:0 0 5px; }
+.note-content .note-fasta-image { display:block; width:100%; height:auto; margin:0 auto; object-fit:contain; }
     .note-content .note-gene-code { margin:10px 0; padding:8px; border:1px solid rgba(117,167,255,.26); border-radius:10px; background:transparent; break-inside:avoid; overflow:hidden; }
     .note-content .note-gene-code-image { display:block; width:100%; height:auto; max-height:520px; margin:auto; object-fit:contain; background:transparent; }
     .note-content .note-mermaid { margin:10px 0; padding:8px; border:1px solid rgba(117,167,255,.26); border-radius:10px; background:transparent; break-inside:avoid; overflow:hidden; }
@@ -761,6 +764,7 @@
     import { shouldPauseGraphRotation } from "./graph-rotation-policy.js?v=1";
     import { contentPageRanges, measureVisibleNoteContent } from "./note-pagination.js?v=1";
     import { createProteinExtension } from "/vendor/chemrender3d/protein-ar.js?v=15";
+    import { createFastaExtension } from "/vendor/fasta/fasta-ar.js?v=1";
     import { createGeneCodeExtension } from "/vendor/gene-code/gene-code.js?v=2";
     import { createChronosExtension } from "/vendor/chronos/chronos-ar.js";
     import { createSpectralTrailExtension } from "/vendor/audio/spectral-trail-ar.js?v=1";
@@ -1318,7 +1322,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function preprocessNotePluginBlocks(source) {
       const markdown = String(source ?? "");
       let mediaSource = "";
-      return markdown.replace(/\x60\x60\x60(timestamp-url|timestamp|smiles|avatar|music-abc|midiviz|chess|chesser|rubik|rubikcube|3dmol|mermaid|gene-code|chronos|stock-block-list|stock-block)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi,
+      return markdown.replace(/\x60\x60\x60(timestamp-url|timestamp|smiles|avatar|music-abc|midiviz|chess|chesser|rubik|rubikcube|3dmol|fasta|mermaid|gene-code|chronos|stock-block-list|stock-block)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi,
         (whole, rawKind, rawBody, offset) => {
           const kind = rawKind.toLowerCase();
           const body = rawBody.trim();
@@ -1338,6 +1342,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
             return '<div class="note-avatar ' + side + '" style="--avatar-size:' + size + 'px">' + image + '<div class="note-avatar-body">' + escapeNoteHtml(description) + '</div></div>';
           }
           if (kind === "3dmol") return '<div class="note-protein" data-note-protein="' + encodeURIComponent(body) + '">Loading molecular structure…</div>';
+          if (kind === "fasta") return '<div class="note-fasta" data-note-fasta="' + encodeURIComponent(body) + '">Loading FASTA alignment…</div>';
           if (kind === "mermaid") return '<div class="note-mermaid" data-note-mermaid="' + encodeURIComponent(body) + '">Loading diagram...</div>';
           if (kind === "gene-code") return '<div class="note-gene-code" data-note-gene-code="' + encodeURIComponent(body) + '">Loading gene diagram…</div>';
           if (kind === "chronos") return '<div class="note-chronos" data-note-chronos="' + encodeURIComponent(body) + '">Loading timeline…</div>';
@@ -2047,6 +2052,10 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           `${prefix}${stashMath(latex, false)}`
         )
         .replace(
+          /!\[\[([^\]|#]+\.(?:fasta|fa|faa|fna))(?:\|[^\]]+)?\]\]/gi,
+          (_, target) => `<div class="note-fasta" data-note-fasta="${encodeURIComponent(`[[${target}]]`)}">Loading FASTA alignment…</div>`
+        )
+        .replace(
           /!\[\[([^\]|#]+\.(?:pdb|cif|mmcif|mol|sdf|xyz))(?:\|[^\]]+)?\]\]/gi,
           (_, target) => `<div class="note-protein" data-note-protein="${encodeURIComponent(`[[${target}]]`)}">Loading molecular structure…</div>`
         )
@@ -2159,6 +2168,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       await renderNoteChessBlocks();
       await rubikExtension.renderBlocks(noteContent);
       await proteinExtension.renderBlocks(noteContent);
+      await fastaExtension.renderBlocks(noteContent);
       for (const link of noteContent.querySelectorAll("a")) {
         const href = link.getAttribute("href")?.trim() ?? "";
         if (remoteVideoPlatform(href)) {
@@ -3307,6 +3317,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       chronosExtension.dispose();
       rubikExtension.dispose();
       proteinExtension.dispose();
+      fastaExtension.dispose();
       spectralTrailExtension.dispose();
       const preserveVideo = Boolean(
         options.preserveVideo && activeNoteVideoGroup && activeNoteAudio
@@ -4048,7 +4059,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       const visibleContent = measureVisibleNoteContent(noteContent);
       const atoms = [];
       for (const element of noteContent.querySelectorAll(
-        "img, table, .note-video-card, .note-timestamp-card, .note-smiles, .note-music-abc, .note-midi-viz, .note-chess, .note-rubik, .note-protein, .note-mermaid, .note-gene-code, .note-chronos, .note-audio-card, .obsidian-callout"
+        "img, table, .note-video-card, .note-timestamp-card, .note-smiles, .note-music-abc, .note-midi-viz, .note-chess, .note-rubik, .note-protein, .note-fasta, .note-mermaid, .note-gene-code, .note-chronos, .note-audio-card, .obsidian-callout"
       )) {
         const bounds = element.getBoundingClientRect();
         const height = bounds.height;
@@ -4093,7 +4104,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       }
       for (const page of pages) page.mediaHotspots = [];
       for (const element of noteContent.querySelectorAll(
-        ".note-audio-card, .note-video-card, .note-timestamp-card, .note-music-abc, .note-midi-viz, .note-chess, .note-rubik, .note-protein, .note-mermaid, .note-chronos"
+        ".note-audio-card, .note-video-card, .note-timestamp-card, .note-music-abc, .note-midi-viz, .note-chess, .note-rubik, .note-protein, .note-fasta, .note-mermaid, .note-chronos"
       )) {
         const bounds = element.getBoundingClientRect();
         const top = bounds.top - noteBounds.top;
@@ -4113,6 +4124,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
                 ? "rubik"
               : element.matches(".note-protein")
                 ? "protein"
+              : element.matches(".note-fasta")
+                ? "fasta"
               : element.matches(".note-chronos")
                 ? "chronos"
               : element.matches(".note-timestamp-card")
@@ -4128,6 +4141,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
                 ? element.dataset.noteRubik
               : kind === "protein"
                 ? element.dataset.noteProtein
+              : kind === "fasta"
+                ? element.dataset.noteFasta
               : kind === "chronos"
                 ? element.dataset.noteChronos
               : kind === "timestamp"
@@ -4719,6 +4734,20 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       addControl(control){arNoteControls.push(control);},removeControls(items){arNoteControls=arNoteControls.filter(item=>!items.has(item));},pinchPoint:getPinchPoint
     });
     const geneCodeExtension = createGeneCodeExtension();
+    const fastaExtension=createFastaExtension(THREE,{
+      width:AR_VIDEO_WIDTH,height:AR_VIDEO_HEIGHT,geometry:curvedPanelGeometry,round:applyRoundedPanelMask,
+      register:registerSpatialAuxWindow,unregister:unregisterSpatialAuxWindow,layout:layoutSpatialWindows,message:setXrMessage,
+      addControl(control){arNoteControls.push(control);},removeControls(items){const owned=new Set(items);arNoteControls=arNoteControls.filter(item=>!owned.has(item));},
+      async fetchFasta(spec){
+        if(!String(spec).startsWith('[['))return String(spec);
+        const target=String(spec).replace(/^\[\[|\]\]$/g,'');
+        const config=JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY)??'null');
+        if(!config?.url||!config?.token)throw new Error('Configure the note bridge to load FASTA files from the vault.');
+        const blob=await fetchVaultAsset(config,arNotePath,target);
+        if(blob.size>2*1024*1024)throw new Error('FASTA file exceeds the 2 MB safety limit.');
+        return blob.text();
+      }
+    });
     const proteinExtension=createProteinExtension(THREE,{
       width:AR_VIDEO_WIDTH,height:AR_VIDEO_HEIGHT,register:registerSpatialAuxWindow,unregister:unregisterSpatialAuxWindow,layout:layoutSpatialWindows,message:setXrMessage,scene,camera,
       addControl(control){arNoteControls.push(control);},removeControls(items){const owned=new Set(items);arNoteControls=arNoteControls.filter(item=>!owned.has(item));},pinchPoint:getPinchPoint,
@@ -4829,6 +4858,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           control.userData.noteAction = `rubik-open:${encodeURIComponent(hotspot.source)}`;
         } else if (hotspot.kind === "protein") {
           control.userData.noteAction = `protein-open:${encodeURIComponent(hotspot.source)}`;
+        } else if (hotspot.kind === "fasta") {
+          control.userData.noteAction = `fasta-open:${encodeURIComponent(hotspot.source)}`;
         } else if (hotspot.kind === "chronos") {
           control.userData.noteAction = `chronos-open:${encodeURIComponent(hotspot.source)}`;
         }
@@ -6403,6 +6434,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       if (chronosExtension.handle(action)) return;
       if (action.startsWith("rubik-open:")) { let source=action.slice("rubik-open:".length);try{source=decodeURIComponent(source);}catch{}rubikExtension.open(source);return; }
       if (rubikExtension.handle(action)) return;
+      if (action.startsWith("fasta-open:")) { let source=action.slice("fasta-open:".length);try{source=decodeURIComponent(source);}catch{}void fastaExtension.open(source).catch(error=>{console.warn("FASTA failed.",error);setXrMessage(`Could not open FASTA: ${error.message}`);});return; }
+      if (fastaExtension.handle(action, options)) return;
       if (action.startsWith("protein-open:")) { let source=action.slice("protein-open:".length);try{source=decodeURIComponent(source);}catch{}void proteinExtension.open(source).catch(error=>{console.warn("Molecule failed.",error);setXrMessage(`Could not open molecule: ${error.message}`);});return; }
       if (proteinExtension.handle(action)) return;
       if (action.startsWith("chess-open:")) {
