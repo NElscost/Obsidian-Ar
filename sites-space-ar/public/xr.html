@@ -586,6 +586,10 @@
       background: rgba(99, 230, 190, 0.1);
       border-color: rgba(99, 230, 190, 0.38);
     }
+    .note-content .note-video-card.has-video-thumbnail { position:relative; display:block; width:min(100%,480px); min-height:0; aspect-ratio:16/9; padding:0; overflow:hidden; background:#05080d; cursor:pointer; }
+    .note-content .note-video-thumbnail { position:static; inset:auto; display:block; width:100%; height:100%; max-height:none; margin:0; object-fit:cover; }
+    .note-content .note-video-thumbnail-overlay { position:absolute; inset:auto 0 0; display:flex; align-items:center; gap:9px; padding:28px 12px 10px; color:#fff; font-size:13px; font-weight:750; line-height:1.2; text-shadow:0 1px 4px #000; background:linear-gradient(transparent,rgba(0,0,0,.82)); pointer-events:none; }
+    .note-content .note-video-thumbnail-play { display:grid; flex:0 0 32px; width:32px; height:32px; place-items:center; border-radius:50%; background:rgba(255,0,0,.9); }
     .note-content .katex-display {
       overflow-x: auto;
       overflow-y: hidden;
@@ -1174,11 +1178,26 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       return "";
     }
 
+    function youtubeThumbnailUrl(source) {
+      const id = youtubeVideoId(source);
+      return id ? `https://i.ytimg.com/vi/${encodeURIComponent(id)}/hqdefault.jpg` : "";
+    }
+
+    function remoteVideoCardContents(source, label = "") {
+      const platform = remoteVideoPlatform(source);
+      const thumbnail = platform === "youtube" ? youtubeThumbnailUrl(source) : "";
+      const cleanLabel = String(label || "").trim();
+      const displayLabel = cleanLabel && cleanLabel !== source ? cleanLabel : platform === "youtube" ? "YouTube video" : "Streamable video";
+      if (thumbnail) return `<img class="note-video-thumbnail" src="${escapeNoteHtml(thumbnail)}" alt="" loading="eager" decoding="async"><span class="note-video-thumbnail-overlay"><span class="note-video-thumbnail-play">▶</span><span>${escapeNoteHtml(displayLabel)}</span></span>`;
+      const title = platform === "youtube" ? "YouTube" : "Streamable";
+      return `▶ ${title}: ${escapeNoteHtml(displayLabel)}`;
+    }
+
     function remoteVideoCardHtml(source, label = "") {
       const platform = remoteVideoPlatform(source);
       if (!platform) return escapeNoteHtml(label || source);
-      const title = platform === "youtube" ? "YouTube" : "Streamable";
-      return `<div class="note-video-card note-remote-video-card" data-note-video-source="${encodeURIComponent(source)}">▶ ${title}: ${escapeNoteHtml(label || source)}</div>`;
+      const thumbnailClass = platform === "youtube" ? " has-video-thumbnail" : "";
+      return `<div class="note-video-card note-remote-video-card${thumbnailClass}" data-note-video-source="${encodeURIComponent(source)}">${remoteVideoCardContents(source, label)}</div>`;
     }
 
     function youtubeCardHtml(source, label = "") {
@@ -2186,9 +2205,10 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         const href = link.getAttribute("href")?.trim() ?? "";
         if (remoteVideoPlatform(href)) {
           const card = document.createElement("div");
-          card.className = "note-video-card note-remote-video-card";
+          const platform = remoteVideoPlatform(href);
+          card.className = `note-video-card note-remote-video-card${platform === "youtube" ? " has-video-thumbnail" : ""}`;
           card.dataset.noteVideoSource = encodeURIComponent(href);
-          card.textContent = (remoteVideoPlatform(href) === "youtube" ? "YouTube: " : "Streamable: ") + (link.textContent?.trim() || href);
+          card.innerHTML = remoteVideoCardContents(href, link.textContent?.trim() || "");
           link.replaceWith(card);
           continue;
         }
@@ -3495,7 +3515,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     const NOTE_CACHE_MAX_BYTES = 48 * 1024 * 1024;
     const NOTE_PERSISTENT_CACHE_MAX_ENTRIES = 12;
     const NOTE_PERSISTENT_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
-    const NOTE_CACHE_DB = "space-ar-note-cache-v27";
+    const NOTE_CACHE_DB = "space-ar-note-cache-v28";
     const NOTE_CACHE_STORE = "rendered-notes";
     let noteCacheDbPromise = null;
     let highlightCorePromise = null;
@@ -3635,6 +3655,24 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       entry.usedAt = performance.now();
       return entry;
     }
+
+    async function removeLegacyNoteCaches() {
+      if (!("indexedDB" in window)) return;
+      const names = new Set(["space-ar-note-cache-v25", "space-ar-note-cache-v26", "space-ar-note-cache-v27"]);
+      if (typeof indexedDB.databases === "function") {
+        try {
+          for (const database of await indexedDB.databases()) {
+            if (database.name?.startsWith("space-ar-note-cache-") && database.name !== NOTE_CACHE_DB) names.add(database.name);
+          }
+        } catch {}
+      }
+      await Promise.all([...names].map((name) => new Promise((resolve) => {
+        const request = indexedDB.deleteDatabase(name);
+        request.onsuccess = request.onerror = request.onblocked = () => resolve();
+      })));
+    }
+
+    void removeLegacyNoteCaches();
 
     function openNoteCacheDb() {
       if (!("indexedDB" in window)) return Promise.resolve(null);
