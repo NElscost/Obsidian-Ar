@@ -178,6 +178,27 @@ MVLSAADKTNVKAIWGKVGAHAGEYGAEAL
 
 The lightweight viewer colors residues by biochemical group, outlines differences from the selected reference, calculates consensus and per-position conservation, and supports horizontal/vertical paging. Pinching a residue reports its sequence, position, identity, and conservation. The bridge only exposes explicitly referenced FASTA assets; parsed alignments are bounded and cached in the Quest session. The parser and renderer live in an independent module so an Obsidian community plugin can reuse the same data model later.
 
+## Community plugin compatibility
+
+Status: ✅ adapted and usable in AR · 🟡 adapted with a subset of the upstream plugin features · 🧪 experimental.
+
+| Status | Obsidian community plugin / syntax | WebXR adaptation |
+| --- | --- | --- |
+| ✅ | [Meta Quest Sync](https://github.com/nelscost/meta-quest-sync) | Companion plugin that starts the bridge, exports the graph and opens the Quest pairing flow. |
+| ✅ | [Audio Player](https://github.com/noonesimg/obsidian-audio-player) | Fenced `audio-player` blocks become selectable cards with spatial audio, waveform, seeking and bookmarks. Multiple tracks in one block are supported. |
+| ✅ | [Timestamp Notes](https://github.com/juliang22/ObsidianTimestampNotes) | Timestamp markers seek the corresponding audio or video and preserve their labels. |
+| ✅ | [Chronos](https://github.com/clairefro/obsidian-plugin-chronos) | Timelines render as selectable 2D cards and as an optional anchored/rotatable 3D timeline. |
+| 🟡 | [ChemRender3D](https://github.com/ruzx/chemrender3d) | Molecules, proteins and nucleic acids open in transparent interactive 3D windows; common PDB/mmCIF and SMILES representations are supported, but not every upstream rendering preset. |
+| ✅ | [Chesser](https://github.com/SilentVoid13/Chesser) | FEN and PGN blocks open an interactive board with navigation and automatic replay. |
+| ✅ | [Obsidian Avatar](https://github.com/maradotwebp/obsidian-avatar) | Avatar blocks are reproduced in the rasterized reading window. |
+| ✅ | [Advanced Codeblock](https://community.obsidian.md/plugins/obsidian-advanced-codeblock) | Language highlighting, line numbers and highlighted line ranges are preserved in the reading window. |
+| ✅ | [Stock Blocks](https://github.com/sandypockets/stock-blocks) | Stock blocks render as transparent charts whose data is refreshed through the local bridge. |
+| 🟡 | [RubikCubeAlgoView](https://github.com/Altarok/RubikCubeAlgoView) | Compatible Rubik algorithm blocks open an optimized interactive cube with playback, rotation, scaling and anchoring; the AR renderer is an independent implementation. |
+| 🟡 | 3D Graph New | The legacy graph-export workflow remains supported, while the recommended mode builds the graph directly from the vault. |
+| 🟡 | `music-abc` / ABC notation plugins | ABC blocks render a score, synchronized note highlight, spatial synthesis, transport controls and an optional Synthesia view. |
+
+Formats implemented directly by Obsidian AR — such as Mermaid, FASTA, SMILES, MIDI, gene-code diagrams and ordinary Markdown media embeds — do not require those community plugins to be installed.
+
 ## Media support
 
 Audio is connected to a Web Audio `PannerNode` using the HRTF model, so its
