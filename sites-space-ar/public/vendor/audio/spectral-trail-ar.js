@@ -201,7 +201,7 @@ export function createSpectralTrailExtension(THREE, api) {
     atlas.minFilter = THREE.LinearFilter;
     atlas.magFilter = THREE.LinearFilter;
     atlas.generateMipmaps = false;
-    const geometry = new THREE.PlaneGeometry(0.008, 0.012);
+    const geometry = new THREE.PlaneGeometry(0.004, 0.006);
     geometry.setAttribute("glyphIndex", new THREE.InstancedBufferAttribute(new Float32Array(MAX_LABEL_GLYPHS), 1));
     const labelMaterial = new THREE.ShaderMaterial({
       transparent: true, depthTest: true, depthWrite: false, toneMapped: false,
@@ -259,9 +259,10 @@ export function createSpectralTrailExtension(THREE, api) {
       const sourceIndex = Math.min(usable - 1, Math.floor(Math.pow(peak.bin / (BINS - 1), 1.55) * usable));
       const hz = sourceIndex * sampleRate / analyser.fftSize;
       const label = hz >= 1000 ? `${(hz / 1000).toFixed(1)}kHz` : `${Math.round(hz)}Hz`;
-      const width = label.length * 0.0072;
+      const spacing = 0.0036;
+      const width = label.length * spacing;
       for (let char = 0; char < label.length && instance < MAX_LABEL_GLYPHS; char += 1) {
-        matrix.makeTranslation(peak.x - width / 2 + (char + 0.5) * 0.0072, peak.y + 0.019, peak.z + 0.009);
+        matrix.makeTranslation(peak.x - width / 2 + (char + 0.5) * spacing, peak.y + 0.013, peak.z + 0.009);
         frequencyLabels.setMatrixAt(instance, matrix);
         glyphIndex.setX(instance, Math.max(0, GLYPHS.indexOf(label[char])));
         instance += 1;
@@ -376,6 +377,19 @@ export function createSpectralTrailExtension(THREE, api) {
     content.add(createPeakHighlights());
     content.add(createFrequencyLabels());
     content.add(createNetwork());
+    // Virtual hands write depth at renderOrder 4. Draw the transparent graph
+    // afterwards so its points, links and labels are correctly hidden by hands.
+    content.traverse((object) => {
+      if (!(object.isPoints || object.isLineSegments || object.isMesh)) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      for (const item of materials) {
+        if (!item) continue;
+        item.depthTest = true;
+        item.depthWrite = false;
+        item.needsUpdate = true;
+      }
+      object.renderOrder = Math.max(6, object.renderOrder || 0);
+    });
     group.add(content);
     state = { scale: 1, autoRotate: false, mode: 0, drags: new Map(), layer: 0, lastSample: 0, previousPeaks: [] };
     applyMode();
