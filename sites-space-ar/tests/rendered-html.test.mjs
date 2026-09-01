@@ -912,4 +912,8 @@ test("renders Audio Player fenced blocks as selectable AR audio cards", async ()
   assert.match(html, /kind === "audio-player"/);
   assert.match(html, /cards\.push\(audioCardHtml/);
   assert.match(html, /return cards\.length \? cards\.join/);
+  assert.match(html, /function normalizedMediaSource/);
+  assert.match(html, /function findNoteMediaTrack/);
+  assert.match(html, /const found = findNoteMediaTrack\(hotspot\.source, hotspot\.kind\)/);
+  assert.match(html, /Falha no áudio:/);
 });
