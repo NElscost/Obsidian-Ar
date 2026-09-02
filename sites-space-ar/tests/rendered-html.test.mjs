@@ -916,4 +916,15 @@ test("renders Audio Player fenced blocks as selectable AR audio cards", async ()
   assert.match(html, /function findNoteMediaTrack/);
   assert.match(html, /const found = findNoteMediaTrack\(hotspot\.source, hotspot\.kind\)/);
   assert.match(html, /Falha no áudio:/);
+  assert.match(html, /const audioSource =/);
+  assert.match(html, /kind: videoSource \? "video" : "audio"/);
+  assert.match(html, /const NOTE_CACHE_DB = "space-ar-note-cache-v27"/);
+});
+
+test("keeps YouTube thumbnails centered in rendered note pages", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /function youtubeThumbnailUrl/);
+  assert.match(html, /has-video-thumbnail/);
+  assert.match(html, /width:min\(100%,480px\); margin:10px auto/);
+  assert.match(html, /note-video-thumbnail/);
 });
