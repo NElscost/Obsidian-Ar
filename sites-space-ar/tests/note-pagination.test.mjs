@@ -6,16 +6,16 @@ test('ignores leading/trailing margins and gaps instead of emitting empty pages'
  const pages=contentPageRanges(ink,[]);
  assert.equal(pages.length,2);
  for(const p of pages)assert.ok(ink.some(r=>r.top<p.bottom&&r.bottom>p.top));
- assert.equal(pages.at(-1).bottom,2250);
+ assert.equal(pages.at(-1).bottom,2274);
 });
 test('keeps indivisible media on the next page and preserves source coordinates',()=>{
  const image={top:400,bottom:940};
  const pages=contentPageRanges([{top:20,bottom:80},image],[image]);
- assert.deepEqual(pages,[{top:18,bottom:400},{top:400,bottom:940}]);
+ assert.deepEqual(pages,[{top:18,bottom:400},{top:400,bottom:964}]);
  assert.ok(!pages.some(p=>p.top>image.top&&p.top<image.bottom));
 });
 test('does not drop text or media-only notes, long blocks, empty notes or small final lines',()=>{
- assert.deepEqual(contentPageRanges([{top:22,bottom:562}],[{top:22,bottom:562}]),[{top:20,bottom:562}]);
+ assert.deepEqual(contentPageRanges([{top:22,bottom:562}],[{top:22,bottom:562}]),[{top:20,bottom:586}]);
  assert.equal(contentPageRanges([{top:0,bottom:1200}],[]).length,3);
  assert.equal(contentPageRanges([],[]).length,1);
  assert.equal(contentPageRanges([{top:0,bottom:570},{top:572,bottom:573}],[]).length,2);
@@ -29,10 +29,21 @@ test('nested blocks never produce zero-height ranges and invalid measurements ar
 
 test('reserves a capture gutter so the last rendered line is not clipped',()=>{
  const pages=contentPageRanges([{top:0,bottom:570}],[]);
- assert.deepEqual(pages,[{top:0,bottom:558},{top:558,bottom:570}]);
- assert.ok(pages.every(page=>page.bottom-page.top<=558));
+ assert.deepEqual(pages,[{top:0,bottom:534},{top:534,bottom:594}]);
+ assert.ok(pages.every(page=>page.bottom-page.top<=534));
 });
 test('lets a tall leading atom use the gutter without cutting it',()=>{
  const atom={top:0,bottom:565};
- assert.deepEqual(contentPageRanges([atom],[atom]),[{top:0,bottom:565}]);
+ assert.deepEqual(contentPageRanges([atom],[atom]),[{top:0,bottom:570}]);
+});
+
+test('keeps trailing capture room after a short italic-like final line',()=>{
+ const pages=contentPageRanges([{top:0,bottom:41.5}],[]);
+ assert.deepEqual(pages,[{top:0,bottom:65.5}]);
+});
+
+test('moves a boundary above a crossing text line instead of clipping its lower half',()=>{
+ const pages=contentPageRanges([{top:0,bottom:20},{top:525,bottom:545},{top:546,bottom:560}],[]);
+ assert.equal(pages[0].bottom,525);
+ assert.ok(pages[1].top<=525);
 });

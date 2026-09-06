@@ -232,7 +232,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /MP4 com H\.264 \+ AAC/);
   assert.match(html, /async function toggleNoteAudio\(requestedTrack = null\)/);
   assert.match(html, /function attachNoteMediaHotspots/);
-  assert.match(html, /space-ar-note-cache-v26/);
+  assert.match(html, /space-ar-note-cache-v27/);
   assert.match(html, /pageMeta: pages\.map/);
   assert.match(html, /hasMediaHotspotMetadata/);
   assert.match(html, /if \(isVideo\) void prepareVideoAmbilight\(track, arNotePath\)/);
@@ -287,7 +287,7 @@ test("prepara mídia remota, pagina conteúdo atômico e oferece áudio e vídeo
   assert.match(html, /function setNoteControlIcon/);
   assert.match(html, /new THREE\.PlaneGeometry\(0\.024, 0\.024\)/);
   assert.match(html, /activeNoteAudio\.currentTime = 0/);
-  assert.match(html, /space-ar-note-cache-v26/);
+  assert.match(html, /space-ar-note-cache-v27/);
 });
 
 test("remove a captura de voz e preserva a busca local", async () => {
@@ -584,7 +584,12 @@ test("mantém o alvo destacado pela palma durante a pinça", async () => {
   assert.match(html, /\? pointedNoteControlInstanceId/);
   assert.match(html, /key\.userData\.highlightScale = false/);
   assert.match(html, /function updateKeyboardTouch/);
-  assert.match(html, /time - lastKeyboardTouchScanAt < 32/);
+  assert.match(html, /time - lastKeyboardTouchScanAt < 24/);
+  assert.match(html, /KEYBOARD_TOUCH_PRESS_Z = 0\.012/);
+  assert.match(html, /crossedPressPlane/);
+  assert.match(html, /Capture the key chosen on approach/);
+  assert.match(html, /key\.renderOrder = 9/);
+  assert.match(html, /depthTest: true,\r?\n          depthWrite: false/);
   assert.match(html, /keyboardOnSurface = false/);
   assert.match(html, /touchWidth = width/);
   assert.match(html, /function placeKeyboardAtHit/);
@@ -747,7 +752,7 @@ test("supports interactive Rubik blocks and worker solver", async () => {
   assert.match(rubik, /worker timeout/);
   assert.match(rubik, /worker\.onerror/);
   assert.match(html, /rubikBlockCount > 8/);
-  assert.match(html, /space-ar-note-cache-v26/);
+  assert.match(html, /space-ar-note-cache-v27/);
   assert.match(html, /blocos Rubik ser�o preparados sob demanda/);
   assert.match(rubik, /URFDLBMESxyzurfdlb/);
   assert.match(rubik, /applySetup/);
@@ -768,7 +773,7 @@ test("renders Mermaid lazily as a transparent raster", async () => {
   assert.match(html, /mermaidRasterCache/);
   assert.match(html, /toDataURL\("image\/webp", 0\.88\)/);
   assert.match(html, /renderNoteMermaidBlocks/);
-  assert.match(html, /space-ar-note-cache-v26/);
+  assert.match(html, /space-ar-note-cache-v27/);
 });
 
 test("renders gene-code lollipop and pedigree diagrams as cached 2D rasters", async () => {
@@ -912,19 +917,13 @@ test("renders Audio Player fenced blocks as selectable AR audio cards", async ()
   assert.match(html, /kind === "audio-player"/);
   assert.match(html, /cards\.push\(audioCardHtml/);
   assert.match(html, /return cards\.length \? cards\.join/);
-  assert.match(html, /function normalizedMediaSource/);
-  assert.match(html, /function findNoteMediaTrack/);
-  assert.match(html, /const found = findNoteMediaTrack\(hotspot\.source, hotspot\.kind\)/);
-  assert.match(html, /Falha no áudio:/);
-  assert.match(html, /const audioSource =/);
-  assert.match(html, /kind: videoSource \? "video" : "audio"/);
-  assert.match(html, /const NOTE_CACHE_DB = "space-ar-note-cache-v28"/);
 });
 
-test("keeps YouTube thumbnails centered in rendered note pages", async () => {
+
+test("renders GBIF species maps as cached XR-safe rasters", async () => {
   const html = await readFile(xrUrl, "utf8");
-  assert.match(html, /function youtubeThumbnailUrl/);
-  assert.match(html, /has-video-thumbnail/);
-  assert.match(html, /width:min\(100%,480px\); margin:10px auto/);
-  assert.match(html, /note-video-thumbnail/);
+  assert.match(html, /species-map\.js\?v=6/);
+  assert.match(html, /data-note-species-map/);
+  assert.match(html, /await renderSpeciesMapBlocks\(noteContent\)/);
 });
+

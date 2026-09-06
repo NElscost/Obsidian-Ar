@@ -555,6 +555,8 @@
     .note-content .note-chronos { margin:10px 0; padding:5px; border:1px solid rgba(117,167,255,.34); border-radius:10px; background:rgba(8,16,29,.42); break-inside:avoid; }
     .note-content .note-chronos-image { display:block; width:100%; height:auto; border-radius:7px; }
     .note-content .note-stock-chart { margin:10px 0; padding:4px 0; background:transparent; border:0; break-inside:avoid; }
+    .note-content .note-species-map { margin:10px 0; padding:4px 0; overflow:hidden; border:1px solid rgba(117,167,255,.3); border-radius:10px; background:#07111d; break-inside:avoid; }
+    .note-content .note-species-map-image { position:static; inset:auto; display:block; width:100%; height:auto; aspect-ratio:3/2; margin:auto; object-fit:cover; }
 .note-content .note-stock-chart img { display:block; width:100%; height:auto; background:transparent; }
 .note-content .note-music-abc-image { display:block; width:100%; height:auto; background:transparent; }
 .note-content .note-midi-viz { margin:10px 0; padding:14px 16px; border:1px solid rgba(117,167,255,.45); border-radius:12px; color:#dce8ff; background:linear-gradient(135deg,rgba(20,35,62,.86),rgba(7,13,24,.9)); cursor:pointer; }
@@ -767,11 +769,13 @@
     import { scoreIndex, activeScoreNotes, layoutScorePage, drawScore, drawScoreHighlights, notesInScoreWindow } from "./midi-score.js?v=1";
     import { shouldPauseGraphRotation } from "./graph-rotation-policy.js?v=1";
     import { contentPageRanges, measureVisibleNoteContent } from "./note-pagination.js?v=1";
+    import { normalizeMermaidSource } from "./mermaid-source.js?v=1";
     import { createProteinExtension } from "/vendor/chemrender3d/protein-ar.js?v=15";
     import { createFastaExtension } from "/vendor/fasta/fasta-ar.js?v=1";
     import { createGeneCodeExtension } from "/vendor/gene-code/gene-code.js?v=2";
     import { createChronosExtension } from "/vendor/chronos/chronos-ar.js";
-    import { createSpectralTrailExtension } from "/vendor/audio/spectral-trail-ar.js?v=2";
+    import { createSpectralTrailExtension } from "/vendor/audio/spectral-trail-ar.js?v=18";
+    import { renderSpeciesMapBlocks, speciesRegionPanelRaster } from "/vendor/species-map/species-map.js?v=6";
     import { marked } from "https://cdn.jsdelivr.net/npm/marked@15.0.12/+esm";
     import DOMPurify from "https://cdn.jsdelivr.net/npm/dompurify@3.2.6/+esm";
 
@@ -1341,7 +1345,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function preprocessNotePluginBlocks(source) {
       const markdown = String(source ?? "");
       let mediaSource = "";
-      return markdown.replace(/\x60\x60\x60(timestamp-url|timestamp|audio-player|smiles|avatar|music-abc|midiviz|chess|chesser|rubik|rubikcube|3dmol|fasta|mermaid|gene-code|chronos|stock-block-list|stock-block)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi,
+      return markdown.replace(/\x60\x60\x60(timestamp-url|timestamp|audio-player|smiles|avatar|music-abc|midiviz|chess|chesser|rubik|rubikcube|3dmol|fasta|mermaid|gene-code|chronos|stock-block-list|stock-block|species-map|iucn)\s*\r?\n([\s\S]*?)\x60\x60\x60/gi,
         (whole, rawKind, rawBody, offset) => {
           const kind = rawKind.toLowerCase();
           const body = rawBody.trim();
@@ -1379,6 +1383,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           if (kind === "gene-code") return '<div class="note-gene-code" data-note-gene-code="' + encodeURIComponent(body) + '">Loading gene diagram…</div>';
           if (kind === "chronos") return '<div class="note-chronos" data-note-chronos="' + encodeURIComponent(body) + '">Loading timeline…</div>';
           if (kind === "stock-block" || kind === "stock-block-list") return '<div class="note-stock-chart" data-note-stock-kind="' + kind + '" data-note-stock="' + encodeURIComponent(body) + '">Loading market data…</div>';
+          if (kind === "species-map") return '<div class="note-species-map" data-note-species-map="' + encodeURIComponent(body) + '">Loading species map…</div>';
+          if (kind === "iucn") return '<div class="note-iucn" data-note-iucn="' + encodeURIComponent(body) + '">Loading IUCN status…</div>';
           if (kind === "music-abc") return '<div class="note-music-abc" data-note-abc="' + encodeURIComponent(body) + '">Loading score…</div>';
           if (kind === "chess" || kind === "chesser") return '<div class="note-chess" data-note-chess="' + encodeURIComponent(body) + '">Loading chessboard…</div>';
           if (kind === "rubik" || kind === "rubikcube") return '<div class="note-rubik" data-note-rubik="' + encodeURIComponent(body) + '">Loading Rubik cube…</div>';
@@ -1441,6 +1447,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       return raster;
     }
     async function rasterizeMermaid(source) {
+      source = normalizeMermaidSource(source);
       const cached = mermaidRasterCache.get(source);
       if (cached) {
         mermaidRasterCache.delete(source);
@@ -2068,7 +2075,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       }
     }
 
-    async function renderNoteMarkdown(source) {
+    async function renderNoteMarkdown(source, renderPath = arNotePath) {
+      noteRenderPath = String(renderPath || arNotePath || "");
       const math = [];
       const advancedCodeblocks = [];
       const stashMath = (latex, displayMode) => {
@@ -2194,6 +2202,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       }
       await renderNoteMermaidBlocks();
       await renderNoteStockBlocks();
+      await renderSpeciesMapBlocks(noteContent);
       await geneCodeExtension.renderBlocks(noteContent);
       await chronosExtension.renderBlocks(noteContent);
       await renderNoteAbcBlocks();
@@ -2247,6 +2256,12 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let environment360Generation = 0;
     const environment360Position = new THREE.Vector3();
 
+    function setEnvironment360Opaque(enabled) {
+      // immersive-ar keeps a compositor layer; opaque clear plus the closed
+      // panorama prevents passthrough from leaking through any uncovered pixel.
+      renderer.setClearColor(0x000000, enabled ? 1 : 0);
+    }
+
     function disposeEnvironment360() {
       if (environment360Mesh) {
         scene.remove(environment360Mesh);
@@ -2261,6 +2276,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       environment360Texture = null;
       environment360Bitmap?.close?.();
       environment360Bitmap = null;
+      setEnvironment360Opaque(false);
     }
 
     function assertPanoramaDimensions(width, height) {
@@ -2354,29 +2370,40 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       }
     }
 
-    function fitNoteBannerToPanorama(decoded) {
+    function fitNoteBannerToPanorama(decoded, cropToFill = false) {
       const sourceAspect = decoded.width / decoded.height;
       if (Math.abs(sourceAspect - 2) < 0.04) return decoded;
-      const width = Math.min(decoded.width, 4096);
+      const width = Math.min(Math.max(decoded.width, Math.round(decoded.height * 2)), 4096);
       const height = Math.max(1, Math.round(width / 2));
       const canvas = typeof OffscreenCanvas === "function"
         ? new OffscreenCanvas(width, height)
         : Object.assign(document.createElement("canvas"), { width, height });
       const context = canvas.getContext("2d", { alpha: false });
-      const scale = Math.max(width / decoded.width, height / decoded.height);
+      const edgeColors = panoramaEdgeColors(decoded.bitmap);
+      const css = (color) => `rgb(${Math.round(color.r * 255)},${Math.round(color.g * 255)},${Math.round(color.b * 255)})`;
+      const background = context.createLinearGradient(0, 0, 0, height);
+      background.addColorStop(0, css(edgeColors.top));
+      background.addColorStop(0.48, css(edgeColors.top));
+      background.addColorStop(0.52, css(edgeColors.bottom));
+      background.addColorStop(1, css(edgeColors.bottom));
+      context.fillStyle = background;
+      context.fillRect(0, 0, width, height);
+      const scale = cropToFill
+        ? Math.max(width / decoded.width, height / decoded.height)
+        : Math.min(width / decoded.width, height / decoded.height);
       const drawWidth = decoded.width * scale;
       const drawHeight = decoded.height * scale;
-      context.fillStyle = "#05070b";
-      context.fillRect(0, 0, width, height);
-      context.drawImage(
-        decoded.bitmap,
-        (width - drawWidth) / 2,
-        (height - drawHeight) / 2,
-        drawWidth,
-        drawHeight
-      );
+      context.drawImage(decoded.bitmap, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
       decoded.bitmap.close?.();
-      return { ...decoded, bitmap: canvas, width, height, decoder: decoded.decoder + "-banner-cover" };
+      return {
+        ...decoded,
+        bitmap: canvas,
+        width,
+        height,
+        sourceWidth: width,
+        sourceHeight: height,
+        decoder: decoded.decoder + (cropToFill ? "-banner-cover" : "-panorama-gradient")
+      };
     }
 
     function panoramaEdgeColors(bitmap) {
@@ -2423,6 +2450,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
       let decoded = await decodePanoramaWithWebCodecs(file)
         ?? await decodePanoramaWithImageBitmap(file);
+      decoded = fitNoteBannerToPanorama(decoded, fitBanner);
       if (generation !== null && generation !== environment360Generation) {
         decoded.bitmap.close?.();
         return false;
@@ -2491,6 +2519,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       environment360Mesh.frustumCulled = false;
       environment360Mesh.renderOrder = -1000;
       scene.add(environment360Mesh);
+      setEnvironment360Opaque(true);
       return true;
     }
 
@@ -2767,6 +2796,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let arNotePage = 0;
     let arNoteTitle = "";
     let arNotePath = "";
+    let noteRenderPath = "";
     let arNoteSource = "";
     let arNoteWordCount = 0;
     let arSearchKeyboardActive = false;
@@ -2818,8 +2848,12 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let midiVizScoreHighlight = null;
     let midiVizLastScoreHighlightUpdate = 0;
     let midiVizScoreLayout = new Map();
+    let midiVizEngravedManifest = null;
+    let midiVizEngravedRequest = 0;
+    const midiVizEngravedPages = new Map();
     let midiVizAudioMaster = null;
     let midiVizAudioPanner = null;
+    let midiVizAnalyser = null;
     let midiVizVoices = [];
     let midiVizAudioCursor = 0;
     let midiVizAudioStartedAt = 0;
@@ -2872,6 +2906,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let pendingNoteAudioSeek = null;
     let audioBookmarkMeshes = [];
     const audioWaveformCache = new Map();
+    const spectralAnalysisCache = new Map();
     const bridgeCapabilityCache = new Map();
     const AUDIO_BOOKMARK_STORAGE_KEY = "space-ar-audio-bookmarks-v1";
     let noteWindowPinned = false;
@@ -2889,6 +2924,11 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     const keyboardSurfaceBasis = new THREE.Matrix4();
     const keyboardTouchState = new Map();
     const keyboardTouchLocal = new THREE.Vector3();
+    const keyboardTouchSeenHands = new Set();
+    const KEYBOARD_TOUCH_PRESS_Z = 0.012;
+    const KEYBOARD_TOUCH_ARM_Z = 0.023;
+    const KEYBOARD_TOUCH_RELEASE_Z = 0.033;
+    const KEYBOARD_TOUCH_BACK_Z = -0.016;
     let lastKeyboardTouchScanAt = 0;
     let waveformDragInputSource = null;
 
@@ -3047,7 +3087,12 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       midiVizAudioPanner.distanceModel = 'inverse';
       midiVizAudioPanner.refDistance = 0.7;
       midiVizAudioPanner.rolloffFactor = 0.85;
-      midiVizAudioMaster.connect(midiVizAudioPanner).connect(context.destination);
+      midiVizAnalyser = context.createAnalyser();
+      midiVizAnalyser.fftSize = 256;
+      midiVizAnalyser.smoothingTimeConstant = 0.74;
+      midiVizAnalyser.minDecibels = -88;
+      midiVizAnalyser.maxDecibels = -22;
+      midiVizAudioMaster.connect(midiVizAnalyser).connect(midiVizAudioPanner).connect(context.destination);
       midiVizVoices = Array.from({ length: MIDI_VIZ_MAX_VOICES }, (_, index) => {
         const oscillator = context.createOscillator();
         const gain = context.createGain();
@@ -3090,15 +3135,15 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       });
       midiVizScoreTexture?.dispose?.();
       for (const voice of midiVizVoices) { try { voice.oscillator.stop(); } catch {} voice.oscillator.disconnect(); voice.gain.disconnect(); }
-      midiVizAudioMaster?.disconnect(); midiVizAudioPanner?.disconnect();
+      midiVizAudioMaster?.disconnect(); midiVizAnalyser?.disconnect(); midiVizAudioPanner?.disconnect();
       if (audioWaveformGroup?.parent === midiVizGroup) {
         audioWaveformTexture?.dispose?.(); audioWaveformGroup = audioWaveformTexture = audioWaveformPlayhead = null;
         audioWaveformWidth = audioWaveformDuration = 0; audioBookmarkMeshes = [];
       }
       midiVizGroup = midiVizScoreGroup = midiVizNotesMesh = midiVizKeysMesh = midiVizScorePlayhead = midiVizScoreHighlight = midiVizRollSurface = null;
-      midiVizScoreTexture = midiVizRollTexture = midiVizAudioMaster = midiVizAudioPanner = null; midiVizRollCanvas = null; midiVizVoices = [];
+      midiVizScoreTexture = midiVizRollTexture = midiVizAudioMaster = midiVizAnalyser = midiVizAudioPanner = null; midiVizRollCanvas = null; midiVizVoices = [];
       midiVizData = null; midiVizSource = ''; midiVizPlaying = false; midiVizTimeOffset = 0;
-      midiVizWindowOrigin = midiVizScoreWindow = -1; midiVizAudioCursor = 0; midiVizAudioStartedAt = 0; midiVizPlaybackRate = 1; midiVizToggleControl = null; midiVizExternalAudio = false; midiVizPreviousTime = 0;
+      midiVizWindowOrigin = midiVizScoreWindow = -1; midiVizEngravedManifest = null; midiVizEngravedRequest++; for(const bitmap of midiVizEngravedPages.values())bitmap.close?.(); midiVizEngravedPages.clear(); midiVizAudioCursor = 0; midiVizAudioStartedAt = 0; midiVizPlaybackRate = 1; midiVizToggleControl = null; midiVizExternalAudio = false; midiVizPreviousTime = 0;
       if (activeNoteTrack?.kind === 'midi-viz') activeNoteTrack = null;
       syncAmbientAudio();
       layoutSpatialWindows();
@@ -3149,8 +3194,39 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function midiVizActiveNoteAt(time){let low=0,high=(midiVizData?.notes?.length??0)-1,result=null;while(low<=high){const middle=(low+high)>>1,note=midiVizData.notes[middle];if(note.start<=time){result=note;low=middle+1;}else high=middle-1;}return result;}
     function midiVizMeasureInfo(time){const note=midiVizActiveNoteAt(time),measure=Math.max(1,Number(note?.measure)||1),page=Math.floor((measure-1)/4);return{page,firstMeasure:page*4+1,lastMeasure:page*4+4};}
     function midiScoreNoteKey(note){return `${note.start}|${note.pitch}|${note.track}|${note.channel}`;}
+    async function loadMidiVizEngravedPage(page) {
+      const manifest=midiVizEngravedManifest,request=++midiVizEngravedRequest;
+      if(!manifest||!midiVizScoreTexture)return;
+      let bitmap=midiVizEngravedPages.get(page);
+      if(!bitmap){
+        const config=JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY)??'null');
+        const response=await fetchBridge(config,'/midi-score/'+encodeURIComponent(manifest.ticket)+'/'+page);
+        if(!response.ok)throw new Error('Score page HTTP '+response.status);
+        bitmap=await createImageBitmap(await response.blob());midiVizEngravedPages.set(page,bitmap);
+      }
+      if(request!==midiVizEngravedRequest||!midiVizScoreTexture)return;
+      const canvas=midiVizScoreTexture.image,context=canvas.getContext('2d');
+      context.fillStyle='#f6f1e8';context.fillRect(0,0,canvas.width,canvas.height);
+      const margin=22,scale=Math.min((canvas.width-margin*2)/bitmap.width,(canvas.height-margin*2)/bitmap.height);
+      const width=bitmap.width*scale,height=bitmap.height*scale;
+      context.drawImage(bitmap,(canvas.width-width)/2,(canvas.height-height)/2,width,height);midiVizScoreTexture.needsUpdate=true;
+    }
+
+    async function prepareMidiVizEngraving(source,data) {
+      const requestedSource=source,requestedNote=arNotePath;
+      const config=JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY)??'null');
+      if(!config?.url||!config?.token)return;
+      try{
+        const response=await fetchBridge(config,'/midi-score',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notePath:requestedNote,assetPath:requestedSource})});
+        if(!response.ok||midiVizSource!==requestedSource||arNotePath!==requestedNote||!midiVizScoreGroup)return;
+        midiVizEngravedManifest=await response.json();data.engravedScore=midiVizEngravedManifest;midiVizScoreWindow=-1;
+        drawMidiVizScore(midiVizCurrentTime(),true);setXrMessage('MuseScore engraving ready: '+midiVizEngravedManifest.pageCount+' pages.');
+      }catch(error){console.warn('[MIDI] optional engraving fallback:',error);}
+    }
+
     function drawMidiVizScore(currentTime,force=false){
       if(!midiVizScoreTexture||!midiVizData)return;
+      if(midiVizEngravedManifest?.pageCount){const page=Math.min(midiVizEngravedManifest.pageCount-1,Math.max(0,Math.floor((currentTime/Math.max(.01,midiVizData.duration))*midiVizEngravedManifest.pageCount)));if(!force&&page===midiVizScoreWindow)return;midiVizScoreWindow=page;midiVizScoreLayout=new Map();void loadMidiVizEngravedPage(page);return;}
       const page=midiVizMeasureInfo(currentTime).page;
       if(!force&&page===midiVizScoreWindow)return;
       midiVizScoreWindow=page;
@@ -3179,6 +3255,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function updateMidiVizScoreHighlight(currentTime,time){
       if(!midiVizScorePlayhead||!midiVizScoreHighlight||!midiVizData)return;
       if(time-midiVizLastScoreHighlightUpdate<40)return;midiVizLastScoreHighlightUpdate=time;
+      if(midiVizEngravedManifest?.pageCount){const scaled=(currentTime/Math.max(.01,midiVizData.duration))*midiVizEngravedManifest.pageCount,within=scaled-Math.floor(scaled);midiVizScorePlayhead.position.x=-AR_VIDEO_WIDTH*.45+within*AR_VIDEO_WIDTH*.9;midiVizScorePlayhead.visible=true;midiVizScoreHighlight.visible=false;return;}
       const ids=activeScoreNotes(scoreIndex(midiVizData),currentTime),layout=midiVizScoreLayout;
       if(!layout?.glyphs)return;
       const signature=layout.page+':'+ids.join(',');
@@ -3266,7 +3343,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       if(midiVizGroup&&midiVizSource===source){setMidiVizPlaying(!midiVizPlaying);return;}
       const config=JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY)??'null');if(!config?.url||!config?.token)throw new Error('The Obsidian bridge is not configured.');
       const key=`${arNotePath}\n${source}`;let data=midiVizCache.get(key);if(!data){setXrMessage('Preparing MIDI outside the Quest main thread…');const response=await fetchBridge(config,'/midi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notePath:arNotePath,assetPath:source})});if(!response.ok)throw new Error((await response.json().catch(()=>null))?.error||`HTTP ${response.status}`);data=await response.json();midiVizCache.set(key,data);}
-      createMidiVizPanel(data,source);setXrMessage(`Synthesia and score ready: ${data.notes.length} notes.`);
+      createMidiVizPanel(data,source);setXrMessage(`Synthesia and score ready: ${data.notes.length} notes.`);void prepareMidiVizEngraving(source,data);
     }
     function releaseActiveMedia() {
       if (activeNoteAudio) {
@@ -3515,7 +3592,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     const NOTE_CACHE_MAX_BYTES = 48 * 1024 * 1024;
     const NOTE_PERSISTENT_CACHE_MAX_ENTRIES = 12;
     const NOTE_PERSISTENT_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
-    const NOTE_CACHE_DB = "space-ar-note-cache-v28";
+    const NOTE_CACHE_DB = "space-ar-note-cache-v34";
     const NOTE_CACHE_STORE = "rendered-notes";
     let noteCacheDbPromise = null;
     let highlightCorePromise = null;
@@ -3658,7 +3735,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
     async function removeLegacyNoteCaches() {
       if (!("indexedDB" in window)) return;
-      const names = new Set(["space-ar-note-cache-v25", "space-ar-note-cache-v26", "space-ar-note-cache-v27"]);
+      const names = new Set(["space-ar-note-cache-v25", "space-ar-note-cache-v26", "space-ar-note-cache-v27", "space-ar-note-cache-v28", "space-ar-note-cache-v29", "space-ar-note-cache-v30", "space-ar-note-cache-v31", "space-ar-note-cache-v32", "space-ar-note-cache-v33"]);
       if (typeof indexedDB.databases === "function") {
         try {
           for (const database of await indexedDB.databases()) {
@@ -3924,6 +4001,17 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       return bridgeCapabilityCache.get(key);
     }
 
+    async function fetchRemoteSpectralAnalysis(config,notePath,url){
+      const response=await fetch(`${config.url}/remote-spectral-analysis`,{method:"POST",headers:bridgeRequestHeaders(config,true),body:JSON.stringify({notePath,url})});
+      if(!response.ok)throw new Error(`Remote MFCC/PCA HTTP ${response.status}`);return response.json();
+    }
+
+    async function fetchVaultSpectralAnalysis(config, notePath, assetPath) {
+      const response = await fetch(`${config.url}/spectral-analysis`, { method:"POST", headers:bridgeRequestHeaders(config,true), body:JSON.stringify({notePath,assetPath}) });
+      if(!response.ok)throw new Error(`MFCC/PCA HTTP ${response.status}`);
+      return response.json();
+    }
+
     async function fetchVaultWaveform(config, notePath, assetPath) {
       const response = await fetch(`${config.url}/waveform`, {
         method: "POST",
@@ -4014,7 +4102,10 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           if (!isBrowserLocalSource(source)) {
             if (isNetworkSource(source)) {
               try {
-                const blob = await fetchRemoteImage(source);
+                const preferBridge = image.classList.contains("note-video-thumbnail") && config?.url && config?.token;
+                const blob = preferBridge
+                  ? await fetchRemoteImageThroughBridge(config, source)
+                  : await fetchRemoteImage(source);
                 const objectUrl = URL.createObjectURL(blob);
                 noteImageObjectUrls.push(objectUrl);
                 image.src = objectUrl;
@@ -4110,7 +4201,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       const visibleContent = measureVisibleNoteContent(noteContent);
       const atoms = [];
       for (const element of noteContent.querySelectorAll(
-        "img, table, .note-video-card, .note-timestamp-card, .note-smiles, .note-music-abc, .note-midi-viz, .note-chess, .note-rubik, .note-protein, .note-fasta, .note-mermaid, .note-gene-code, .note-chronos, .note-audio-card, .obsidian-callout"
+        "img, table, .note-video-card, .note-timestamp-card, .note-smiles, .note-music-abc, .note-midi-viz, .note-chess, .note-rubik, .note-protein, .note-fasta, .note-iucn, .note-mermaid, .note-gene-code, .note-chronos, .note-audio-card, .obsidian-callout"
       )) {
         const bounds = element.getBoundingClientRect();
         const height = bounds.height;
@@ -4155,7 +4246,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       }
       for (const page of pages) page.mediaHotspots = [];
       for (const element of noteContent.querySelectorAll(
-        ".note-audio-card, .note-video-card, .note-timestamp-card, .note-music-abc, .note-midi-viz, .note-chess, .note-rubik, .note-protein, .note-fasta, .note-mermaid, .note-chronos"
+        ".note-audio-card, .note-video-card, .note-timestamp-card, .note-music-abc, .note-midi-viz, .note-chess, .note-rubik, .note-protein, .note-fasta, .note-mermaid, .note-chronos, .note-species-map"
       )) {
         const bounds = element.getBoundingClientRect();
         const top = bounds.top - noteBounds.top;
@@ -4179,6 +4270,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
                 ? "fasta"
               : element.matches(".note-chronos")
                 ? "chronos"
+              : element.matches(".note-species-map")
+                ? "species-map"
               : element.matches(".note-timestamp-card")
                 ? "timestamp"
                 : element.matches(".note-video-card") ? "video" : "audio";
@@ -4196,6 +4289,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
                 ? element.dataset.noteFasta
               : kind === "chronos"
                 ? element.dataset.noteChronos
+              : kind === "species-map"
+                ? element.dataset.noteSpeciesMap
               : kind === "timestamp"
                 ? element.dataset.timestampSource
                 : element.dataset[kind === "video" ? "noteVideoSource" : "noteAudioSource"];
@@ -4805,7 +4900,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       armPlacement(){reticle.visible=false;},disarmPlacement(){reticle.visible=false;},
       async fetchStructure(spec){
         if(spec.kind==='smiles'){const url=`https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(spec.value)}/file?format=sdf&get3d=true`;const memoryKey=spec.value;window.__spaceArMoleculeCache??=new Map();if(window.__spaceArMoleculeCache.has(memoryKey))return{text:window.__spaceArMoleculeCache.get(memoryKey),format:'sdf'};const cache='caches'in window?await caches.open('space-ar-molecule-sdf-v1'):null,cached=cache?await cache.match(url):null;if(cached){const text=await cached.text();window.__spaceArMoleculeCache.set(memoryKey,text);return{text,format:'sdf'};}const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);try{const response=await fetch(url,{mode:'cors',signal:controller.signal});if(!response.ok)throw new Error(`CACTUS returned HTTP ${response.status}.`);const text=await response.text();if(!text||text.length>6*1024*1024)throw new Error('CACTUS returned an invalid or oversized structure.');window.__spaceArMoleculeCache.set(memoryKey,text);if(cache)await cache.put(url,new Response(text,{headers:{'Content-Type':'chemical/x-mdl-sdfile'}}));return{text,format:'sdf'};}finally{clearTimeout(timer);}}
-        if(spec.kind==='file'){const config=JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY)??'null');if(!config?.url||!config?.token)throw new Error('Configure the note bridge to load molecular files from the vault.');const blob=await fetchVaultAsset(config,arNotePath,spec.value);if(blob.size>24*1024*1024)throw new Error('Molecular file exceeds the 24 MB safety limit.');return{text:await blob.text(),format:spec.format};}
+        if(spec.kind==='file'){const config=JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY)??'null');if(!config?.url||!config?.token)throw new Error('Configure the note bridge to load molecular files from the vault.');const blob=await fetchVaultAsset(config,noteRenderPath||arNotePath,spec.value);if(blob.size>24*1024*1024)throw new Error('Molecular file exceeds the 24 MB safety limit.');return{text:await blob.text(),format:spec.format};}
         const url=`https://files.rcsb.org/download/${encodeURIComponent(spec.value)}.pdb`;
         const response=await fetch(url,{mode:'cors'});if(!response.ok)throw new Error(`Molecular service returned HTTP ${response.status}.`);return{text:await response.text(),format:spec.format};
       }
@@ -4819,7 +4914,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       width:AR_VIDEO_WIDTH,height:AR_VIDEO_HEIGHT,geometry:curvedPanelGeometry,round:applyRoundedPanelMask,
       register:registerSpatialAuxWindow,unregister:unregisterSpatialAuxWindow,layout:layoutSpatialWindows,message:setXrMessage,scene,camera,
       addControl(control){arNoteControls.push(control);},removeControls(items){const owned=new Set(items);arNoteControls=arNoteControls.filter(item=>!owned.has(item));},pinchPoint:getPinchPoint,
-      getAnalyser(){return spatialAudioAnalyser;},armPlacement(){reticle.visible=false;},disarmPlacement(){reticle.visible=false;}
+      getAnalyser(){return midiVizPlaying&&midiVizAnalyser?midiVizAnalyser:spatialAudioAnalyser;},currentTime(){return (activeNoteTrack?.kind==="midi-viz"||midiVizExternalAudio)?midiVizCurrentTime():Number(activeNoteAudio?.currentTime)||0;},isPlaying(){if(midiVizExternalAudio)return Boolean(activeNoteAudio&&!activeNoteAudio.paused&&!activeNoteAudio.ended);if(activeNoteTrack?.kind==="midi-viz")return midiVizPlaying;return Boolean(activeNoteAudio&&!activeNoteAudio.paused&&!activeNoteAudio.ended);},mediaKey(){return String(arNotePath||"")+"::"+String(activeNoteTrack?.source||activeNoteTrack?.label||"");},armPlacement(){reticle.visible=false;},disarmPlacement(){reticle.visible=false;}
     });
     let chessOverlayGroup = null;
     let chessOverlayState = null;
@@ -5353,12 +5448,20 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       );
     }
 
+    async function prepareSpectralAnalysis(track,notePath,generation) {
+      if(!track||isBrowserLocalSource(track.source))return;
+      const config=JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY)??"null");if(!config?.url||!config?.token)return;
+      const key=`${notePath}\n${track.source}`;
+      try{let analysis=spectralAnalysisCache.get(key);if(!analysis){analysis=isNetworkSource(track.source)?await fetchRemoteSpectralAnalysis(config,notePath,track.source):await fetchVaultSpectralAnalysis(config,notePath,track.source);spectralAnalysisCache.set(key,analysis);while(spectralAnalysisCache.size>12)spectralAnalysisCache.delete(spectralAnalysisCache.keys().next().value);}if(generation!==audioWaveformGeneration||activeNoteTrack?.source!==track.source)return;spectralTrailExtension.setAnalysis(analysis);setXrMessage(`MFCC/PCA ready: ${analysis.points?.length||0} points.`);}catch(error){console.warn(`MFCC/PCA unavailable for ${track.source}. Using live FFT.`,error);}
+    }
+
     async function prepareAudioWaveform(track, notePath, panelWidth, panelHeight) {
       if (!track || isBrowserLocalSource(track.source)) return;
       if (isNetworkSource(track.source) && !remoteVideoPlatform(track.source) && track.kind !== "remote-video") return;
       const config = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
       if (!config?.url || !config?.token) return;
       const generation = audioWaveformGeneration;
+      void prepareSpectralAnalysis(track,notePath,generation);
       const cacheKey = `${notePath}\n${track.source}`;
       try {
         let waveform = audioWaveformCache.get(cacheKey);
@@ -6133,6 +6236,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     }
 
     function clearActiveNoteMediaForSwitch() {
+      spectralTrailExtension.setAnalysis(null);
       disposeMidiViz();
       clearAbcPlaybackHighlight();
       activeAbcSynth?.stop?.();
@@ -6265,6 +6369,28 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       setXrMessage((timestamp.label || "Timestamp") + ": " + formatAudioTime(timestamp.start) + ".");
     }
 
+    let speciesRegionGroup = null;
+    let speciesRegionControls = [];
+    let speciesRegionResult = null;
+    function disposeSpeciesRegion() {
+      const controls = new Set(speciesRegionControls); arNoteControls = arNoteControls.filter((control) => !controls.has(control));
+      unregisterSpatialAuxWindow(speciesRegionGroup, false);
+      if (speciesRegionGroup) { speciesRegionGroup.removeFromParent(); speciesRegionGroup.traverse((object) => { object.geometry?.dispose?.(); object.material?.map?.dispose?.(); object.material?.dispose?.(); }); }
+      speciesRegionGroup = null; speciesRegionControls = []; speciesRegionResult = null; layoutSpatialWindows();
+    }
+    async function openSpeciesRegionAtHotspot(hotspot, uv) {
+      const u = THREE.MathUtils.clamp((uv.x - hotspot.x1) / Math.max(.0001, hotspot.x2 - hotspot.x1), 0, 1);
+      const v = THREE.MathUtils.clamp(1 - (uv.y - hotspot.y1) / Math.max(.0001, hotspot.y2 - hotspot.y1), 0, 1);
+      setXrMessage("Marker selected. Loading regional photos and sounds…");
+      const result = await speciesRegionPanelRaster(hotspot.source, u, v); disposeSpeciesRegion(); speciesRegionResult = result;
+      const group = new THREE.Group(), texture = await new Promise((resolve,reject)=>new THREE.TextureLoader().load(result.dataUrl,resolve,undefined,reject)); texture.colorSpace=THREE.SRGBColorSpace;texture.generateMipmaps=false;
+      const panel = new THREE.Mesh(curvedPanelGeometry(AR_VIDEO_WIDTH, AR_VIDEO_HEIGHT, .022, 24), new THREE.MeshBasicMaterial({map:texture,depthTest:true,depthWrite:true,toneMapped:false})); applyRoundedPanelMask(panel); panel.raycast=()=>{}; group.add(panel);
+      const add=(action,x,y,color)=>{const control=new THREE.Mesh(new THREE.CircleGeometry(.018,14),new THREE.MeshBasicMaterial({color,depthTest:false,toneMapped:false}));control.position.set(x,y,.03);control.renderOrder=1013;control.userData.noteAction=action;group.add(control);arNoteControls.push(control);speciesRegionControls.push(control);};
+      add("species-region-close",AR_VIDEO_WIDTH/2-.027,AR_VIDEO_HEIGHT/2-.027,0xff6b6b);
+      result.sounds.forEach((sound,index)=>{const y=AR_VIDEO_HEIGHT*.23-index*.055;add("species-region-sound:"+index,AR_VIDEO_WIDTH/2-.034,y,0x63e6be);add("species-region-trail:"+index,AR_VIDEO_WIDTH/2-.078,y,0x75a7ff);});
+      speciesRegionGroup=group;registerSpatialAuxWindow(group,AR_VIDEO_WIDTH);setXrMessage(result.count.toLocaleString()+" regional records · select a green button to play sound.");
+    }
+
     function activateNoteMediaAtUv(uv) {
       if (!uv || !Number.isFinite(uv.x) || !Number.isFinite(uv.y)) return;
       const hotspots = arNotePages[arNotePage]?.mediaHotspots ?? [];
@@ -6272,6 +6398,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         uv.x >= item.x1 && uv.x <= item.x2 && uv.y >= item.y1 && uv.y <= item.y2
       );
       if (hotspot?.kind === "timestamp") { void activateNoteTimestamp(hotspot); return; }
+      if (hotspot?.kind === "species-map") { void openSpeciesRegionAtHotspot(hotspot, uv).catch((error)=>{console.warn("Species region failed.",error);setXrMessage("Could not load this region.");}); return; }
       const track = noteTrackForHotspot(hotspot);
       if (track) {
         setXrMessage(`Mídia selecionada: ${track.label}. Preparando reprodução…`);
@@ -6501,6 +6628,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       if(action==='media-toggle'){if(activeNoteTrack?.kind==='midi-viz'||midiVizExternalAudio)setMidiVizPlaying(!midiVizPlaying);else if(activeNoteAudio){activeNoteAudio.paused?void activeNoteAudio.play():activeNoteAudio.pause();queueMicrotask(updateAudioControlColor);}return;}
       if(action==='media-slower'){if(activeNoteTrack?.kind==='midi-viz'||midiVizExternalAudio)setMidiVizPlaybackRate(midiVizPlaybackRate-.25);else if(activeNoteAudio){activeNoteAudio.playbackRate=THREE.MathUtils.clamp((activeNoteAudio.playbackRate||1)-.25,.5,2);setXrMessage(`Speed: ${activeNoteAudio.playbackRate}×.`);}return;}
       if(action==='media-faster'){if(activeNoteTrack?.kind==='midi-viz'||midiVizExternalAudio)setMidiVizPlaybackRate(midiVizPlaybackRate+.25);else if(activeNoteAudio){activeNoteAudio.playbackRate=THREE.MathUtils.clamp((activeNoteAudio.playbackRate||1)+.25,.5,2);setXrMessage(`Speed: ${activeNoteAudio.playbackRate}×.`);}return;}
+      if (action === "species-region-close") { disposeSpeciesRegion(); return; }
+      if (action.startsWith("species-region-sound:")) { const sound=speciesRegionResult?.sounds?.[Number(action.split(":")[1])]; if(sound) void toggleNoteAudio({source:sound.url,label:sound.creator||sound.place||"Species recording",kind:"audio"}); return; }
+      if (action.startsWith("species-region-trail:")) { const sound=speciesRegionResult?.sounds?.[Number(action.split(":")[1])]; if(sound) void (async()=>{const track={source:sound.url,label:sound.creator||sound.place||"Species recording",kind:"audio"};if(activeNoteTrack?.source!==track.source||!activeNoteAudio||activeNoteAudio.paused)await toggleNoteAudio(track);if(activeNoteTrack?.source===track.source&&activeNoteAudio&&!activeNoteAudio.paused)spectralTrailExtension.open();})(); return; }
       if (action === "midi-close") { disposeMidiViz(); setXrMessage("Synthesia closed."); return; }
       if (action === "midi-toggle") {
         setMidiVizPlaying(!midiVizPlaying);
@@ -6549,11 +6679,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         const videoSource = /\.(?:m4v|mov|mp4|ogv|webm)(?:[?#].*)?$/i.test(normalizedSource);
         const track = findNoteMediaTrack(normalizedSource) ?? (
           audioSource || videoSource
-            ? {
-                source: normalizedSource,
-                label: normalizedSource.split("/").pop() || normalizedSource,
-                kind: videoSource ? "video" : "audio"
-              }
+            ? { source: normalizedSource, label: normalizedSource.split("/").pop() || normalizedSource, kind: videoSource ? "video" : "audio" }
             : null
         );
         if (!track) {
@@ -6789,7 +6915,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         if (!hasMediaHotspotMetadata) {
           // Legacy/session entries without metadata are rebuilt once from this
           // note's DOM instead of inheriting the previously opened note.
-          await renderNoteMarkdown(source);
+          await renderNoteMarkdown(source, path);
           attachNoteMediaHotspots(arNotePages);
         }
       } else {
@@ -7457,12 +7583,14 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         new THREE.MeshBasicMaterial({
           map: cachedKeyboardKeyTexture(label, width, color),
           transparent: true,
-          depthTest: false,
+          depthTest: true,
+          depthWrite: false,
           toneMapped: false
         })
       );
       key.position.set(x, y, 0.006);
-      key.renderOrder = 1002;
+      key.renderOrder = 9;
+      key.userData.touchBaseZ = 0.006;
       key.userData.noteAction = action;
       // Never enlarge the actual raycast surface: adjacent rows are only 9 mm
       // apart, so scaling the key could overlap and commit a different letter.
@@ -7515,11 +7643,12 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           color: 0x08111f,
           transparent: true,
           opacity: 0.96,
-          depthTest: false,
+          depthTest: true,
+          depthWrite: false,
           toneMapped: false
         })
       );
-      panel.renderOrder = 1000;
+      panel.renderOrder = 6;
       arSearchSuggestionGroup.add(panel);
 
       const title = new THREE.Mesh(
@@ -7532,12 +7661,13 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
             color: matches.length ? "#75e7d0" : "#ff9c9c"
           }),
           transparent: true,
-          depthTest: false,
+          depthTest: true,
+          depthWrite: false,
           toneMapped: false
         })
       );
       title.position.set(0, 0.205, 0.004);
-      title.renderOrder = 1002;
+      title.renderOrder = 8;
       arSearchSuggestionGroup.add(title);
 
       matches.forEach((match, index) => {
@@ -7551,12 +7681,14 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
               background: index === 0 ? "#176b62" : "#273a55"
             }),
             transparent: true,
-            depthTest: false,
+            depthTest: true,
+            depthWrite: false,
             toneMapped: false
           })
         );
         result.position.set(0, 0.138 - index * 0.061, 0.006);
-        result.renderOrder = 1003;
+        result.renderOrder = 9;
+        result.userData.touchBaseZ = 0.006;
         result.userData.noteAction = "search-result:" + encodeURIComponent(String(match.node.id));
         result.userData.searchNodeId = match.node.id;
         result.userData.highlightScale = false;
@@ -7609,7 +7741,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           color: 0xffffff,
           transparent: true,
           opacity: 0.82,
-          depthTest: false,
+          depthTest: true,
           depthWrite: false,
           toneMapped: false
         })
@@ -7620,7 +7752,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       keyboardWeatherOccluder.raycast = () => {};
       arNoteGroup.add(keyboardWeatherOccluder);
       background.position.z = -0.002;
-      background.renderOrder = 1000;
+      background.renderOrder = 6;
       arNoteGroup.add(background);
 
       if (realGlassBlurToggle.checked && !realGlassSuspended) {
@@ -7628,21 +7760,21 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           new THREE.PlaneGeometry(0.704, 0.604),
           new THREE.MeshBasicMaterial({
             color: 0xdcefff, transparent: true, opacity: 0.46,
-            depthTest: false, depthWrite: false, toneMapped: false
+            depthTest: true, depthWrite: false, toneMapped: false
           })
         );
         arSearchRealGlassPanel.position.z = -0.001;
-        arSearchRealGlassPanel.renderOrder = 1001;
+        arSearchRealGlassPanel.renderOrder = 7;
         arSearchRealGlassPanel.visible = false;
         arNoteGroup.add(arSearchRealGlassPanel);
       }
 
       arSearchDisplay = new THREE.Mesh(
         new THREE.PlaneGeometry(0.64, 0.065),
-        new THREE.MeshBasicMaterial({ transparent: true, depthTest: false, toneMapped: false })
+        new THREE.MeshBasicMaterial({ transparent: true, depthTest: true, depthWrite: false, toneMapped: false })
       );
       arSearchDisplay.position.set(0, 0.245, 0.004);
-      arSearchDisplay.renderOrder = 1001;
+      arSearchDisplay.renderOrder = 8;
       arNoteGroup.add(arSearchDisplay);
       updateArSearchDisplay();
       addArSearchKey("SURF", "search-surface", -0.286, 0.245, 0.074, "#315d70");
@@ -7740,44 +7872,94 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         keyboardTouchState.clear();
         return;
       }
-      if (time - lastKeyboardTouchScanAt < 32) return;
+      // 40 Hz is responsive enough for contact while avoiding a full key scan per XR frame.
+      if (time - lastKeyboardTouchScanAt < 24) return;
       lastKeyboardTouchScanAt = time;
       const keys = arNoteControls.filter((control) =>
         control.userData?.noteAction?.startsWith("search-")
         && Number.isFinite(control.userData.touchWidth)
       );
+      for (const key of keys) {
+        const baseZ = key.userData.touchBaseZ ?? 0.006;
+        const targetZ = time < (key.userData.touchPressedUntil ?? 0) ? baseZ - 0.004 : baseZ;
+        key.position.z += (targetZ - key.position.z) * 0.55;
+      }
+      keyboardTouchSeenHands.clear();
+      arNoteGroup.updateWorldMatrix(true, false);
       for (const inputSource of xrSession?.inputSources ?? []) {
         if (!inputSource.hand) continue;
         const tip = inputSource.hand.get("index-finger-tip");
         if (!jointPosition(frame, tip, pointerTipPosition)) continue;
-        arNoteGroup.updateWorldMatrix(true, false);
+        const handKey = inputSource.handedness || String(inputSource);
+        keyboardTouchSeenHands.add(handKey);
         arNoteGroup.worldToLocal(keyboardTouchLocal.copy(pointerTipPosition));
-        if (Math.abs(keyboardTouchLocal.x) > 0.82 || Math.abs(keyboardTouchLocal.y) > 0.55 || Math.abs(keyboardTouchLocal.z) > 0.55) continue;
-        let touched = null;
-        let nearestDepth = Infinity;
+        if (Math.abs(keyboardTouchLocal.x) > 0.82 || Math.abs(keyboardTouchLocal.y) > 0.55 || Math.abs(keyboardTouchLocal.z) > 0.12) {
+          keyboardTouchState.delete(handKey);
+          continue;
+        }
+
+        let candidate = null;
+        let candidateZ = Infinity;
+        let candidateScore = Infinity;
         for (const key of keys) {
           key.updateWorldMatrix(true, false);
           key.worldToLocal(keyboardTouchLocal.copy(pointerTipPosition));
-          const depth = Math.abs(keyboardTouchLocal.z);
-          if (
-            depth <= 0.018
-            && Math.abs(keyboardTouchLocal.x) <= key.userData.touchWidth * 0.46
-            && Math.abs(keyboardTouchLocal.y) <= key.userData.touchHeight * 0.42
-            && depth < nearestDepth
-          ) {
-            touched = key;
-            nearestDepth = depth;
+          const z = keyboardTouchLocal.z;
+          const nx = Math.abs(keyboardTouchLocal.x) / (key.userData.touchWidth * 0.48);
+          const ny = Math.abs(keyboardTouchLocal.y) / (key.userData.touchHeight * 0.45);
+          if (z >= KEYBOARD_TOUCH_BACK_Z && z <= 0.045 && nx <= 1 && ny <= 1) {
+            const score = nx * nx + ny * ny + Math.abs(z) * 0.2;
+            if (score < candidateScore) {
+              candidate = key;
+              candidateZ = z;
+              candidateScore = score;
+            }
           }
         }
-        const handKey = inputSource.handedness || String(inputSource);
-        const previous = keyboardTouchState.get(handKey);
-        if (touched && previous?.key !== touched && time - (previous?.at ?? 0) > 180) {
-          keyboardTouchState.set(handKey, { key: touched, at: time });
-          activateArSearchKey(touched.userData.noteAction, null);
-          inputSource.gamepad?.hapticActuators?.[0]?.pulse?.(0.25, 25);
-        } else if (!touched) {
-          keyboardTouchState.delete(handKey);
+
+        let state = keyboardTouchState.get(handKey);
+        if (!state) {
+          if (!candidate) continue;
+          state = { key: candidate, armed: candidateZ >= KEYBOARD_TOUCH_ARM_Z, lastZ: candidateZ, activatedAt: 0 };
+          keyboardTouchState.set(handKey, state);
+          continue;
         }
+
+        // Capture the key chosen on approach. Sliding across a row cannot change it
+        // until the fingertip is lifted, which prevents accidental neighbouring keys.
+        const captured = state.key;
+        captured.updateWorldMatrix(true, false);
+        captured.worldToLocal(keyboardTouchLocal.copy(pointerTipPosition));
+        const capturedZ = keyboardTouchLocal.z;
+        const capturedNx = Math.abs(keyboardTouchLocal.x) / (captured.userData.touchWidth * 0.58);
+        const capturedNy = Math.abs(keyboardTouchLocal.y) / (captured.userData.touchHeight * 0.58);
+        const insideCapture = capturedNx <= 1 && capturedNy <= 1 && capturedZ >= KEYBOARD_TOUCH_BACK_Z;
+
+        if (capturedZ >= KEYBOARD_TOUCH_ARM_Z) state.armed = true;
+        const crossedPressPlane = state.lastZ > KEYBOARD_TOUCH_PRESS_Z && capturedZ <= KEYBOARD_TOUCH_PRESS_Z;
+        if (state.armed && insideCapture && crossedPressPlane && time - state.activatedAt >= 140) {
+          state.armed = false;
+          state.activatedAt = time;
+          captured.userData.touchPressedUntil = time + 90;
+          activateArSearchKey(captured.userData.noteAction, null);
+          inputSource.gamepad?.hapticActuators?.[0]?.pulse?.(0.22, 22);
+        }
+
+        const released = capturedZ >= KEYBOARD_TOUCH_RELEASE_Z || !insideCapture;
+        if (released) {
+          if (candidate && candidateZ >= KEYBOARD_TOUCH_ARM_Z) {
+            state.key = candidate;
+            state.armed = true;
+            state.lastZ = candidateZ;
+          } else {
+            keyboardTouchState.delete(handKey);
+          }
+        } else {
+          state.lastZ = capturedZ;
+        }
+      }
+      for (const handKey of keyboardTouchState.keys()) {
+        if (!keyboardTouchSeenHands.has(handKey)) keyboardTouchState.delete(handKey);
       }
     }
 
@@ -7885,7 +8067,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       }
       if (noteWarmupCancelled || runId !== noteWarmupRunId || xrSession) return false;
       noteTitle.textContent = result.title;
-      await renderNoteMarkdown(result.content);
+      await renderNoteMarkdown(result.content, path);
       await highlightNoteCode();
       await prepareNoteImages(config, path);
       if (noteWarmupCancelled || runId !== noteWarmupRunId || xrSession) return false;
@@ -7905,7 +8087,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       if (entry.complete || xrSession === null) return;
       await waitForRenderingIdle();
       if (!arNoteGroup.visible || arNoteTitle !== entry.title) return;
-      await renderNoteMarkdown(entry.source);
+      await renderNoteMarkdown(entry.source, path);
       await highlightNoteCode();
       await prepareNoteImages(config, path);
       if (!arNoteGroup.visible || arNoteTitle !== entry.title) return;
@@ -10530,7 +10712,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           setXrMessage(`Abrindo ${path} do cache…`);
           noteTitle.textContent = cached.title;
           const liveStockBlocks = /```stock-block(?:-list)?\s/i.test(cached.source);
-          if (liveStockBlocks) { await renderNoteMarkdown(cached.source); await highlightNoteCode(); }
+          if (liveStockBlocks) { await renderNoteMarkdown(cached.source, path); await highlightNoteCode(); }
           await showNoteInAr(cached.title, cached.source, path, liveStockBlocks ? null : cached.pages);
           setXrMessage(`Nota aberta do cache: ${cached.title}.`);
           if (!cached.complete) void completeCachedNote(path, cached, config);

@@ -24,16 +24,27 @@ export function createFastaExtension(THREE, api) {
       const line = original.trim();
       if (!line || line.startsWith(";")) continue;
       if (line.startsWith(">")) {
-        if (current) sequences.push(current);
-        const title = line.slice(1).trim() || `Sequence ${sequences.length + 1}`;
-        current = { id: title.split(/\s+/)[0], title, sequence: "" };
+        if (current?.sequence) sequences.push(current);
+        const header = line.slice(1).trim();
+        if (!header) { current = null; continue; }
+        // Some exporters append the first sequence line to the FASTA header.
+        // Peel off long residue tokens without mistaking ordinary titles for data.
+        const parts = header.split(/\s+/);
+        const inline = [];
+        while (parts.length > 1 && /^[A-Z*.-]{12,}$/i.test(parts.at(-1))) inline.unshift(parts.pop());
+        const title = parts.join(" ") || `Sequence ${sequences.length + 1}`;
+        current = {
+          id: title.split(/\s+/)[0],
+          title,
+          sequence: inline.join("").toUpperCase().replace(/[^A-Z*.-]/g, "")
+        };
       } else {
         current ??= { id: "Sequence_1", title: "Sequence 1", sequence: "" };
         current.sequence += (line.toUpperCase().match(/[A-Z*.-]/g) || []).join("");
       }
       if (sequences.length >= 127) break;
     }
-    if (current && sequences.length < 128) sequences.push(current);
+    if (current?.sequence && sequences.length < 128) sequences.push(current);
     const valid = sequences.filter((item) => item.sequence.length > 0);
     if (!valid.length) throw new Error("No valid FASTA sequences found.");
     const length = Math.max(...valid.map((item) => item.sequence.length));

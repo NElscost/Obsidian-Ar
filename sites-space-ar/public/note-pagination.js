@@ -7,7 +7,7 @@ export function contentPageRanges(ink, atoms, pageHeight = 570) {
   for(const item of content){const last=merged.at(-1);if(last&&item.top<=last.bottom+.5)last.bottom=Math.max(last.bottom,item.bottom);else merged.push({...item});}
   const blocks=atoms.filter(a=>Number.isFinite(a.top)&&Number.isFinite(a.bottom)&&a.bottom>a.top&&a.bottom-a.top<=pageHeight).sort((a,b)=>a.top-b.top);
   // Leave a small capture gutter for glyph descenders, antialiasing and transformed media.
-  const usableHeight=Math.max(1,pageHeight-12);
+  const usableHeight=Math.max(1,pageHeight-36);
   const end=merged.at(-1).bottom,ranges=[];let top=0,index=0;
   while(top<end-.01){
     while(index<merged.length&&merged[index].bottom<=top+.01)index++;
@@ -15,6 +15,9 @@ export function contentPageRanges(ink, atoms, pageHeight = 570) {
     // Skip whitespace-only regions without rasterizing or scanning canvas pixels.
     if(merged[index].top>top+2)top=Math.max(top,merged[index].top-2);
     let bottom=Math.min(top+usableHeight,end);
+    // Never place a capture boundary through a rendered text line.
+    const crossingLine=content.find(r=>r.top>top+2&&r.top<bottom-.5&&r.bottom>bottom+.5&&r.bottom-r.top<=96);
+    if(crossingLine)bottom=crossingLine.top;
     const crossing=blocks.find(a=>a.top>top+2&&a.top<bottom-.5&&a.bottom>bottom+.5);
     if(crossing)bottom=crossing.top;
     // A block already beginning this page may use the reserved gutter when needed.
@@ -24,6 +27,10 @@ export function contentPageRanges(ink, atoms, pageHeight = 570) {
     if(hasInk)ranges.push({top,bottom});
     top=bottom;
   }
+  // Keep real capture space after the final glyph. Inter-page gutters alone do
+  // not protect italic overhangs/descenders at the very end of a note.
+  const tail=ranges.at(-1);
+  if(tail)tail.bottom=Math.min(tail.top+pageHeight,Math.max(tail.bottom,end+24));
   return ranges.length?ranges:[{top:0,bottom:pageHeight}];
 }
 

@@ -19,6 +19,11 @@ test("integrates an anchored, scalable spectral trail with the media analyser", 
   assert.match(spectral, /createAnchor/);
   assert.match(spectral, /state\.scale = THREE\.MathUtils\.clamp/);
   assert.match(spectral, /state\.autoRotate = !state\.autoRotate/);
+  assert.match(spectral, /spectral-filter-key/);
+  assert.match(spectral, /space-ar:spectral-min-hz/);
+  assert.match(spectral, /hz <= minHz/);
+  assert.match(spectral, /binHz <= minHz/);
+  assert.match(html, /mediaKey\(\)/);
 });
 
 test("offers optional automatic rotation for every requested 3D viewer", async () => {
