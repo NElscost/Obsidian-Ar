@@ -136,7 +136,7 @@ export async function speciesRegionPanelRaster(source, u, v) {
   if(!result.photos.length){context.fillStyle="#9fb2c9";context.font="24px system-ui";context.fillText("No photos found in this region.",34,150);}
   if(!result.sounds.length){context.fillStyle="#9fb2c9";context.font="22px system-ui";context.fillText("No sounds found in this region.",680,168);}
   context.fillStyle="#71849d";context.font="16px system-ui";context.fillText("Records: GBIF · media: original publishers · select another map region to refresh",34,620);
-  return { ...result, dataUrl: canvas.toDataURL("image/webp",.82) };
+  return { ...result, canvas, dataUrl: canvas.toDataURL("image/webp",.82) };
   })();regionPanelCache.set(key,pending);while(regionPanelCache.size>12)regionPanelCache.delete(regionPanelCache.keys().next().value);try{return await pending}catch(e){regionPanelCache.delete(key);throw e}
 }
 

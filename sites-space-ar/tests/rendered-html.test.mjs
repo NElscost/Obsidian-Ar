@@ -1,4 +1,4 @@
-﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
@@ -928,3 +928,12 @@ test("renders GBIF species maps as cached XR-safe rasters", async () => {
   assert.match(html, /request !== speciesRegionRequest/);
 });
 
+
+
+test("routes MIDI and species-map hotspots without duplicate regional windows", async () => {
+  const html = await readFile(xrUrl, "utf8");
+  assert.match(html, /hotspot\?\.kind === "midi-viz"/);
+  assert.match(html, /new THREE\.CanvasTexture\(result\.canvas\)/);
+  assert.match(html, /if \(speciesRegionGroup\).*Close the current regional window/s);
+  assert.match(html, /\.note-chronos, \.note-species-map, \.note-audio-card/);
+});
