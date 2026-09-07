@@ -925,5 +925,6 @@ test("renders GBIF species maps as cached XR-safe rasters", async () => {
   assert.match(html, /species-map\.js\?v=8/);
   assert.match(html, /data-note-species-map/);
   assert.match(html, /await renderSpeciesMapBlocks\(noteContent\)/);
+  assert.match(html, /request !== speciesRegionRequest/);
 });
 
