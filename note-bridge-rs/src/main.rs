@@ -2410,7 +2410,7 @@ fn rasterize_score_svg_systems(svg_path: &Path) -> Result<Vec<resvg::tiny_skia::
         }
     }
     let cropped = if min_x <= max_x && min_y <= max_y {
-        let padding = 18u32;
+        let padding = 40u32;
         let left = min_x.saturating_sub(padding);
         let top = min_y.saturating_sub(padding);
         let right = (max_x + padding + 1).min(width);
@@ -2433,7 +2433,7 @@ fn rasterize_score_svg_systems(svg_path: &Path) -> Result<Vec<resvg::tiny_skia::
     // Detect complete staff systems instead of cutting the portrait sheet at a
     // fixed height. Gaps inside a grand staff remain joined; the larger gap
     // between systems becomes a safe split point.
-    let gap_limit = ((cropped.height() as f32 * 0.024).round() as u32).clamp(34, 64);
+    let gap_limit = ((cropped.height() as f32 * 0.024).round() as u32).clamp(48, 76);
     let mut ranges = Vec::<(u32, u32)>::new();
     let mut start = None;
     let mut last_ink = 0u32;
@@ -2499,17 +2499,19 @@ fn write_score_system_pages(
             .context("Invalid score output page size")?;
         page.fill(resvg::tiny_skia::Color::from_rgba8(246, 241, 232, 255));
         for (slot, system) in pair.iter().enumerate() {
-            let available_width = page_width - 36;
-            let available_height = half_height - 28;
+            let available_width = page_width - 96;
+            let available_height = half_height - 52;
             let scale = (available_width as f32 / system.width() as f32)
                 .min(available_height as f32 / system.height() as f32);
             let rendered_width = system.width() as f32 * scale;
             let rendered_height = system.height() as f32 * scale;
             let x = ((page_width as f32 - rendered_width) / 2.0).round() as i32;
-            let y = (slot as u32 * half_height + 14) as i32;
+            let y = (slot as u32 * half_height + 26) as i32;
+            let source_x = (x as f32 / scale).round() as i32;
+            let source_y = (y as f32 / scale).round() as i32;
             page.draw_pixmap(
-                x,
-                y,
+                source_x,
+                source_y,
                 system.as_ref(),
                 &paint,
                 resvg::tiny_skia::Transform::from_scale(scale, scale),
@@ -2531,7 +2533,7 @@ async fn prepare_midi_score(path: &Path, metadata: &fs::Metadata) -> Result<(Pat
         .modified()
         .unwrap_or(SystemTime::UNIX_EPOCH)
         .hash(&mut hasher);
-    "webmscore-1.2.1-piano-only-systems-v5".hash(&mut hasher);
+    "webmscore-1.2.1-piano-only-systems-v6".hash(&mut hasher);
     let directory = env::temp_dir()
         .join("obsidian-ar-score-cache")
         .join(format!("{:016x}", hasher.finish()));

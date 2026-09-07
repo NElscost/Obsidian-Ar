@@ -24,7 +24,7 @@ test("filters imported tracks into one acoustic piano score", () => {
   assert.match(renderer, /normalizeMidiToPiano/);
   assert.match(renderer, /tracks: "piano-only"/);
   assert.match(renderer, /instrument: "acoustic-grand-piano"/);
-  assert.match(html, /Math\.floor\(currentTime\/pageDuration\)/);
+  assert.match(html, /midiVizEngravedPosition/);
   assert.match(html, /RingGeometry\(\.009, \.015/);
   assert.match(html, /systemProgress=\(within\*2\)%1/);
   assert.match(bridge, /write_score_system_pages/);

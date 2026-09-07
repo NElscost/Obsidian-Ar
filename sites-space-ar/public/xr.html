@@ -3193,6 +3193,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function rebuildMidiVizWindow(currentTime) { drawMidiVizRoll(currentTime,true); }
     function midiVizActiveNoteAt(time){let low=0,high=(midiVizData?.notes?.length??0)-1,result=null;while(low<=high){const middle=(low+high)>>1,note=midiVizData.notes[middle];if(note.start<=time){result=note;low=middle+1;}else high=middle-1;}return result;}
     function midiVizMeasureInfo(time){const note=midiVizActiveNoteAt(time),measure=Math.max(1,Number(note?.measure)||1),page=Math.floor((measure-1)/4);return{page,firstMeasure:page*4+1,lastMeasure:page*4+4};}
+    function midiVizEngravedPosition(time){const index=scoreIndex(midiVizData),ids=activeScoreNotes(index,time),note=ids.length?midiVizData.notes[ids[0]]:midiVizActiveNoteAt(time),pageCount=Math.max(1,Number(midiVizEngravedManifest?.pageCount)||1),totalMeasures=Math.max(1,...midiVizData.notes.map((item)=>Number(item.measure)||1)),measureBeats=Math.max(.25,(Number(midiVizData.beatsPerMeasure)||4)*4/(Number(midiVizData.beatUnit)||4)),scoreProgress=THREE.MathUtils.clamp(((Number(note?.measure)||1)-1+(Number(note?.beatInMeasure)||0)/measureBeats)/totalMeasures,0,.999999),scaled=scoreProgress*pageCount;return{page:Math.min(pageCount-1,Math.floor(scaled)),within:scaled%1,ids,note};}
     function midiScoreNoteKey(note){return `${note.start}|${note.pitch}|${note.track}|${note.channel}`;}
     async function loadMidiVizEngravedPage(page) {
       const manifest=midiVizEngravedManifest,request=++midiVizEngravedRequest;
@@ -3226,7 +3227,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
     function drawMidiVizScore(currentTime,force=false){
       if(!midiVizScoreTexture||!midiVizData)return;
-      if(midiVizEngravedManifest?.pageCount){const pageDuration=Math.max(.001,(Number(midiVizData.duration)||1)/midiVizEngravedManifest.pageCount),page=Math.min(midiVizEngravedManifest.pageCount-1,Math.max(0,Math.floor(currentTime/pageDuration)));if(!force&&page===midiVizScoreWindow)return;midiVizScoreWindow=page;midiVizScoreLayout=new Map();void loadMidiVizEngravedPage(page);return;}
+      if(midiVizEngravedManifest?.pageCount){const {page}=midiVizEngravedPosition(currentTime);if(!force&&page===midiVizScoreWindow)return;midiVizScoreWindow=page;midiVizScoreLayout=new Map();void loadMidiVizEngravedPage(page);return;}
       const page=midiVizMeasureInfo(currentTime).page;
       if(!force&&page===midiVizScoreWindow)return;
       midiVizScoreWindow=page;
@@ -3255,7 +3256,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function updateMidiVizScoreHighlight(currentTime,time){
       if(!midiVizScorePlayhead||!midiVizScoreHighlight||!midiVizData)return;
       if(time-midiVizLastScoreHighlightUpdate<40)return;midiVizLastScoreHighlightUpdate=time;
-      if(midiVizEngravedManifest?.pageCount){const pageDuration=Math.max(.001,(Number(midiVizData.duration)||1)/midiVizEngravedManifest.pageCount),page=Math.min(midiVizEngravedManifest.pageCount-1,Math.max(0,Math.floor(currentTime/pageDuration))),within=THREE.MathUtils.clamp((currentTime-page*pageDuration)/pageDuration,0,1),systemProgress=(within*2)%1,systemCenter=within<.5?AR_VIDEO_HEIGHT*.225:-AR_VIDEO_HEIGHT*.225,note=midiVizActiveNoteAt(currentTime),pitchOffset=THREE.MathUtils.clamp(((Number(note?.pitch)||60)-60)*.0018,-.045,.045);midiVizScorePlayhead.position.x=-AR_VIDEO_WIDTH*.42+systemProgress*AR_VIDEO_WIDTH*.84;midiVizScorePlayhead.position.y=systemCenter+pitchOffset;midiVizScorePlayhead.visible=Boolean(note);midiVizScoreHighlight.visible=false;return;}
+      if(midiVizEngravedManifest?.pageCount){const {within,ids}=midiVizEngravedPosition(currentTime),systemProgress=(within*2)%1,systemTop=within<.5?150:430,canvas=midiVizScoreHighlight.material.map.image,context=canvas.getContext("2d"),signature=midiVizScoreWindow+":"+ids.join(",")+":"+Math.round(systemProgress*180);if(signature!==midiVizScoreHighlight.userData.activeSignature){context.clearRect(0,0,canvas.width,canvas.height);const x=82+systemProgress*860;for(const id of ids){const active=midiVizData.notes[id],y=systemTop-THREE.MathUtils.clamp(((Number(active?.pitch)||60)-60)*2.25,-58,58);context.beginPath();context.ellipse(x,y,15,11,0,0,Math.PI*2);context.fillStyle="rgba(255,201,40,.42)";context.fill();context.lineWidth=4;context.strokeStyle="#ffc928";context.stroke();}midiVizScoreHighlight.material.map.needsUpdate=true;midiVizScoreHighlight.userData.activeSignature=signature;}midiVizScoreHighlight.visible=ids.length>0;midiVizScorePlayhead.visible=false;return;}
       const ids=activeScoreNotes(scoreIndex(midiVizData),currentTime),layout=midiVizScoreLayout;
       if(!layout?.glyphs)return;
       const signature=layout.page+':'+ids.join(',');
@@ -6519,11 +6520,12 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
             activeNoteAudio.playsInline = true;
             activeNoteAudio.setAttribute("playsinline", "");
           }
-          if (isNetworkSource(source)) activeNoteAudio.crossOrigin = "anonymous";
+          const directRemoteAudio = track.kind === "remote-audio" && isNetworkSource(source);
+          if (isNetworkSource(source) && !directRemoteAudio) activeNoteAudio.crossOrigin = "anonymous";
           activeNoteAudio.preload = isVideo ? "metadata" : "none";
           activeNoteAudio.src = source;
           activeNoteAudio.volume = 1;
-          const spatial = connectSpatialNoteAudio(activeNoteAudio, spatialContext);
+          const spatial = directRemoteAudio ? null : connectSpatialNoteAudio(activeNoteAudio, spatialContext);
           if (!isVideo) {
             activeNoteAudio.addEventListener("error", () => {
               setXrMessage(`Falha no áudio: ${activeNoteAudio?.error?.message || "formato ou arquivo indisponível"}.`);
@@ -6663,8 +6665,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       if(action==='media-slower'){if(activeNoteTrack?.kind==='midi-viz'||midiVizExternalAudio)setMidiVizPlaybackRate(midiVizPlaybackRate-.25);else if(activeNoteAudio){activeNoteAudio.playbackRate=THREE.MathUtils.clamp((activeNoteAudio.playbackRate||1)-.25,.5,2);setXrMessage(`Speed: ${activeNoteAudio.playbackRate}×.`);}return;}
       if(action==='media-faster'){if(activeNoteTrack?.kind==='midi-viz'||midiVizExternalAudio)setMidiVizPlaybackRate(midiVizPlaybackRate+.25);else if(activeNoteAudio){activeNoteAudio.playbackRate=THREE.MathUtils.clamp((activeNoteAudio.playbackRate||1)+.25,.5,2);setXrMessage(`Speed: ${activeNoteAudio.playbackRate}×.`);}return;}
       if (action === "species-region-close") { disposeSpeciesRegion(); return; }
-      if (action.startsWith("species-region-sound:")) { const sound=speciesRegionResult?.sounds?.[Number(action.split(":")[1])]; if(sound) void toggleNoteAudio({source:sound.url,label:sound.creator||sound.place||"Species recording",kind:"audio"}); return; }
-      if (action.startsWith("species-region-trail:")) { const sound=speciesRegionResult?.sounds?.[Number(action.split(":")[1])]; if(sound) void (async()=>{const track={source:sound.url,label:sound.creator||sound.place||"Species recording",kind:"audio"};if(activeNoteTrack?.source!==track.source||!activeNoteAudio||activeNoteAudio.paused)await toggleNoteAudio(track);if(activeNoteTrack?.source===track.source&&activeNoteAudio&&!activeNoteAudio.paused)spectralTrailExtension.open();})(); return; }
+      if (action.startsWith("species-region-sound:")) { const sound=speciesRegionResult?.sounds?.[Number(action.split(":")[1])]; if(sound) void toggleNoteAudio({source:sound.url,label:sound.creator||sound.place||"Species recording",kind:"remote-audio"}); return; }
+      if (action.startsWith("species-region-trail:")) { const sound=speciesRegionResult?.sounds?.[Number(action.split(":")[1])]; if(sound) void (async()=>{const track={source:sound.url,label:sound.creator||sound.place||"Species recording",kind:"remote-audio"};if(activeNoteTrack?.source!==track.source||!activeNoteAudio||activeNoteAudio.paused)await toggleNoteAudio(track);if(activeNoteTrack?.source===track.source&&activeNoteAudio&&!activeNoteAudio.paused)spectralTrailExtension.open();})(); return; }
       if (action === "midi-close") { disposeMidiViz(); setXrMessage("Synthesia closed."); return; }
       if (action === "midi-toggle") {
         setMidiVizPlaying(!midiVizPlaying);
