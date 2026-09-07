@@ -1,0 +1,12 @@
+{
+  "name": "obsidian-ar-score-renderer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "render": "node render-score.mjs"
+  },
+  "dependencies": {
+    "webmscore": "1.2.1"
+  }
+}

@@ -15,6 +15,15 @@ $statePath = Join-Path $workspace ".note-bridge-processes.json"
 $bridgeConfigPath = Join-Path $workspace "note-bridge.config.json"
 $pendingOptimizationPath = Join-Path $workspace "PendenteParaOtimização.json"
 $logDir = Join-Path $workspace "note-bridge-logs"
+$scoreRendererDir = Join-Path $workspace "score-renderer"
+$scoreRendererScript = Join-Path $scoreRendererDir "render-score.mjs"
+$scoreRendererModule = Join-Path $scoreRendererDir "node_modules\webmscore\package.json"
+
+if ((Test-Path -LiteralPath (Join-Path $scoreRendererDir "package.json")) -and -not (Test-Path -LiteralPath $scoreRendererModule)) {
+  $npmCommand = Get-Command npm -ErrorAction SilentlyContinue
+  if ($npmCommand) { Write-Output "Installing optional MuseScore renderer..."; & $npmCommand.Source ci --prefix $scoreRendererDir; if ($LASTEXITCODE -ne 0) { Write-Warning "Scores will use the lightweight fallback renderer." } }
+  else { Write-Warning "npm was not found; scores will use the lightweight fallback renderer." }
+}
 
 function Stop-ExistingBridge {
   $processIds = [System.Collections.Generic.HashSet[int]]::new()
@@ -268,6 +277,7 @@ $serverEnvironment = @{
   SPACE_NOTE_TOKEN = $token
   SPACE_VAULT_PATH = $vaultPath
   SPACE_PENDING_OPTIMIZATION_PATH = $pendingOptimizationPath
+  SPACE_SCORE_RENDERER = $scoreRendererScript
   SPACE_REMOTE_VIDEO_HOSTS = ($remoteVideoHosts -join ",")
   SPACE_REMOTE_VIDEO_MAX_HEIGHT = "$remoteVideoMaxHeight"
   SPACE_REMOTE_VIDEO_MAX_SIZE_MB = "$remoteVideoMaxSizeMb"

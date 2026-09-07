@@ -86,74 +86,28 @@ async function occurrenceClusters(config, taxonKey, center) {
   return [...clusters.values()].map(c=>({x:c.x/c.count,y:c.y/c.count,count:c.count}));
 }
 
+const BRAZIL_BOUNDS = { west: -74.2, east: -32.0, north: 5.6, south: -34.2 };
+const BRAZIL_SHAPE = [[115,64],[196,43],[260,58],[315,42],[376,76],[432,81],[485,117],[558,126],[618,171],[672,218],[693,274],[667,321],[625,345],[608,401],[563,429],[548,490],[507,532],[469,544],[440,514],[411,472],[365,450],[330,411],[282,395],[252,348],[205,323],[177,275],[139,245],[124,197],[88,165],[101,116]];
+function brazilPoint(lon,lat){return{x:(lon-BRAZIL_BOUNDS.west)/(BRAZIL_BOUNDS.east-BRAZIL_BOUNDS.west)*720+90,y:(BRAZIL_BOUNDS.north-lat)/(BRAZIL_BOUNDS.north-BRAZIL_BOUNDS.south)*520+42}}
+function brazilPath(context){context.beginPath();BRAZIL_SHAPE.forEach(([x,y],i)=>i?context.lineTo(x,y):context.moveTo(x,y));context.closePath();}
+async function brazilOccurrences(taxonKey){const q=new URLSearchParams({taxon_key:String(taxonKey),country:'BR',has_coordinate:'true',limit:'1000'}),r=await fetch('https://api.gbif.org/v1/occurrence/search?'+q,{credentials:'omit',cache:'force-cache'});if(!r.ok)throw Error('GBIF occurrences HTTP '+r.status);return (await r.json()).results||[];}
 export async function speciesMapRaster(source) {
-  const config = parseSpeciesMapConfig(source);
-  if (!config.taxon) throw new Error("No taxon configured.");
-  if (config.source !== "gbif") throw new Error(`Unsupported source: ${config.source}`);
-  const cacheKey = JSON.stringify(config);
-  if (rasterCache.has(cacheKey)) return rasterCache.get(cacheKey);
-  const pending = (async () => {
-    const taxon = await resolveTaxonKey(config.taxon);
-    const canvas = document.createElement("canvas");
-    canvas.width = 900;
-    canvas.height = 600;
-    const context = canvas.getContext("2d", { alpha: false });
-    context.fillStyle = "#07111d";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    const center = tileAt(config.center[0], config.center[1], config.zoom);
-    const jobs = [];
-    for (let row = 0; row < 2; row += 1) {
-      for (let column = 0; column < 3; column += 1) {
-        const rawX = center.x + column - 1;
-        const x = (rawX % center.scale + center.scale) % center.scale;
-        const y = Math.max(0, Math.min(center.scale - 1, center.y + row - 1));
-        const base = `https://tile.gbif.org/3857/omt/${config.zoom}/${x}/${y}@1x.png?style=gbif-dark`;
-        const density = `https://api.gbif.org/v2/map/occurrence/density/${config.zoom}/${x}/${y}@1x.png?srs=EPSG:3857&taxonKey=${taxon.key}&style=${encodeURIComponent(config.style)}`;
-        jobs.push(Promise.all([bitmap(base), bitmap(density, true)]).then(([baseMap, occurrences]) => ({ column, row, baseMap, occurrences })));
-      }
-    }
-    const [tiles, clusters] = await Promise.all([Promise.all(jobs), occurrenceClusters(config, taxon.key, center)]);
-    for (const tile of tiles) {
-      const x = tile.column * 300;
-      const y = tile.row * 300;
-      context.drawImage(tile.baseMap, x, y, 300, 300);
-      if (tile.occurrences) context.drawImage(tile.occurrences, x, y, 300, 300);
-      tile.baseMap.close?.();
-      tile.occurrences?.close?.();
-    }
-    for (const cluster of clusters) {
-      const radius=Math.min(15,4+Math.sqrt(cluster.count)*2.2);context.beginPath();context.arc(cluster.x,cluster.y,radius,0,Math.PI*2);
-      context.fillStyle="rgba(255,169,46,.74)";context.fill();context.lineWidth=2;context.strokeStyle="rgba(255,244,184,.92)";context.stroke();
-      if(cluster.count>2){context.fillStyle="#07111d";context.font="700 11px system-ui";context.textAlign="center";context.fillText(String(cluster.count),cluster.x,cluster.y+4);}
-    }
-    context.textAlign="left";
-    const shade = context.createLinearGradient(0, 0, 0, 92);
-    shade.addColorStop(0, "rgba(3,8,16,.92)");
-    shade.addColorStop(1, "rgba(3,8,16,0)");
-    context.fillStyle = shade;
-    context.fillRect(0, 0, canvas.width, 92);
-    context.fillStyle = "#f3f8ff";
-    context.font = "700 28px system-ui, sans-serif";
-    context.fillText(taxon.scientificName, 20, 38);
-    context.fillStyle = "#aabbd0";
-    context.font = "18px system-ui, sans-serif";
-    context.fillText("GBIF occurrence regions · select a marker for photos and sounds", 20, 68);
-    context.fillStyle = "rgba(3,8,16,.78)";
-    context.fillRect(0, 566, canvas.width, 34);
-    context.fillStyle = "#9badc2";
-    context.font = "15px system-ui, sans-serif";
-    context.textAlign = "right";
-    context.fillText("Map © OSM · data © GBIF", 884, 588);
-    return { dataUrl: canvas.toDataURL("image/webp", 0.82), config, taxon };
-  })();
-  rasterCache.set(cacheKey, pending);
-  while (rasterCache.size > 10) rasterCache.delete(rasterCache.keys().next().value);
-  try { return await pending; }
-  catch (error) { rasterCache.delete(cacheKey); throw error; }
+ const config=parseSpeciesMapConfig(source);if(!config.taxon)throw Error('No taxon configured.');if(config.source!=='gbif')throw Error('Unsupported source: '+config.source);
+ const cacheKey=JSON.stringify(config)+':biomes-v1';if(rasterCache.has(cacheKey))return rasterCache.get(cacheKey);
+ const pending=(async()=>{const taxon=await resolveTaxonKey(config.taxon),records=await brazilOccurrences(taxon.key),canvas=document.createElement('canvas');canvas.width=900;canvas.height=600;const c=canvas.getContext('2d',{alpha:true});c.clearRect(0,0,900,600);
+  c.save();brazilPath(c);c.clip();c.fillStyle='rgba(179,225,169,.88)';c.fillRect(0,0,900,600);
+  c.fillStyle='rgba(126,205,108,.78)';c.beginPath();c.ellipse(275,190,245,170,-.25,0,Math.PI*2);c.fill();
+  c.fillStyle='rgba(255,231,151,.76)';c.beginPath();c.ellipse(515,285,205,175,.22,0,Math.PI*2);c.fill();
+  c.fillStyle='rgba(255,184,160,.72)';c.beginPath();c.ellipse(600,370,130,205,.3,0,Math.PI*2);c.fill();
+  c.fillStyle='rgba(183,238,177,.9)';c.fillRect(548,180,52,350);c.fillStyle='rgba(255,224,238,.78)';c.beginPath();c.ellipse(335,420,140,75,0,0,Math.PI*2);c.fill();c.restore();
+  brazilPath(c);c.strokeStyle='rgba(235,255,240,.88)';c.lineWidth=3;c.stroke();
+  c.fillStyle='rgba(255,24,30,.9)';for(const r of records){const lon=Number(r.decimalLongitude),lat=Number(r.decimalLatitude);if(!Number.isFinite(lon)||!Number.isFinite(lat))continue;const q=brazilPoint(lon,lat);c.beginPath();c.arc(q.x,q.y,2.2,0,Math.PI*2);c.fill();}
+  const legend=[['Amazon','#7ecd6c'],['Caatinga','#ffe797'],['Cerrado','#ffb8a0'],['Atlantic Forest','#b7eeb1'],['Pampa','#ffe0ee']];c.font='600 14px system-ui';c.textAlign='left';legend.forEach((x,i)=>{const y=438+i*24;c.fillStyle=x[1];c.fillRect(105,y,16,16);c.fillStyle='#eaf3ff';c.fillText(x[0],130,y+13)});
+  c.fillStyle='#f4f8ff';c.font='700 25px system-ui';c.fillText(taxon.scientificName,92,28);c.fillStyle='#ff3940';c.font='600 14px system-ui';c.fillText(records.length.toLocaleString()+' sampled occurrence points',565,574);
+  return{dataUrl:canvas.toDataURL('image/webp',.88),config,taxon};})();rasterCache.set(cacheKey,pending);while(rasterCache.size>10)rasterCache.delete(rasterCache.keys().next().value);try{return await pending}catch(e){rasterCache.delete(cacheKey);throw e}
 }
-
-
 function mapCoordinate(config, u, v) {
+  if (Math.abs(config.center[0] + 15) < 12 && Math.abs(config.center[1] + 55) < 18) return { lat: BRAZIL_BOUNDS.north - THREE_NUMBER(v) * (BRAZIL_BOUNDS.north - BRAZIL_BOUNDS.south), lon: BRAZIL_BOUNDS.west + THREE_NUMBER(u) * (BRAZIL_BOUNDS.east - BRAZIL_BOUNDS.west) };
   const center = tileAt(config.center[0], config.center[1], config.zoom);
   const tileX = center.x - 1 + THREE_NUMBER(u) * 3;
   const tileY = center.y - 1 + THREE_NUMBER(v) * 2;

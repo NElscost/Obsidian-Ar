@@ -45,6 +45,7 @@ use tower_http::{
 use walkdir::WalkDir;
 
 static YOUTUBE_DOWNLOAD_LOCK: Mutex<()> = Mutex::const_new(());
+static SCORE_RENDER_LOCK: Mutex<()> = Mutex::const_new(());
 static YOUTUBE_FAILURE_CACHE: OnceLock<RwLock<HashMap<String, (Instant, String)>>> =
     OnceLock::new();
 
@@ -63,11 +64,13 @@ struct AppState {
     note_cache: Arc<RwLock<HashMap<String, CachedNote>>>,
     asset_cache: Arc<RwLock<HashMap<String, PathBuf>>>,
     waveform_cache: Arc<RwLock<HashMap<String, CachedWaveform>>>,
+    spectral_cache: Arc<RwLock<HashMap<String, CachedSpectral>>>,
     midi_cache: Arc<RwLock<HashMap<String, CachedMidi>>>,
     ambilight_cache: Arc<RwLock<HashMap<String, CachedAmbilight>>>,
     video_cache: Arc<RwLock<HashMap<String, CachedVideo>>>,
     stock_cache: Arc<RwLock<HashMap<String, CachedStock>>>,
     media_tickets: Arc<RwLock<HashMap<String, MediaTicket>>>,
+    score_tickets: Arc<RwLock<HashMap<String, ScoreTicket>>>,
     remote_client: reqwest::Client,
     remote_video_hosts: Arc<HashSet<String>>,
     remote_video_max_height: u16,
@@ -93,6 +96,13 @@ struct CachedWaveform {
     modified: SystemTime,
     size: u64,
     response: WaveformResponse,
+}
+
+#[derive(Clone)]
+struct CachedSpectral {
+    modified: SystemTime,
+    size: u64,
+    response: SpectralAnalysisResponse,
 }
 
 #[derive(Clone)]
@@ -157,6 +167,13 @@ struct MediaTicket {
     expires_at: Instant,
 }
 
+#[derive(Clone)]
+struct ScoreTicket {
+    directory: PathBuf,
+    page_count: usize,
+    expires_at: Instant,
+}
+
 const MEDIA_TICKET_TTL: Duration = Duration::from_secs(30 * 60);
 
 fn bridge_capabilities(_state: &AppState) -> Vec<&'static str> {
@@ -167,7 +184,9 @@ fn bridge_capabilities(_state: &AppState) -> Vec<&'static str> {
         "youtube-video",
         "remote-video",
         "waveform",
+        "mfcc-pca",
         "midi-viz",
+        "midi-engraving",
         "video-ambilight",
         "stock-chart",
     ]
@@ -293,11 +312,26 @@ mod origin_tests {
 
     #[test]
     fn restricts_youtube_video_hosts() {
-        assert!(remote_video_url_allowed("https://www.youtube.com/watch?v=abc", &default_remote_video_hosts()));
-        assert!(remote_video_url_allowed("https://youtu.be/abc", &default_remote_video_hosts()));
-        assert!(remote_video_url_allowed("https://streamable.com/abc123", &default_remote_video_hosts()));
-        assert!(!remote_video_url_allowed("http://youtube.com/watch?v=abc", &default_remote_video_hosts()));
-        assert!(!remote_video_url_allowed("https://youtube.com.evil.test/watch?v=abc", &default_remote_video_hosts()));
+        assert!(remote_video_url_allowed(
+            "https://www.youtube.com/watch?v=abc",
+            &default_remote_video_hosts()
+        ));
+        assert!(remote_video_url_allowed(
+            "https://youtu.be/abc",
+            &default_remote_video_hosts()
+        ));
+        assert!(remote_video_url_allowed(
+            "https://streamable.com/abc123",
+            &default_remote_video_hosts()
+        ));
+        assert!(!remote_video_url_allowed(
+            "http://youtube.com/watch?v=abc",
+            &default_remote_video_hosts()
+        ));
+        assert!(!remote_video_url_allowed(
+            "https://youtube.com.evil.test/watch?v=abc",
+            &default_remote_video_hosts()
+        ));
     }
 }
 
@@ -313,11 +347,40 @@ struct AssetRequest {
     asset_path: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MidiScoreManifestResponse {
+    engine: &'static str,
+    page_count: usize,
+    ticket: String,
+    segment_positions: Option<Value>,
+    measure_positions: Option<Value>,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WaveformResponse {
     duration: f64,
     samples: Vec<u8>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpectralPoint {
+    time_ms: u32,
+    xyz: [i16; 3],
+    amplitude: u8,
+    frequency_hz: u16,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpectralAnalysisResponse {
+    duration: f64,
+    interval: f32,
+    coefficients: u8,
+    method: &'static str,
+    points: Vec<SpectralPoint>,
 }
 
 #[derive(Clone, Serialize)]
@@ -1384,6 +1447,309 @@ fn analyze_audio_waveform(path: &Path) -> Result<WaveformResponse> {
     })
 }
 
+const MFCC_COUNT: usize = 40;
+const MFCC_MAX_RAW_FRAMES: usize = 180_000;
+const MFCC_POINTS_PER_SECOND: f64 = 12.0;
+const MFCC_MIN_POINTS: usize = 768;
+const MFCC_MAX_POINTS: usize = 32_768;
+
+fn hz_to_mel(hz: f32) -> f32 {
+    2595.0 * (1.0 + hz / 700.0).log10()
+}
+fn mel_to_hz(mel: f32) -> f32 {
+    700.0 * (10.0_f32.powf(mel / 2595.0) - 1.0)
+}
+
+fn mfcc_frame(
+    frame: &[f32],
+    sample_rate: u32,
+    fft: &dyn rustfft::Fft<f32>,
+    filters: &[(usize, usize, usize)],
+) -> ([f32; MFCC_COUNT], f32, u16) {
+    use rustfft::num_complex::Complex;
+    let n = fft.len();
+    let mut spectrum = vec![Complex::new(0.0, 0.0); n];
+    let mut energy = 0.0_f32;
+    for (index, value) in frame.iter().copied().enumerate() {
+        let window = 0.5
+            - 0.5
+                * (std::f32::consts::TAU * index as f32
+                    / (frame.len().saturating_sub(1).max(1)) as f32)
+                    .cos();
+        let sample = value * window;
+        spectrum[index].re = sample;
+        energy += sample * sample;
+    }
+    fft.process(&mut spectrum);
+    let half = n / 2 + 1;
+    let power: Vec<f32> = spectrum[..half]
+        .iter()
+        .map(|v| v.norm_sqr() / n as f32)
+        .collect();
+    let dominant = power
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.total_cmp(b.1))
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let mut mel = [0.0_f32; MFCC_COUNT];
+    for (filter, &(left, center, right)) in filters.iter().enumerate() {
+        let mut sum = 0.0;
+        for bin in left..center {
+            sum += power.get(bin).copied().unwrap_or(0.0) * (bin - left) as f32
+                / (center - left).max(1) as f32;
+        }
+        for bin in center..right {
+            sum += power.get(bin).copied().unwrap_or(0.0) * (right - bin) as f32
+                / (right - center).max(1) as f32;
+        }
+        mel[filter] = (sum.max(1e-12)).ln();
+    }
+    let mut coefficients = [0.0_f32; MFCC_COUNT];
+    for coefficient in 0..MFCC_COUNT {
+        coefficients[coefficient] = mel
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                value
+                    * (std::f32::consts::PI * coefficient as f32 * (index as f32 + 0.5)
+                        / MFCC_COUNT as f32)
+                        .cos()
+            })
+            .sum();
+    }
+    let rms = (energy / frame.len().max(1) as f32).sqrt();
+    let hz = (dominant as f32 * sample_rate as f32 / n as f32)
+        .round()
+        .clamp(0.0, u16::MAX as f32) as u16;
+    (coefficients, rms, hz)
+}
+
+fn pca3(features: &[[f32; MFCC_COUNT]]) -> Vec<[f32; 3]> {
+    if features.is_empty() {
+        return Vec::new();
+    }
+    let count = features.len() as f32;
+    let mut mean = [0.0_f32; MFCC_COUNT];
+    for row in features {
+        for i in 0..MFCC_COUNT {
+            mean[i] += row[i] / count;
+        }
+    }
+    let mut deviation = [0.0_f32; MFCC_COUNT];
+    for row in features {
+        for i in 0..MFCC_COUNT {
+            let d = row[i] - mean[i];
+            deviation[i] += d * d / count;
+        }
+    }
+    for value in &mut deviation {
+        *value = value.sqrt().max(1e-5);
+    }
+    let normalized: Vec<[f32; MFCC_COUNT]> = features
+        .iter()
+        .map(|row| {
+            let mut out = [0.0; MFCC_COUNT];
+            for i in 0..MFCC_COUNT {
+                out[i] = (row[i] - mean[i]) / deviation[i];
+            }
+            out
+        })
+        .collect();
+    let mut covariance = [[0.0_f32; MFCC_COUNT]; MFCC_COUNT];
+    for row in &normalized {
+        for i in 0..MFCC_COUNT {
+            for j in i..MFCC_COUNT {
+                covariance[i][j] += row[i] * row[j] / count;
+            }
+        }
+    }
+    for i in 0..MFCC_COUNT {
+        for j in 0..i {
+            covariance[i][j] = covariance[j][i];
+        }
+    }
+    let mut vectors = [[0.0_f32; MFCC_COUNT]; 3];
+    for component in 0..3 {
+        let mut vector = [0.0_f32; MFCC_COUNT];
+        vector[(component * 13 + 3) % MFCC_COUNT] = 1.0;
+        for _ in 0..36 {
+            let mut next = [0.0_f32; MFCC_COUNT];
+            for i in 0..MFCC_COUNT {
+                next[i] = (0..MFCC_COUNT).map(|j| covariance[i][j] * vector[j]).sum();
+            }
+            for previous in vectors.iter().take(component) {
+                let dot: f32 = (0..MFCC_COUNT).map(|i| next[i] * previous[i]).sum();
+                for i in 0..MFCC_COUNT {
+                    next[i] -= dot * previous[i];
+                }
+            }
+            let norm = next.iter().map(|v| v * v).sum::<f32>().sqrt().max(1e-8);
+            for i in 0..MFCC_COUNT {
+                vector[i] = next[i] / norm;
+            }
+        }
+        vectors[component] = vector;
+    }
+    normalized
+        .iter()
+        .map(|row| {
+            let mut point = [0.0; 3];
+            for c in 0..3 {
+                point[c] = (0..MFCC_COUNT).map(|i| row[i] * vectors[c][i]).sum();
+            }
+            point
+        })
+        .collect()
+}
+
+fn analyze_audio_spectral(path: &Path) -> Result<SpectralAnalysisResponse> {
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("Não foi possível abrir o áudio: {}", path.display()))?;
+    let stream = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|v| v.to_str()) {
+        hint.with_extension(ext);
+    }
+    let probed = get_probe().format(
+        &hint,
+        stream,
+        &FormatOptions::default(),
+        &MetadataOptions::default(),
+    )?;
+    let mut format = probed.format;
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.sample_rate.is_some())
+        .context("A mídia não contém áudio decodificável.")?;
+    let track_id = track.id;
+    let sample_rate = track.codec_params.sample_rate.unwrap_or(48_000).max(1);
+    let _estimated = track.codec_params.n_frames.unwrap_or(0) as usize;
+    let frame_samples = ((sample_rate as usize * 25) / 1000).max(256);
+    let hop = ((sample_rate as usize * 20) / 1000).max(128);
+    let fft_size = frame_samples.next_power_of_two();
+    let stride = 1usize;
+    let mut planner = rustfft::FftPlanner::<f32>::new();
+    let fft = planner.plan_fft_forward(fft_size);
+    let min_mel = hz_to_mel(20.0);
+    let max_mel = hz_to_mel((sample_rate as f32 / 2.0).min(18_000.0));
+    let mel_bins: Vec<usize> = (0..MFCC_COUNT + 2)
+        .map(|i| {
+            let mel = min_mel + (max_mel - min_mel) * i as f32 / (MFCC_COUNT + 1) as f32;
+            ((fft_size + 1) as f32 * mel_to_hz(mel) / sample_rate as f32).floor() as usize
+        })
+        .collect();
+    let filters: Vec<_> = (0..MFCC_COUNT)
+        .map(|i| (mel_bins[i], mel_bins[i + 1], mel_bins[i + 2]))
+        .collect();
+    let mut decoder = get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
+    let mut buffer = Vec::<f32>::new();
+    let mut cursor = 0usize;
+    let mut window_index = 0usize;
+    let mut features = Vec::new();
+    let mut metadata = Vec::new();
+    let mut total_frames = 0u64;
+    loop {
+        let packet = match format.next_packet() {
+            Ok(v) => v,
+            Err(SymphoniaError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                break
+            }
+            Err(e) => return Err(e.into()),
+        };
+        if packet.track_id() != track_id {
+            continue;
+        }
+        let decoded = match decoder.decode(&packet) {
+            Ok(v) => v,
+            Err(SymphoniaError::DecodeError(_)) => continue,
+            Err(SymphoniaError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                break
+            }
+            Err(e) => return Err(e.into()),
+        };
+        let spec = *decoded.spec();
+        let channels = spec.channels.count().max(1);
+        let mut samples = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
+        samples.copy_interleaved_ref(decoded);
+        for frame in samples.samples().chunks(channels) {
+            buffer.push(frame.iter().sum::<f32>() / channels as f32);
+            total_frames += 1;
+        }
+        while buffer.len().saturating_sub(cursor) >= frame_samples {
+            if window_index % stride == 0 && features.len() < MFCC_MAX_RAW_FRAMES {
+                let (mfcc, amp, hz) = mfcc_frame(
+                    &buffer[cursor..cursor + frame_samples],
+                    sample_rate,
+                    fft.as_ref(),
+                    &filters,
+                );
+                features.push(mfcc);
+                metadata.push((
+                    window_index as u64 * hop as u64 * 1000 / sample_rate as u64,
+                    amp,
+                    hz,
+                ));
+            }
+            cursor += hop;
+            window_index += 1;
+        }
+        if cursor > fft_size * 4 {
+            buffer.drain(..cursor);
+            cursor = 0;
+        }
+    }
+    let duration = total_frames as f64 / sample_rate as f64;
+    let target = ((duration * MFCC_POINTS_PER_SECOND).ceil() as usize)
+        .clamp(MFCC_MIN_POINTS, MFCC_MAX_POINTS)
+        .min(features.len());
+    if target > 0 && features.len() > target {
+        let mut reduced_features = Vec::with_capacity(target);
+        let mut reduced_metadata = Vec::with_capacity(target);
+        for index in 0..target {
+            let source = index * (features.len() - 1) / (target - 1).max(1);
+            reduced_features.push(features[source]);
+            reduced_metadata.push(metadata[source]);
+        }
+        features = reduced_features;
+        metadata = reduced_metadata;
+    }
+    let projected = pca3(&features);
+    let mut maxima = [1e-5_f32; 3];
+    for point in &projected {
+        for axis in 0..3 {
+            maxima[axis] = maxima[axis].max(point[axis].abs());
+        }
+    }
+    let peak = metadata.iter().map(|v| v.1).fold(1e-8_f32, f32::max);
+    let points: Vec<SpectralPoint> = projected
+        .iter()
+        .zip(metadata.iter())
+        .map(|(p, (time, amp, hz))| SpectralPoint {
+            time_ms: (*time).min(u32::MAX as u64) as u32,
+            xyz: [0, 1, 2].map(|axis| {
+                (p[axis] / maxima[axis] * 32767.0)
+                    .round()
+                    .clamp(-32767.0, 32767.0) as i16
+            }),
+            amplitude: (amp / peak * 255.0).round().clamp(0.0, 255.0) as u8,
+            frequency_hz: *hz,
+        })
+        .collect();
+    Ok(SpectralAnalysisResponse {
+        duration,
+        interval: if points.len() > 1 {
+            (duration / (points.len() - 1) as f64) as f32
+        } else {
+            0.0
+        },
+        coefficients: MFCC_COUNT as u8,
+        method: "mfcc40-pca3-v2",
+        points,
+    })
+}
+
 const AMBILIGHT_WIDTH: usize = 24;
 const AMBILIGHT_HEIGHT: usize = 14;
 const AMBILIGHT_INTERVAL: f32 = 1.0;
@@ -1487,7 +1853,13 @@ async fn read_video_ambilight(
         return error(StatusCode::NOT_FOUND, "Nota não permitida.");
     }
     let path = if remote_video_url_allowed(&payload.asset_path, &state.remote_video_hosts) {
-        let downloaded = match prepare_remote_video(&payload.asset_path, state.remote_video_max_height, state.remote_video_max_size_mb).await {
+        let downloaded = match prepare_remote_video(
+            &payload.asset_path,
+            state.remote_video_max_height,
+            state.remote_video_max_size_mb,
+        )
+        .await
+        {
             Ok(path) => path,
             Err(err) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
         };
@@ -1549,6 +1921,61 @@ async fn read_video_ambilight(
     state.ambilight_cache.write().await.insert(
         key,
         CachedAmbilight {
+            modified,
+            size: metadata.len(),
+            response: response.clone(),
+        },
+    );
+    Json(response).into_response()
+}
+
+async fn read_spectral_analysis(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<AssetRequest>,
+) -> Response {
+    if !authorized(&headers, &state.token) {
+        return error(StatusCode::UNAUTHORIZED, "Token inválido.");
+    }
+    let note_path = normalize_note_path(&payload.note_path);
+    match note_is_allowed(&state, &note_path).await {
+        Ok(true) => {}
+        _ => return error(StatusCode::NOT_FOUND, "Nota não permitida."),
+    }
+    let path = match resolve_asset(&state, &note_path, &payload.asset_path).await {
+        Ok(v) => v,
+        Err(err) => return error(StatusCode::NOT_FOUND, err.to_string()),
+    };
+    let metadata = match tokio::fs::metadata(&path).await {
+        Ok(v) => v,
+        Err(err) => return error(StatusCode::NOT_FOUND, err.to_string()),
+    };
+    let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+    let key = path.to_string_lossy().to_string();
+    if let Some(cached) = state
+        .spectral_cache
+        .read()
+        .await
+        .get(&key)
+        .filter(|v| v.modified == modified && v.size == metadata.len())
+        .cloned()
+    {
+        return Json(cached.response).into_response();
+    }
+    let analysis_path = path.clone();
+    let response =
+        match tokio::task::spawn_blocking(move || analyze_audio_spectral(&analysis_path)).await {
+            Ok(Ok(v)) => v,
+            Ok(Err(err)) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
+            Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        };
+    println!(
+        "[AUDIO] MFCC/PCA pronto: {} pontos (40 → 3 dimensões).",
+        response.points.len()
+    );
+    state.spectral_cache.write().await.insert(
+        key,
+        CachedSpectral {
             modified,
             size: metadata.len(),
             response: response.clone(),
@@ -1815,7 +2242,12 @@ fn parse_midi_file(path: &Path) -> Result<MidiVizResponse> {
         n.beat_in_measure = start % measure_beats;
         n.hand = hand as u8;
         n.voice = voice as u8;
-        let sharps = key_signatures_raw.iter().filter(|point| point.0 as f64 <= n.start_beat * ticks_per_beat as f64).last().map(|point| point.1).unwrap_or(0);
+        let sharps = key_signatures_raw
+            .iter()
+            .filter(|point| point.0 as f64 <= n.start_beat * ticks_per_beat as f64)
+            .last()
+            .map(|point| point.1)
+            .unwrap_or(0);
         n.spelling = (if sharps < 0 { flat } else { sharp })[(n.pitch % 12) as usize].to_string();
         n.dotted = [0.25, 0.5, 1.0, 2.0, 4.0]
             .iter()
@@ -1885,16 +2317,283 @@ fn parse_midi_file(path: &Path) -> Result<MidiVizResponse> {
     })
 }
 
-fn midi_score_indices(notes: &[MidiVizNote]) -> (Vec<MidiPlaybackEvent>, std::collections::BTreeMap<u32, Vec<usize>>) {
+fn midi_score_indices(
+    notes: &[MidiVizNote],
+) -> (
+    Vec<MidiPlaybackEvent>,
+    std::collections::BTreeMap<u32, Vec<usize>>,
+) {
     let mut events = Vec::with_capacity(notes.len() * 2);
     let mut pages = std::collections::BTreeMap::new();
     for (index, note) in notes.iter().enumerate() {
-        events.push(MidiPlaybackEvent { time: note.start, note: index, on: true });
-        events.push(MidiPlaybackEvent { time: note.start + note.duration.max(0.0), note: index, on: false });
-        pages.entry(note.measure.saturating_sub(1) / 4).or_insert_with(Vec::new).push(index);
+        events.push(MidiPlaybackEvent {
+            time: note.start,
+            note: index,
+            on: true,
+        });
+        events.push(MidiPlaybackEvent {
+            time: note.start + note.duration.max(0.0),
+            note: index,
+            on: false,
+        });
+        pages
+            .entry(note.measure.saturating_sub(1) / 4)
+            .or_insert_with(Vec::new)
+            .push(index);
     }
     events.sort_by(|a, b| a.time.total_cmp(&b.time).then(a.on.cmp(&b.on)));
     (events, pages)
+}
+
+fn score_renderer_script() -> Option<PathBuf> {
+    if let Some(path) = env::var_os("SPACE_SCORE_RENDERER") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let mut candidates = Vec::new();
+    if let Ok(current) = env::current_dir() {
+        candidates.push(current.join("score-renderer").join("render-score.mjs"));
+    }
+    if let Ok(executable) = env::current_exe() {
+        if let Some(workspace) = executable
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+        {
+            candidates.push(workspace.join("score-renderer").join("render-score.mjs"));
+        }
+    }
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+fn rasterize_score_svg(svg_path: &Path, png_path: &Path) -> Result<()> {
+    let svg = fs::read(svg_path)?;
+    let options = resvg::usvg::Options::default();
+    let tree = resvg::usvg::Tree::from_data(&svg, &options)?;
+    let size = tree.size();
+    let scale = (1536.0 / size.width()).min(2.0).max(1.0);
+    let width = (size.width() * scale).round().clamp(1.0, 2048.0) as u32;
+    let height = (size.height() * scale).round().clamp(1.0, 3072.0) as u32;
+    let mut pixmap =
+        resvg::tiny_skia::Pixmap::new(width, height).context("Invalid score page size")?;
+    pixmap.fill(resvg::tiny_skia::Color::from_rgba8(246, 241, 232, 255));
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    let mut min_x = width;
+    let mut min_y = height;
+    let mut max_x = 0u32;
+    let mut max_y = 0u32;
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = pixmap.pixel(x, y).unwrap();
+            if pixel.alpha() > 16
+                && (pixel.red() < 226 || pixel.green() < 226 || pixel.blue() < 226)
+            {
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+    if min_x <= max_x && min_y <= max_y {
+        let padding = 20u32;
+        let left = min_x.saturating_sub(padding);
+        let top = min_y.saturating_sub(padding);
+        let right = (max_x + padding + 1).min(width);
+        let bottom = (max_y + padding + 1).min(height);
+        if let Some(rect) = resvg::tiny_skia::IntRect::from_xywh(
+            left as i32,
+            top as i32,
+            right - left,
+            bottom - top,
+        ) {
+            if let Some(cropped) = pixmap.as_ref().clone_rect(rect) {
+                cropped.save_png(png_path)?;
+                return Ok(());
+            }
+        }
+    }
+    pixmap.save_png(png_path)?;
+    Ok(())
+}
+
+async fn prepare_midi_score(path: &Path, metadata: &fs::Metadata) -> Result<(PathBuf, Value)> {
+    let mut hasher = DefaultHasher::new();
+    path.hash(&mut hasher);
+    metadata.len().hash(&mut hasher);
+    metadata
+        .modified()
+        .unwrap_or(SystemTime::UNIX_EPOCH)
+        .hash(&mut hasher);
+    "webmscore-1.2.1-piano-crop-v2".hash(&mut hasher);
+    let directory = env::temp_dir()
+        .join("obsidian-ar-score-cache")
+        .join(format!("{:016x}", hasher.finish()));
+    let manifest_path = directory.join("manifest.json");
+    if !manifest_path.is_file() {
+        let _guard = SCORE_RENDER_LOCK.lock().await;
+        if !manifest_path.is_file() {
+            let script = score_renderer_script().context(
+                "Optional score renderer is not installed. Run npm install --prefix score-renderer.",
+            )?;
+            tokio::fs::create_dir_all(&directory).await?;
+            println!("[MIDI] engraving outside XR: {}", path.display());
+            let output = tokio::time::timeout(
+                Duration::from_secs(120),
+                Command::new("node")
+                    .arg(script)
+                    .arg("--input")
+                    .arg(path)
+                    .arg("--output")
+                    .arg(&directory)
+                    .kill_on_drop(true)
+                    .output(),
+            )
+            .await
+            .context("Score engraving timed out")??;
+            if !output.status.success() {
+                bail!(
+                    "webmscore failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                );
+            }
+            let value: Value = match serde_json::from_slice(&output.stdout) {
+                Ok(value) => value,
+                Err(_) => serde_json::from_slice(&fs::read(&manifest_path)?)?,
+            };
+            let pages = value["pages"]
+                .as_array()
+                .context("webmscore returned no pages")?;
+            let work = pages
+                .iter()
+                .enumerate()
+                .map(|(index, page)| {
+                    let svg = directory.join(page.as_str().unwrap_or_default());
+                    let png = directory.join(format!("page-{index}.png"));
+                    (svg, png)
+                })
+                .collect::<Vec<_>>();
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                for (svg, png) in work {
+                    rasterize_score_svg(&svg, &png)?;
+                }
+                Ok(())
+            })
+            .await??;
+            println!("[MIDI] engraved score cached: {} pages", pages.len());
+        }
+    }
+    let manifest: Value = serde_json::from_slice(&tokio::fs::read(&manifest_path).await?)?;
+    Ok((directory, manifest))
+}
+
+async fn prepare_midi_score_route(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<AssetRequest>,
+) -> Response {
+    if !authorized(&headers, &state.token) {
+        return error(StatusCode::UNAUTHORIZED, "Token inválido.");
+    }
+    let note_path = normalize_note_path(&payload.note_path);
+    if !matches!(note_is_allowed(&state, &note_path).await, Ok(true)) {
+        return error(StatusCode::NOT_FOUND, "Nota não permitida.");
+    }
+    let path = match resolve_asset(&state, &note_path, &payload.asset_path).await {
+        Ok(path) => path,
+        Err(err) => return error(StatusCode::NOT_FOUND, err.to_string()),
+    };
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    if !extension.eq_ignore_ascii_case("mid") && !extension.eq_ignore_ascii_case("midi") {
+        return error(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "The selected asset is not a MIDI file.",
+        );
+    }
+    let metadata = match fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(err) => return error(StatusCode::NOT_FOUND, err.to_string()),
+    };
+    let (directory, manifest) = match prepare_midi_score(&path, &metadata).await {
+        Ok(result) => result,
+        Err(err) => return error(StatusCode::SERVICE_UNAVAILABLE, err.to_string()),
+    };
+    let page_count = manifest["pageCount"].as_u64().unwrap_or_default() as usize;
+    let mut random = [0u8; 24];
+    rand::rng().fill_bytes(&mut random);
+    let ticket = random
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let now = Instant::now();
+    let mut tickets = state.score_tickets.write().await;
+    tickets.retain(|_, entry| entry.expires_at > now);
+    if tickets.len() >= 64 {
+        if let Some(oldest) = tickets
+            .iter()
+            .min_by_key(|(_, entry)| entry.expires_at)
+            .map(|(key, _)| key.clone())
+        {
+            tickets.remove(&oldest);
+        }
+    }
+    tickets.insert(
+        ticket.clone(),
+        ScoreTicket {
+            directory,
+            page_count,
+            expires_at: now + MEDIA_TICKET_TTL,
+        },
+    );
+    Json(MidiScoreManifestResponse {
+        engine: "webmscore",
+        page_count,
+        ticket,
+        segment_positions: manifest
+            .get("segmentPositions")
+            .filter(|value| !value.is_null())
+            .cloned(),
+        measure_positions: manifest
+            .get("measurePositions")
+            .filter(|value| !value.is_null())
+            .cloned(),
+    })
+    .into_response()
+}
+
+async fn read_midi_score_page(
+    State(state): State<AppState>,
+    AxumPath((ticket, page)): AxumPath<(String, usize)>,
+    headers: HeaderMap,
+) -> Response {
+    if !authorized(&headers, &state.token) {
+        return error(StatusCode::UNAUTHORIZED, "Token inválido.");
+    }
+    let entry = state.score_tickets.read().await.get(&ticket).cloned();
+    let Some(entry) =
+        entry.filter(|entry| entry.expires_at > Instant::now() && page < entry.page_count)
+    else {
+        return error(StatusCode::NOT_FOUND, "Score page expired or unavailable.");
+    };
+    match tokio::fs::read(entry.directory.join(format!("page-{page}.png"))).await {
+        Ok(bytes) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "image/png")
+            .header(header::CACHE_CONTROL, "private, max-age=1800")
+            .body(Body::from(bytes))
+            .unwrap(),
+        Err(err) => error(StatusCode::NOT_FOUND, err.to_string()),
+    }
 }
 
 async fn read_midi(
@@ -2037,15 +2736,34 @@ async fn stream_media_file(path: &Path, headers: &HeaderMap, cache_control: &str
 
 fn default_remote_video_hosts() -> HashSet<String> {
     ["youtube.com", "youtu.be", "streamable.com"]
-        .into_iter().map(str::to_string).collect()
+        .into_iter()
+        .map(str::to_string)
+        .collect()
 }
 
 fn remote_video_url_allowed(value: &str, allowed_hosts: &HashSet<String>) -> bool {
-    let Ok(url) = reqwest::Url::parse(value) else { return false; };
-    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() || url.port().is_some_and(|port| port != 443) { return false; }
-    let Some(host) = url.host_str().map(|host| host.trim_end_matches('.').to_ascii_lowercase()) else { return false; };
-    if host.parse::<std::net::IpAddr>().is_ok() || host == "localhost" { return false; }
-    allowed_hosts.iter().any(|allowed| host == *allowed || host.ends_with(&format!(".{allowed}")))
+    let Ok(url) = reqwest::Url::parse(value) else {
+        return false;
+    };
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some_and(|port| port != 443)
+    {
+        return false;
+    }
+    let Some(host) = url
+        .host_str()
+        .map(|host| host.trim_end_matches('.').to_ascii_lowercase())
+    else {
+        return false;
+    };
+    if host.parse::<std::net::IpAddr>().is_ok() || host == "localhost" {
+        return false;
+    }
+    allowed_hosts
+        .iter()
+        .any(|allowed| host == *allowed || host.ends_with(&format!(".{allowed}")))
 }
 
 async fn prepare_remote_video(url: &str, max_height: u16, max_size_mb: u64) -> Result<PathBuf> {
@@ -2140,6 +2858,77 @@ async fn prepare_remote_video(url: &str, max_height: u16, max_size_mb: u64) -> R
     Ok(output_path)
 }
 
+async fn read_remote_spectral_analysis(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<RemoteVideoRequest>,
+) -> Response {
+    if !authorized(&headers, &state.token) {
+        return error(StatusCode::UNAUTHORIZED, "Token inválido.");
+    }
+    let note_path = normalize_note_path(&payload.note_path);
+    if !matches!(note_is_allowed(&state, &note_path).await, Ok(true)) {
+        return error(StatusCode::NOT_FOUND, "Nota não permitida.");
+    }
+    if !remote_video_url_allowed(&payload.url, &state.remote_video_hosts) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Plataforma de vídeo não permitida.",
+        );
+    }
+    let downloaded = match prepare_remote_video(
+        &payload.url,
+        state.remote_video_max_height,
+        state.remote_video_max_size_mb,
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(err) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
+    };
+    let path = match compatible_video_asset(&state, &downloaded).await {
+        Ok(v) => v,
+        Err(err) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
+    };
+    let metadata = match tokio::fs::metadata(&path).await {
+        Ok(v) => v,
+        Err(err) => return error(StatusCode::NOT_FOUND, err.to_string()),
+    };
+    let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+    let key = format!("remote:{}", path.to_string_lossy());
+    if let Some(cached) = state
+        .spectral_cache
+        .read()
+        .await
+        .get(&key)
+        .filter(|v| v.modified == modified && v.size == metadata.len())
+        .cloned()
+    {
+        return Json(cached.response).into_response();
+    }
+    let analysis_path = path.clone();
+    let response =
+        match tokio::task::spawn_blocking(move || analyze_audio_spectral(&analysis_path)).await {
+            Ok(Ok(v)) => v,
+            Ok(Err(err)) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
+            Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        };
+    println!(
+        "[AUDIO] MFCC/PCA remoto pronto: {} pontos cobrindo {:.1}s.",
+        response.points.len(),
+        response.duration
+    );
+    state.spectral_cache.write().await.insert(
+        key,
+        CachedSpectral {
+            modified,
+            size: metadata.len(),
+            response: response.clone(),
+        },
+    );
+    Json(response).into_response()
+}
+
 async fn create_youtube_ticket(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -2158,7 +2947,13 @@ async fn create_youtube_ticket(
             "Somente URLs HTTPS de plataformas de vídeo permitidas são aceitas.",
         );
     }
-    let path = match prepare_remote_video(&payload.url, state.remote_video_max_height, state.remote_video_max_size_mb).await {
+    let path = match prepare_remote_video(
+        &payload.url,
+        state.remote_video_max_height,
+        state.remote_video_max_size_mb,
+    )
+    .await
+    {
         Ok(path) => path,
         Err(err) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
     };
@@ -2460,11 +3255,12 @@ async fn read_remote_image(
         .unwrap()
 }
 
-
 fn valid_stock_symbol(symbol: &str) -> bool {
     !symbol.is_empty()
         && symbol.len() <= 32
-        && symbol.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"-._^=".contains(&byte))
+        && symbol
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-._^=".contains(&byte))
 }
 
 async fn read_stock_chart(
@@ -2481,23 +3277,45 @@ async fn read_stock_chart(
     }
     let days = payload.days.unwrap_or(30).clamp(2, 3650);
     let key = format!("{symbol}:{days}");
-    if let Some(cached) = state.stock_cache.read().await.get(&key)
-        .filter(|cached| cached.expires_at > Instant::now()).cloned()
+    if let Some(cached) = state
+        .stock_cache
+        .read()
+        .await
+        .get(&key)
+        .filter(|cached| cached.expires_at > Instant::now())
+        .cloned()
     {
         return Json(cached.response).into_response();
     }
     let range = match days {
-        0..=7 => "7d", 8..=31 => "1mo", 32..=93 => "3mo",
-        94..=186 => "6mo", 187..=366 => "1y", 367..=732 => "2y",
-        733..=1826 => "5y", _ => "10y",
+        0..=7 => "7d",
+        8..=31 => "1mo",
+        32..=93 => "3mo",
+        94..=186 => "6mo",
+        187..=366 => "1y",
+        367..=732 => "2y",
+        733..=1826 => "5y",
+        _ => "10y",
     };
     let url = format!("https://query1.finance.yahoo.com/v8/finance/chart/{symbol}");
-    let response = match state.remote_client.get(url)
-        .query(&[("range", range), ("interval", "1d"), ("events", "div,splits")])
-        .send().await
+    let response = match state
+        .remote_client
+        .get(url)
+        .query(&[
+            ("range", range),
+            ("interval", "1d"),
+            ("events", "div,splits"),
+        ])
+        .send()
+        .await
     {
         Ok(response) if response.status().is_success() => response,
-        Ok(response) => return error(StatusCode::BAD_GATEWAY, format!("Yahoo Finance: HTTP {}", response.status())),
+        Ok(response) => {
+            return error(
+                StatusCode::BAD_GATEWAY,
+                format!("Yahoo Finance: HTTP {}", response.status()),
+            )
+        }
         Err(err) => return error(StatusCode::BAD_GATEWAY, err.to_string()),
     };
     let json: Value = match response.json().await {
@@ -2505,42 +3323,99 @@ async fn read_stock_chart(
         Err(err) => return error(StatusCode::BAD_GATEWAY, err.to_string()),
     };
     let Some(result) = json.pointer("/chart/result/0") else {
-        let message = json.pointer("/chart/error/description").and_then(Value::as_str).unwrap_or("Cotação indisponível.");
+        let message = json
+            .pointer("/chart/error/description")
+            .and_then(Value::as_str)
+            .unwrap_or("Cotação indisponível.");
         return error(StatusCode::BAD_GATEWAY, message);
     };
-    let timestamps = result.get("timestamp").and_then(Value::as_array).cloned().unwrap_or_default();
-    let quote = result.pointer("/indicators/quote/0").unwrap_or(&Value::Null);
-    let values = |name: &str| quote.get(name).and_then(Value::as_array).cloned().unwrap_or_default();
-    let opens = values("open"); let highs = values("high"); let lows = values("low");
-    let closes = values("close"); let volumes = values("volume");
+    let timestamps = result
+        .get("timestamp")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let quote = result
+        .pointer("/indicators/quote/0")
+        .unwrap_or(&Value::Null);
+    let values = |name: &str| {
+        quote
+            .get(name)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let opens = values("open");
+    let highs = values("high");
+    let lows = values("low");
+    let closes = values("close");
+    let volumes = values("volume");
     let mut points = Vec::with_capacity(timestamps.len().min(512));
     for index in 0..timestamps.len() {
-        let Some(close) = closes.get(index).and_then(Value::as_f64) else { continue };
+        let Some(close) = closes.get(index).and_then(Value::as_f64) else {
+            continue;
+        };
         points.push(StockPoint {
             timestamp: timestamps[index].as_i64().unwrap_or_default(),
             open: opens.get(index).and_then(Value::as_f64).unwrap_or(close),
             high: highs.get(index).and_then(Value::as_f64).unwrap_or(close),
             low: lows.get(index).and_then(Value::as_f64).unwrap_or(close),
             close,
-            volume: volumes.get(index).and_then(Value::as_u64).unwrap_or_default(),
+            volume: volumes
+                .get(index)
+                .and_then(Value::as_u64)
+                .unwrap_or_default(),
         });
     }
-    if points.is_empty() { return error(StatusCode::NOT_FOUND, "Yahoo Finance não retornou preços."); }
-    if points.len() > usize::from(days) { points = points.split_off(points.len() - usize::from(days)); }
+    if points.is_empty() {
+        return error(StatusCode::NOT_FOUND, "Yahoo Finance não retornou preços.");
+    }
+    if points.len() > usize::from(days) {
+        points = points.split_off(points.len() - usize::from(days));
+    }
     let meta = result.get("meta").unwrap_or(&Value::Null);
-    let price = meta.get("regularMarketPrice").and_then(Value::as_f64).unwrap_or_else(|| points.last().unwrap().close);
+    let price = meta
+        .get("regularMarketPrice")
+        .and_then(Value::as_f64)
+        .unwrap_or_else(|| points.last().unwrap().close);
     let baseline = points.first().map(|point| point.close).unwrap_or(price);
     let response = StockChartResponse {
         symbol: symbol.clone(),
-        name: meta.get("longName").or_else(|| meta.get("shortName")).and_then(Value::as_str).unwrap_or(&symbol).to_string(),
-        currency: meta.get("currency").and_then(Value::as_str).unwrap_or("USD").to_string(),
+        name: meta
+            .get("longName")
+            .or_else(|| meta.get("shortName"))
+            .and_then(Value::as_str)
+            .unwrap_or(&symbol)
+            .to_string(),
+        currency: meta
+            .get("currency")
+            .and_then(Value::as_str)
+            .unwrap_or("USD")
+            .to_string(),
         price,
-        change_percent: if baseline.abs() > f64::EPSILON { (price - baseline) / baseline * 100.0 } else { 0.0 },
-        updated_at: meta.get("regularMarketTime").and_then(Value::as_i64).unwrap_or_default(),
+        change_percent: if baseline.abs() > f64::EPSILON {
+            (price - baseline) / baseline * 100.0
+        } else {
+            0.0
+        },
+        updated_at: meta
+            .get("regularMarketTime")
+            .and_then(Value::as_i64)
+            .unwrap_or_default(),
         points,
     };
-    println!("[STOCK] {}: {} pontos ({})", response.symbol, response.points.len(), range);
-    state.stock_cache.write().await.insert(key, CachedStock { expires_at: Instant::now() + Duration::from_secs(60), response: response.clone() });
+    println!(
+        "[STOCK] {}: {} pontos ({})",
+        response.symbol,
+        response.points.len(),
+        range
+    );
+    state.stock_cache.write().await.insert(
+        key,
+        CachedStock {
+            expires_at: Instant::now() + Duration::from_secs(60),
+            response: response.clone(),
+        },
+    );
     Json(response).into_response()
 }
 
@@ -2558,10 +3433,26 @@ async fn main() -> Result<()> {
         .filter(|path| path.is_file());
     let pending = env::var_os("SPACE_PENDING_OPTIMIZATION_PATH").map(PathBuf::from);
     let remote_video_hosts = env::var("SPACE_REMOTE_VIDEO_HOSTS")
-        .ok().map(|value| value.split(',').map(|host| host.trim().trim_start_matches("*.").to_ascii_lowercase()).filter(|host| !host.is_empty()).collect::<HashSet<_>>())
-        .filter(|hosts| !hosts.is_empty()).unwrap_or_else(default_remote_video_hosts);
-    let remote_video_max_height = env::var("SPACE_REMOTE_VIDEO_MAX_HEIGHT").ok().and_then(|value| value.parse::<u16>().ok()).unwrap_or(720).clamp(360, 1080);
-    let remote_video_max_size_mb = env::var("SPACE_REMOTE_VIDEO_MAX_SIZE_MB").ok().and_then(|value| value.parse::<u64>().ok()).unwrap_or(256).clamp(32, 512);
+        .ok()
+        .map(|value| {
+            value
+                .split(',')
+                .map(|host| host.trim().trim_start_matches("*.").to_ascii_lowercase())
+                .filter(|host| !host.is_empty())
+                .collect::<HashSet<_>>()
+        })
+        .filter(|hosts| !hosts.is_empty())
+        .unwrap_or_else(default_remote_video_hosts);
+    let remote_video_max_height = env::var("SPACE_REMOTE_VIDEO_MAX_HEIGHT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(720)
+        .clamp(360, 1080);
+    let remote_video_max_size_mb = env::var("SPACE_REMOTE_VIDEO_MAX_SIZE_MB")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(256)
+        .clamp(32, 512);
     let state = AppState {
         token,
         vault: Arc::new(vault),
@@ -2572,11 +3463,13 @@ async fn main() -> Result<()> {
         note_cache: Default::default(),
         asset_cache: Default::default(),
         waveform_cache: Default::default(),
+        spectral_cache: Default::default(),
         midi_cache: Default::default(),
         ambilight_cache: Default::default(),
         video_cache: Default::default(),
         stock_cache: Default::default(),
         media_tickets: Default::default(),
+        score_tickets: Default::default(),
         remote_video_hosts: Arc::new(remote_video_hosts),
         remote_video_max_height,
         remote_video_max_size_mb,
@@ -2598,7 +3491,10 @@ async fn main() -> Result<()> {
             header::HeaderName::from_static("cf-access-client-id"),
             header::HeaderName::from_static("cf-access-client-secret"),
         ]);
-    println!("Vídeo remoto: até {}p / {} MB; hosts: {:?}", state.remote_video_max_height, state.remote_video_max_size_mb, state.remote_video_hosts);
+    println!(
+        "Vídeo remoto: até {}p / {} MB; hosts: {:?}",
+        state.remote_video_max_height, state.remote_video_max_size_mb, state.remote_video_hosts
+    );
     let app = Router::new()
         .route("/health", get(health))
         .route("/verify", get(verify))
@@ -2611,7 +3507,14 @@ async fn main() -> Result<()> {
         .route("/youtube-ticket", post(create_youtube_ticket))
         .route("/media/{ticket}", get(read_media_ticket))
         .route("/waveform", post(read_waveform))
+        .route("/spectral-analysis", post(read_spectral_analysis))
+        .route(
+            "/remote-spectral-analysis",
+            post(read_remote_spectral_analysis),
+        )
         .route("/midi", post(read_midi))
+        .route("/midi-score", post(prepare_midi_score_route))
+        .route("/midi-score/{ticket}/{page}", get(read_midi_score_page))
         .route("/video-ambilight", post(read_video_ambilight))
         .route("/stock-chart", post(read_stock_chart))
         .route("/remote-image", post(read_remote_image))
@@ -2631,26 +3534,40 @@ async fn main() -> Result<()> {
 mod midi_score_index_tests {
     use super::*;
     fn note(start: f64, duration: f64, measure: u32) -> MidiVizNote {
-        MidiVizNote { pitch:60,start,duration,start_beat:start,duration_beats:duration,
-            velocity:100,channel:0,track:0,quantized_start_beat:start,
-            quantized_duration_beats:duration,measure,beat_in_measure:0.0,
-            hand:1,voice:0,spelling:"C".into(),dotted:false }
+        MidiVizNote {
+            pitch: 60,
+            start,
+            duration,
+            start_beat: start,
+            duration_beats: duration,
+            velocity: 100,
+            channel: 0,
+            track: 0,
+            quantized_start_beat: start,
+            quantized_duration_beats: duration,
+            measure,
+            beat_in_measure: 0.0,
+            hand: 1,
+            voice: 0,
+            spelling: "C".into(),
+            dotted: false,
+        }
     }
     #[test]
     fn indices_preserve_chords_note_off_order_and_score_pages() {
-        let notes=vec![note(0.0,1.0,1),note(0.0,2.0,1),note(1.0,1.0,5)];
-        let (events,pages)=midi_score_indices(&notes);
-        assert_eq!(events.len(),6);
-        assert_eq!(pages.get(&0),Some(&vec![0,1]));
-        assert_eq!(pages.get(&1),Some(&vec![2]));
-        let boundary:Vec<_>=events.iter().filter(|e|e.time==1.0).collect();
+        let notes = vec![note(0.0, 1.0, 1), note(0.0, 2.0, 1), note(1.0, 1.0, 5)];
+        let (events, pages) = midi_score_indices(&notes);
+        assert_eq!(events.len(), 6);
+        assert_eq!(pages.get(&0), Some(&vec![0, 1]));
+        assert_eq!(pages.get(&1), Some(&vec![2]));
+        let boundary: Vec<_> = events.iter().filter(|e| e.time == 1.0).collect();
         assert!(!boundary[0].on);
         assert!(boundary[1].on);
-        assert_eq!(boundary[1].note,2);
+        assert_eq!(boundary[1].note, 2);
     }
     #[test]
     fn indices_accept_empty_midi() {
-        let (events,pages)=midi_score_indices(&[]);
-        assert!(events.is_empty()&&pages.is_empty());
+        let (events, pages) = midi_score_indices(&[]);
+        assert!(events.is_empty() && pages.is_empty());
     }
 }
