@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const html = await readFile(new URL("../public/xr.html", import.meta.url), "utf8");
+const renderer = await readFile(new URL("../../score-renderer/render-score.mjs", import.meta.url), "utf8");
 
 test("loads optional engraved score pages without replacing the MIDI fallback", () => {
   assert.match(html, /prepareMidiVizEngraving/);
@@ -15,4 +16,13 @@ test("keeps the playback overlay separate from the engraved page texture", () =>
   assert.match(html, /midiVizScorePlayhead/);
   assert.match(html, /midiVizScoreHighlight/);
   assert.match(html, /midiVizEngravedManifest/);
+});
+
+
+test("consolidates imported tracks into one acoustic piano score", () => {
+  assert.match(renderer, /normalizeMidiToPiano/);
+  assert.match(renderer, /tracks: "merged"/);
+  assert.match(renderer, /instrument: "acoustic-grand-piano"/);
+  assert.match(html, /midiVizMeasureInfo\(currentTime\)\.page/);
+  assert.match(html, /PlaneGeometry\(AR_VIDEO_WIDTH \* 0\.9, 0\.006\)/);
 });

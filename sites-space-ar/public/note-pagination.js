@@ -52,7 +52,7 @@ export function measureVisibleNoteContent(container) {
     range.selectNodeContents(node);
     for(const rect of range.getClientRects())add(rect);
   }
-  for(const element of container.querySelectorAll('img,svg,canvas,video,audio,hr,.note-video-card,.note-audio-card,.note-timestamp-card,.note-music-abc,.note-midi-viz,.note-chess,.note-rubik,.note-protein,.note-mermaid,.note-gene-code,.note-chronos,.note-smiles')){
+  for(const element of container.querySelectorAll('img,svg,canvas,video,audio,hr,.note-video-card,.note-audio-card,.note-timestamp-card,.note-music-abc,.note-midi-viz,.note-chess,.note-rubik,.note-protein,.note-mermaid,.note-gene-code,.note-chronos,.note-smiles,.note-species-map')){
     if(visible(element))add(element.getBoundingClientRect());
   }
   return ink;

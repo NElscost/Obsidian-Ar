@@ -87,27 +87,29 @@ async function occurrenceClusters(config, taxonKey, center) {
 }
 
 const BRAZIL_BOUNDS = { west: -74.2, east: -32.0, north: 5.6, south: -34.2 };
-const BRAZIL_SHAPE = [[115,64],[196,43],[260,58],[315,42],[376,76],[432,81],[485,117],[558,126],[618,171],[672,218],[693,274],[667,321],[625,345],[608,401],[563,429],[548,490],[507,532],[469,544],[440,514],[411,472],[365,450],[330,411],[282,395],[252,348],[205,323],[177,275],[139,245],[124,197],[88,165],[101,116]];
+const BRAZIL_SHAPE = [[-73.9,-7.5],[-70.1,2.2],[-60.0,5.2],[-51.6,4.1],[-49.7,0.2],[-44.0,-2.5],[-34.8,-7.0],[-35.2,-13.0],[-38.7,-18.5],[-41.0,-22.8],[-48.5,-28.5],[-53.4,-33.7],[-57.7,-30.2],[-57.0,-22.1],[-61.5,-19.0],[-58.4,-13.0],[-65.2,-9.5],[-70.0,-11.0]];
+let brazilGeometryPromise;
 function brazilPoint(lon,lat){return{x:(lon-BRAZIL_BOUNDS.west)/(BRAZIL_BOUNDS.east-BRAZIL_BOUNDS.west)*720+90,y:(BRAZIL_BOUNDS.north-lat)/(BRAZIL_BOUNDS.north-BRAZIL_BOUNDS.south)*520+42}}
-function brazilPath(context){context.beginPath();BRAZIL_SHAPE.forEach(([x,y],i)=>i?context.lineTo(x,y):context.moveTo(x,y));context.closePath();}
+async function brazilGeometry(){if(!brazilGeometryPromise)brazilGeometryPromise=fetch('https://raw.githubusercontent.com/johan/world.geo.json/master/countries/BRA.geo.json',{credentials:'omit',cache:'force-cache'}).then(r=>{if(!r.ok)throw Error('Brazil geometry HTTP '+r.status);return r.json()}).then(x=>x.geometry?.coordinates||x.features?.[0]?.geometry?.coordinates||[BRAZIL_SHAPE]).catch(()=>[BRAZIL_SHAPE]);return brazilGeometryPromise}
+function brazilPath(context,geometry){const polygons=Array.isArray(geometry?.[0]?.[0]?.[0])?geometry:[geometry];context.beginPath();for(const polygon of polygons)for(const ring of polygon){ring.forEach(([lon,lat],i)=>{const q=brazilPoint(lon,lat);i?context.lineTo(q.x,q.y):context.moveTo(q.x,q.y)});context.closePath();}}
 async function brazilOccurrences(taxonKey){const q=new URLSearchParams({taxon_key:String(taxonKey),country:'BR',has_coordinate:'true',limit:'1000'}),r=await fetch('https://api.gbif.org/v1/occurrence/search?'+q,{credentials:'omit',cache:'force-cache'});if(!r.ok)throw Error('GBIF occurrences HTTP '+r.status);return (await r.json()).results||[];}
 export async function speciesMapRaster(source) {
  const config=parseSpeciesMapConfig(source);if(!config.taxon)throw Error('No taxon configured.');if(config.source!=='gbif')throw Error('Unsupported source: '+config.source);
- const cacheKey=JSON.stringify(config)+':biomes-v1';if(rasterCache.has(cacheKey))return rasterCache.get(cacheKey);
- const pending=(async()=>{const taxon=await resolveTaxonKey(config.taxon),records=await brazilOccurrences(taxon.key),canvas=document.createElement('canvas');canvas.width=900;canvas.height=600;const c=canvas.getContext('2d',{alpha:true});c.clearRect(0,0,900,600);
-  c.save();brazilPath(c);c.clip();c.fillStyle='rgba(179,225,169,.88)';c.fillRect(0,0,900,600);
+ const cacheKey=JSON.stringify(config)+':biomes-v2';if(rasterCache.has(cacheKey))return rasterCache.get(cacheKey);
+ const pending=(async()=>{const taxon=await resolveTaxonKey(config.taxon),[records,geometry]=await Promise.all([brazilOccurrences(taxon.key),brazilGeometry()]),canvas=document.createElement('canvas');canvas.width=900;canvas.height=600;const c=canvas.getContext('2d',{alpha:true});c.clearRect(0,0,900,600);
+  c.save();brazilPath(c,geometry);c.clip();c.fillStyle='rgba(179,225,169,.88)';c.fillRect(0,0,900,600);
   c.fillStyle='rgba(126,205,108,.78)';c.beginPath();c.ellipse(275,190,245,170,-.25,0,Math.PI*2);c.fill();
   c.fillStyle='rgba(255,231,151,.76)';c.beginPath();c.ellipse(515,285,205,175,.22,0,Math.PI*2);c.fill();
   c.fillStyle='rgba(255,184,160,.72)';c.beginPath();c.ellipse(600,370,130,205,.3,0,Math.PI*2);c.fill();
   c.fillStyle='rgba(183,238,177,.9)';c.fillRect(548,180,52,350);c.fillStyle='rgba(255,224,238,.78)';c.beginPath();c.ellipse(335,420,140,75,0,0,Math.PI*2);c.fill();c.restore();
-  brazilPath(c);c.strokeStyle='rgba(235,255,240,.88)';c.lineWidth=3;c.stroke();
+  brazilPath(c,geometry);c.strokeStyle='rgba(235,255,240,.88)';c.lineWidth=3;c.stroke();
   c.fillStyle='rgba(255,24,30,.9)';for(const r of records){const lon=Number(r.decimalLongitude),lat=Number(r.decimalLatitude);if(!Number.isFinite(lon)||!Number.isFinite(lat))continue;const q=brazilPoint(lon,lat);c.beginPath();c.arc(q.x,q.y,2.2,0,Math.PI*2);c.fill();}
   const legend=[['Amazon','#7ecd6c'],['Caatinga','#ffe797'],['Cerrado','#ffb8a0'],['Atlantic Forest','#b7eeb1'],['Pampa','#ffe0ee']];c.font='600 14px system-ui';c.textAlign='left';legend.forEach((x,i)=>{const y=438+i*24;c.fillStyle=x[1];c.fillRect(105,y,16,16);c.fillStyle='#eaf3ff';c.fillText(x[0],130,y+13)});
   c.fillStyle='#f4f8ff';c.font='700 25px system-ui';c.fillText(taxon.scientificName,92,28);c.fillStyle='#ff3940';c.font='600 14px system-ui';c.fillText(records.length.toLocaleString()+' sampled occurrence points',565,574);
   return{dataUrl:canvas.toDataURL('image/webp',.88),config,taxon};})();rasterCache.set(cacheKey,pending);while(rasterCache.size>10)rasterCache.delete(rasterCache.keys().next().value);try{return await pending}catch(e){rasterCache.delete(cacheKey);throw e}
 }
 function mapCoordinate(config, u, v) {
-  if (Math.abs(config.center[0] + 15) < 12 && Math.abs(config.center[1] + 55) < 18) return { lat: BRAZIL_BOUNDS.north - THREE_NUMBER(v) * (BRAZIL_BOUNDS.north - BRAZIL_BOUNDS.south), lon: BRAZIL_BOUNDS.west + THREE_NUMBER(u) * (BRAZIL_BOUNDS.east - BRAZIL_BOUNDS.west) };
+  if (Math.abs(config.center[0] + 15) < 12 && Math.abs(config.center[1] + 55) < 18) return { lat: BRAZIL_BOUNDS.north - THREE_NUMBER((v * 600 - 42) / 520) * (BRAZIL_BOUNDS.north - BRAZIL_BOUNDS.south), lon: BRAZIL_BOUNDS.west + THREE_NUMBER((u * 900 - 90) / 720) * (BRAZIL_BOUNDS.east - BRAZIL_BOUNDS.west) };
   const center = tileAt(config.center[0], config.center[1], config.zoom);
   const tileX = center.x - 1 + THREE_NUMBER(u) * 3;
   const tileY = center.y - 1 + THREE_NUMBER(v) * 2;
@@ -128,9 +130,9 @@ export async function speciesRegionPanelRaster(source, u, v) {
   context.fillStyle = "#f3f8ff"; context.font = "700 34px system-ui"; context.fillText(result.taxon.scientificName, 34, 48);
   context.fillStyle = "#9fb2c9"; context.font = "22px system-ui"; context.fillText(`${result.name} · ${result.count.toLocaleString()} regional records`,34,82);
   const loaded = await Promise.allSettled(result.photos.slice(0,4).map((item)=>bitmap(item.url,true)));
-  loaded.forEach((entry,index)=>{const x=34+(index%2)*310,y=112+Math.floor(index/2)*208;context.fillStyle="#142238";context.fillRect(x,y,292,180);if(entry.status==="fulfilled"&&entry.value){const image=entry.value,scale=Math.max(292/image.width,180/image.height),w=image.width*scale,h=image.height*scale;context.save();context.beginPath();context.rect(x,y,292,180);context.clip();context.drawImage(image,x+(292-w)/2,y+(180-h)/2,w,h);context.restore();image.close?.();}context.fillStyle="rgba(3,8,16,.78)";context.fillRect(x,y+148,292,32);context.fillStyle="#fff";context.font="17px system-ui";context.fillText(result.photos[index]?.creator?.slice(0,28)||"Photo",x+9,y+169);});
+  loaded.forEach((entry,index)=>{const x=34+(index%2)*310,y=112+Math.floor(index/2)*208;context.fillStyle="#142238";context.fillRect(x,y,292,180);if(entry.status==="fulfilled"&&entry.value){const image=entry.value,scale=Math.max(292/image.width,180/image.height),w=image.width*scale,h=image.height*scale;context.save();context.beginPath();context.rect(x,y,292,180);context.clip();context.drawImage(image,x+(292-w)/2,y+(180-h)/2,w,h);context.restore();image.close?.();}context.fillStyle="rgba(3,8,16,.78)";context.fillRect(x,y+148,292,32);context.fillStyle="#fff";context.font="17px system-ui";context.fillText(result.photos[index]?.creator?.slice(0,28)||"Photo",x+9,y+169);context.fillStyle="rgba(3,8,16,.82)";context.beginPath();context.arc(x+24,y+24,15,0,Math.PI*2);context.fill();context.strokeStyle="#fff";context.lineWidth=2;context.strokeRect(x+17,y+19,14,10);context.beginPath();context.arc(x+24,y+24,3,0,Math.PI*2);context.stroke();});
   context.fillStyle="#dce8f7"; context.font="700 25px system-ui"; context.fillText("Sounds",680,126);
-  result.sounds.forEach((item,index)=>{const y=154+index*88;context.fillStyle=index%2?"#122238":"#172a43";context.fillRect(674,y,316,72);context.fillStyle="#73e6ce";context.font="700 21px system-ui";context.fillText(`▶ Recording ${index+1}`,690,y+29);context.fillStyle="#b6c5d7";context.font="16px system-ui";context.fillText((item.creator||"Observer").slice(0,34),690,y+54);});
+  result.sounds.forEach((item,index)=>{const y=154+index*88;context.fillStyle=index%2?"#122238":"#172a43";context.fillRect(674,y,316,72);context.fillStyle="#73e6ce";context.font="700 21px system-ui";context.beginPath();context.arc(696,y+27,14,0,Math.PI*2);context.fill();context.fillStyle="#07111d";context.beginPath();context.moveTo(692,y+20);context.lineTo(702,y+27);context.lineTo(692,y+34);context.closePath();context.fill();context.fillStyle="#73e6ce";context.fillText("Recording "+(index+1),718,y+34);context.fillStyle="#b6c5d7";context.font="16px system-ui";context.fillText((item.creator||"Observer").slice(0,34),690,y+54);});
   if(!result.photos.length){context.fillStyle="#9fb2c9";context.font="24px system-ui";context.fillText("No photos found in this region.",34,150);}
   if(!result.sounds.length){context.fillStyle="#9fb2c9";context.font="22px system-ui";context.fillText("No sounds found in this region.",680,168);}
   context.fillStyle="#71849d";context.font="16px system-ui";context.fillText("Records: GBIF · media: original publishers · select another map region to refresh",34,620);

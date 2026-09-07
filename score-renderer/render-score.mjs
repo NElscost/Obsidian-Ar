@@ -16,9 +16,23 @@ const output = argument("--output");
 if (!input || !output) throw new Error("Usage: render-score --input <score.mid> --output <cache-dir>");
 await mkdir(output, { recursive: true });
 function normalizeMidiToPiano(bytes) {
- const d=new Uint8Array(bytes),u=p=>((d[p]<<24)|(d[p+1]<<16)|(d[p+2]<<8)|d[p+3])>>>0,v=q=>{let x=0;for(let n=0;n<4&&q.p<q.e;n++){const b=d[q.p++];x=(x<<7)|(b&127);if(!(b&128))break;}return x;};
- if(String.fromCharCode(...d.slice(0,4))!=='MThd')return d;let o=8+u(4);
- while(o+8<=d.length&&String.fromCharCode(...d.slice(o,o+4))==='MTrk'){const l=u(o+4),q={p:o+8,e:Math.min(d.length,o+8+l)};let r=0;while(q.p<q.e){v(q);if(q.p>=q.e)break;let s=d[q.p];if(s&128){r=s;q.p++;}else s=r;if(!s)break;if(s===255){q.p++;q.p+=v(q);}else if(s===240||s===247)q.p+=v(q);else{const c=s&240,ch=s&15;if(c===192){if(ch!==9&&q.p<q.e)d[q.p]=0;q.p++;}else q.p+=c===208?1:2;}}o+=8+l;}return d;
+  const source=new Uint8Array(bytes),u32=p=>((source[p]<<24)|(source[p+1]<<16)|(source[p+2]<<8)|source[p+3])>>>0;
+  const vlq=q=>{let value=0;for(let count=0;count<4&&q.pos<q.end;count++){const byte=source[q.pos++];value=(value<<7)|(byte&127);if(!(byte&128))break;}return value;};
+  const encodeVlq=value=>{const out=[value&127];while((value>>>=7)>0)out.unshift((value&127)|128);return out;};
+  if(String.fromCharCode(...source.slice(0,4))!=='MThd'||source.length<14)return source;
+  const division=[source[12],source[13]],events=[];let offset=8+u32(4),order=0;
+  while(offset+8<=source.length&&String.fromCharCode(...source.slice(offset,offset+4))==='MTrk'){
+    const length=u32(offset+4),q={pos:offset+8,end:Math.min(source.length,offset+8+length)};let tick=0,running=0;
+    while(q.pos<q.end){tick+=vlq(q);if(q.pos>=q.end)break;let status=source[q.pos];if(status&128){running=status;q.pos++;}else status=running;if(!status)break;
+      if(status===255){const type=source[q.pos++],size=vlq(q),payload=[...source.slice(q.pos,Math.min(q.end,q.pos+size))];q.pos+=size;if([81,88,89].includes(type))events.push({tick,order:order++,priority:0,data:[255,type,...encodeVlq(payload.length),...payload]});}
+      else if(status===240||status===247){q.pos+=vlq(q);}
+      else{const cmd=status&240,size=(cmd===192||cmd===208)?1:2,data=[...source.slice(q.pos,Math.min(q.end,q.pos+size))];q.pos+=size;if((cmd===128||cmd===144)&&data.length===2)events.push({tick,order:order++,priority:cmd===128||data[1]===0?1:2,data:[cmd,data[0],data[1]]});}
+    }offset+=8+length;
+  }
+  events.sort((x,y)=>x.tick-y.tick||x.priority-y.priority||x.order-y.order);const track=[0,192,0];let previous=0;
+  for(const event of events){track.push(...encodeVlq(Math.max(0,event.tick-previous)),...event.data);previous=event.tick;}track.push(0,255,47,0);
+  const output=[77,84,104,100,0,0,0,6,0,0,0,1,...division,77,84,114,107,(track.length>>>24)&255,(track.length>>>16)&255,(track.length>>>8)&255,track.length&255,...track];
+  return new Uint8Array(output);
 }
 const midi = normalizeMidiToPiano(await readFile(input));
 
@@ -46,7 +60,7 @@ try {
   const segmentPositions = await optional(() => score.segmentPositions());
   const measurePositions = segmentPositions ? await optional(() => score.measurePositions()) : null;
   const manifest = {
-    version: 2, engine: "webmscore", instrument: "acoustic-grand-piano",
+    version: 3, engine: "webmscore", instrument: "acoustic-grand-piano", tracks: "merged",
     title: basename(input).replace(/\.(?:mid|midi)$/i, ""),
     pageCount, pages, segmentPositions, measurePositions
   };

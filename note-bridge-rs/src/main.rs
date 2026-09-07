@@ -2432,7 +2432,7 @@ async fn prepare_midi_score(path: &Path, metadata: &fs::Metadata) -> Result<(Pat
         .modified()
         .unwrap_or(SystemTime::UNIX_EPOCH)
         .hash(&mut hasher);
-    "webmscore-1.2.1-piano-crop-v2".hash(&mut hasher);
+    "webmscore-1.2.1-piano-merged-crop-v3".hash(&mut hasher);
     let directory = env::temp_dir()
         .join("obsidian-ar-score-cache")
         .join(format!("{:016x}", hasher.finish()));
