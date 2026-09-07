@@ -775,7 +775,7 @@
     import { createGeneCodeExtension } from "/vendor/gene-code/gene-code.js?v=2";
     import { createChronosExtension } from "/vendor/chronos/chronos-ar.js";
     import { createSpectralTrailExtension } from "/vendor/audio/spectral-trail-ar.js?v=18";
-    import { renderSpeciesMapBlocks, speciesRegionPanelRaster } from "/vendor/species-map/species-map.js?v=8";
+    import { renderSpeciesMapBlocks, speciesRegionPanelRaster } from "/vendor/species-map/species-map.js?v=9";
     import { marked } from "https://cdn.jsdelivr.net/npm/marked@15.0.12/+esm";
     import DOMPurify from "https://cdn.jsdelivr.net/npm/dompurify@3.2.6/+esm";
 
@@ -3226,7 +3226,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
     function drawMidiVizScore(currentTime,force=false){
       if(!midiVizScoreTexture||!midiVizData)return;
-      if(midiVizEngravedManifest?.pageCount){const page=Math.min(midiVizEngravedManifest.pageCount-1,Math.max(0,midiVizMeasureInfo(currentTime).page));if(!force&&page===midiVizScoreWindow)return;midiVizScoreWindow=page;midiVizScoreLayout=new Map();void loadMidiVizEngravedPage(page);return;}
+      if(midiVizEngravedManifest?.pageCount){const pageDuration=Math.max(.001,(Number(midiVizData.duration)||1)/midiVizEngravedManifest.pageCount),page=Math.min(midiVizEngravedManifest.pageCount-1,Math.max(0,Math.floor(currentTime/pageDuration)));if(!force&&page===midiVizScoreWindow)return;midiVizScoreWindow=page;midiVizScoreLayout=new Map();void loadMidiVizEngravedPage(page);return;}
       const page=midiVizMeasureInfo(currentTime).page;
       if(!force&&page===midiVizScoreWindow)return;
       midiVizScoreWindow=page;
@@ -3255,7 +3255,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function updateMidiVizScoreHighlight(currentTime,time){
       if(!midiVizScorePlayhead||!midiVizScoreHighlight||!midiVizData)return;
       if(time-midiVizLastScoreHighlightUpdate<40)return;midiVizLastScoreHighlightUpdate=time;
-      if(midiVizEngravedManifest?.pageCount){const note=midiVizActiveNoteAt(currentTime),beats=Math.max(1,Number(midiVizData.beatsPerMeasure)||4),measure=Math.max(1,Number(note?.measure)||1),within=THREE.MathUtils.clamp((((measure-1)%4)+(Number(note?.beatInMeasure)||0)/beats)/4,0,1);midiVizScorePlayhead.position.x=0;midiVizScorePlayhead.position.y=AR_VIDEO_HEIGHT*.42-within*AR_VIDEO_HEIGHT*.84;midiVizScorePlayhead.visible=true;midiVizScoreHighlight.visible=false;return;}
+      if(midiVizEngravedManifest?.pageCount){const pageDuration=Math.max(.001,(Number(midiVizData.duration)||1)/midiVizEngravedManifest.pageCount),page=Math.min(midiVizEngravedManifest.pageCount-1,Math.max(0,Math.floor(currentTime/pageDuration))),within=THREE.MathUtils.clamp((currentTime-page*pageDuration)/pageDuration,0,1);midiVizScorePlayhead.position.x=0;midiVizScorePlayhead.position.y=AR_VIDEO_HEIGHT*.42-within*AR_VIDEO_HEIGHT*.84;midiVizScorePlayhead.visible=true;midiVizScoreHighlight.visible=false;return;}
       const ids=activeScoreNotes(scoreIndex(midiVizData),currentTime),layout=midiVizScoreLayout;
       if(!layout?.glyphs)return;
       const signature=layout.page+':'+ids.join(',');
@@ -6915,6 +6915,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       let progressiveCapture = null;
       if (cachedPages) {
         arNotePages = cachedPages;
+        const requiresSpeciesMapHotspot = /```species-map\b/i.test(String(source ?? ""));
         const hasMediaHotspotMetadata = arNotePages.every((page) =>
           Array.isArray(page?.mediaHotspots) &&
           page.mediaHotspots.every((hotspot) =>
@@ -6928,7 +6929,9 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
               Number.isFinite(hotspot.scoreViewWidth) &&
               Number.isFinite(hotspot.scoreViewHeight))
           )
-        );
+        ) && (!requiresSpeciesMapHotspot || arNotePages.some((page) =>
+          page.mediaHotspots.some((hotspot) => hotspot.kind === "species-map")
+        ));
         if (!hasMediaHotspotMetadata) {
           // Legacy/session entries without metadata are rebuilt once from this
           // note's DOM instead of inheriting the previously opened note.

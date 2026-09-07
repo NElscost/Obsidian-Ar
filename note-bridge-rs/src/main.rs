@@ -2369,14 +2369,14 @@ fn score_renderer_script() -> Option<PathBuf> {
     candidates.into_iter().find(|path| path.is_file())
 }
 
-fn rasterize_score_svg(svg_path: &Path, png_path: &Path) -> Result<()> {
+fn rasterize_score_svg(svg_path: &Path, output_dir: &Path, first_page: usize) -> Result<usize> {
     let svg = fs::read(svg_path)?;
     let options = resvg::usvg::Options::default();
     let tree = resvg::usvg::Tree::from_data(&svg, &options)?;
     let size = tree.size();
     let scale = (1536.0 / size.width()).min(2.0).max(1.0);
     let width = (size.width() * scale).round().clamp(1.0, 2048.0) as u32;
-    let height = (size.height() * scale).round().clamp(1.0, 3072.0) as u32;
+    let height = (size.height() * scale).round().clamp(1.0, 4096.0) as u32;
     let mut pixmap =
         resvg::tiny_skia::Pixmap::new(width, height).context("Invalid score page size")?;
     pixmap.fill(resvg::tiny_skia::Color::from_rgba8(246, 241, 232, 255));
@@ -2385,16 +2385,16 @@ fn rasterize_score_svg(svg_path: &Path, png_path: &Path) -> Result<()> {
         resvg::tiny_skia::Transform::from_scale(scale, scale),
         &mut pixmap.as_mut(),
     );
+    let is_ink = |pixel: resvg::tiny_skia::PremultipliedColorU8| {
+        pixel.alpha() > 16 && (pixel.red() < 226 || pixel.green() < 226 || pixel.blue() < 226)
+    };
     let mut min_x = width;
     let mut min_y = height;
     let mut max_x = 0u32;
     let mut max_y = 0u32;
     for y in 0..height {
         for x in 0..width {
-            let pixel = pixmap.pixel(x, y).unwrap();
-            if pixel.alpha() > 16
-                && (pixel.red() < 226 || pixel.green() < 226 || pixel.blue() < 226)
-            {
+            if is_ink(pixmap.pixel(x, y).unwrap()) {
                 min_x = min_x.min(x);
                 min_y = min_y.min(y);
                 max_x = max_x.max(x);
@@ -2402,26 +2402,74 @@ fn rasterize_score_svg(svg_path: &Path, png_path: &Path) -> Result<()> {
             }
         }
     }
-    if min_x <= max_x && min_y <= max_y {
-        let padding = 20u32;
+    let cropped = if min_x <= max_x && min_y <= max_y {
+        let padding = 16u32;
         let left = min_x.saturating_sub(padding);
         let top = min_y.saturating_sub(padding);
         let right = (max_x + padding + 1).min(width);
         let bottom = (max_y + padding + 1).min(height);
-        if let Some(rect) = resvg::tiny_skia::IntRect::from_xywh(
+        let rect = resvg::tiny_skia::IntRect::from_xywh(
             left as i32,
             top as i32,
             right - left,
             bottom - top,
-        ) {
-            if let Some(cropped) = pixmap.as_ref().clone_rect(rect) {
-                cropped.save_png(png_path)?;
-                return Ok(());
+        )
+        .context("Invalid score crop")?;
+        pixmap
+            .as_ref()
+            .clone_rect(rect)
+            .context("Unable to crop score")?
+    } else {
+        pixmap
+    };
+    // WebMscore emits portrait paper pages. Split them into landscape bands so
+    // each WebXR page uses the full panel without clipping systems horizontally.
+    let ideal_height = ((cropped.width() as f32) * 600.0 / 1024.0)
+        .round()
+        .max(240.0) as u32;
+    let mut top = 0u32;
+    let mut written = 0usize;
+    while top < cropped.height() {
+        let remaining = cropped.height() - top;
+        let mut bottom = if remaining <= ideal_height + ideal_height / 4 {
+            cropped.height()
+        } else {
+            (top + ideal_height).min(cropped.height())
+        };
+        if bottom < cropped.height() {
+            let search_start = (top + ideal_height * 3 / 4).max(top + 1);
+            let search_end = (top + ideal_height * 5 / 4).min(cropped.height() - 1);
+            let mut best = bottom;
+            let mut best_ink = u32::MAX;
+            for y in search_start..=search_end {
+                let mut ink = 0u32;
+                for x in (0..cropped.width()).step_by(4) {
+                    if is_ink(cropped.pixel(x, y).unwrap()) {
+                        ink += 1;
+                    }
+                }
+                if ink < best_ink {
+                    best_ink = ink;
+                    best = y;
+                    if ink == 0 {
+                        break;
+                    }
+                }
             }
+            bottom = best.max(top + 1);
         }
+        let rect =
+            resvg::tiny_skia::IntRect::from_xywh(0, top as i32, cropped.width(), bottom - top)
+                .context("Invalid score band")?;
+        let band = cropped
+            .as_ref()
+            .clone_rect(rect)
+            .context("Unable to split score")?;
+        band.save_png(output_dir.join(format!("page-{}.png", first_page + written)))?;
+        written += 1;
+        top = bottom;
     }
-    pixmap.save_png(png_path)?;
-    Ok(())
+    Ok(written.max(1))
 }
 
 async fn prepare_midi_score(path: &Path, metadata: &fs::Metadata) -> Result<(PathBuf, Value)> {
@@ -2432,7 +2480,7 @@ async fn prepare_midi_score(path: &Path, metadata: &fs::Metadata) -> Result<(Pat
         .modified()
         .unwrap_or(SystemTime::UNIX_EPOCH)
         .hash(&mut hasher);
-    "webmscore-1.2.1-piano-merged-crop-v3".hash(&mut hasher);
+    "webmscore-1.2.1-piano-only-bands-v4".hash(&mut hasher);
     let directory = env::temp_dir()
         .join("obsidian-ar-score-cache")
         .join(format!("{:016x}", hasher.finish()));
@@ -2464,7 +2512,7 @@ async fn prepare_midi_score(path: &Path, metadata: &fs::Metadata) -> Result<(Pat
                     String::from_utf8_lossy(&output.stderr).trim()
                 );
             }
-            let value: Value = match serde_json::from_slice(&output.stdout) {
+            let mut value: Value = match serde_json::from_slice(&output.stdout) {
                 Ok(value) => value,
                 Err(_) => serde_json::from_slice(&fs::read(&manifest_path)?)?,
             };
@@ -2473,21 +2521,26 @@ async fn prepare_midi_score(path: &Path, metadata: &fs::Metadata) -> Result<(Pat
                 .context("webmscore returned no pages")?;
             let work = pages
                 .iter()
-                .enumerate()
-                .map(|(index, page)| {
-                    let svg = directory.join(page.as_str().unwrap_or_default());
-                    let png = directory.join(format!("page-{index}.png"));
-                    (svg, png)
-                })
+                .map(|page| directory.join(page.as_str().unwrap_or_default()))
                 .collect::<Vec<_>>();
-            tokio::task::spawn_blocking(move || -> Result<()> {
-                for (svg, png) in work {
-                    rasterize_score_svg(&svg, &png)?;
+            let raster_directory = directory.clone();
+            let raster_page_count = tokio::task::spawn_blocking(move || -> Result<usize> {
+                let mut next_page = 0usize;
+                for svg in work {
+                    next_page += rasterize_score_svg(&svg, &raster_directory, next_page)?;
                 }
-                Ok(())
+                Ok(next_page)
             })
             .await??;
-            println!("[MIDI] engraved score cached: {} pages", pages.len());
+            value["pageCount"] = json!(raster_page_count);
+            value["pages"] = json!((0..raster_page_count)
+                .map(|index| format!("page-{index}.png"))
+                .collect::<Vec<_>>());
+            fs::write(&manifest_path, serde_json::to_vec(&value)?)?;
+            println!(
+                "[MIDI] engraved score cached: {} landscape pages",
+                raster_page_count
+            );
         }
     }
     let manifest: Value = serde_json::from_slice(&tokio::fs::read(&manifest_path).await?)?;

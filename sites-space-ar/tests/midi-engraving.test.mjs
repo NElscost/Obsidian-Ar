@@ -19,10 +19,10 @@ test("keeps the playback overlay separate from the engraved page texture", () =>
 });
 
 
-test("consolidates imported tracks into one acoustic piano score", () => {
+test("filters imported tracks into one acoustic piano score", () => {
   assert.match(renderer, /normalizeMidiToPiano/);
-  assert.match(renderer, /tracks: "merged"/);
+  assert.match(renderer, /tracks: "piano-only"/);
   assert.match(renderer, /instrument: "acoustic-grand-piano"/);
-  assert.match(html, /midiVizMeasureInfo\(currentTime\)\.page/);
+  assert.match(html, /Math\.floor\(currentTime\/pageDuration\)/);
   assert.match(html, /PlaneGeometry\(AR_VIDEO_WIDTH \* 0\.9, 0\.006\)/);
 });

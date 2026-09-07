@@ -922,7 +922,7 @@ test("renders Audio Player fenced blocks as selectable AR audio cards", async ()
 
 test("renders GBIF species maps as cached XR-safe rasters", async () => {
   const html = await readFile(xrUrl, "utf8");
-  assert.match(html, /species-map\.js\?v=8/);
+  assert.match(html, /species-map\.js\?v=9/);
   assert.match(html, /data-note-species-map/);
   assert.match(html, /await renderSpeciesMapBlocks\(noteContent\)/);
   assert.match(html, /request !== speciesRegionRequest/);
