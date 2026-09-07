@@ -2369,7 +2369,7 @@ fn score_renderer_script() -> Option<PathBuf> {
     candidates.into_iter().find(|path| path.is_file())
 }
 
-fn rasterize_score_svg(svg_path: &Path, output_dir: &Path, first_page: usize) -> Result<usize> {
+fn rasterize_score_svg_systems(svg_path: &Path) -> Result<Vec<resvg::tiny_skia::Pixmap>> {
     let svg = fs::read(svg_path)?;
     let options = resvg::usvg::Options::default();
     let tree = resvg::usvg::Tree::from_data(&svg, &options)?;
@@ -2388,6 +2388,13 @@ fn rasterize_score_svg(svg_path: &Path, output_dir: &Path, first_page: usize) ->
     let is_ink = |pixel: resvg::tiny_skia::PremultipliedColorU8| {
         pixel.alpha() > 16 && (pixel.red() < 226 || pixel.green() < 226 || pixel.blue() < 226)
     };
+    let row_has_ink = |image: &resvg::tiny_skia::Pixmap, y: u32| {
+        (0..image.width())
+            .step_by(3)
+            .filter(|x| is_ink(image.pixel(*x, y).unwrap()))
+            .count()
+            > 2
+    };
     let mut min_x = width;
     let mut min_y = height;
     let mut max_x = 0u32;
@@ -2403,7 +2410,7 @@ fn rasterize_score_svg(svg_path: &Path, output_dir: &Path, first_page: usize) ->
         }
     }
     let cropped = if min_x <= max_x && min_y <= max_y {
-        let padding = 16u32;
+        let padding = 18u32;
         let left = min_x.saturating_sub(padding);
         let top = min_y.saturating_sub(padding);
         let right = (max_x + padding + 1).min(width);
@@ -2422,56 +2429,100 @@ fn rasterize_score_svg(svg_path: &Path, output_dir: &Path, first_page: usize) ->
     } else {
         pixmap
     };
-    // WebMscore emits portrait paper pages. Split them into landscape bands so
-    // each WebXR page uses the full panel without clipping systems horizontally.
-    let ideal_height = ((cropped.width() as f32) * 600.0 / 1024.0)
-        .round()
-        .max(240.0) as u32;
-    let mut top = 0u32;
-    let mut written = 0usize;
-    while top < cropped.height() {
-        let remaining = cropped.height() - top;
-        let mut bottom = if remaining <= ideal_height + ideal_height / 4 {
-            cropped.height()
-        } else {
-            (top + ideal_height).min(cropped.height())
-        };
-        if bottom < cropped.height() {
-            let search_start = (top + ideal_height * 3 / 4).max(top + 1);
-            let search_end = (top + ideal_height * 5 / 4).min(cropped.height() - 1);
-            let mut best = bottom;
-            let mut best_ink = u32::MAX;
-            for y in search_start..=search_end {
-                let mut ink = 0u32;
-                for x in (0..cropped.width()).step_by(4) {
-                    if is_ink(cropped.pixel(x, y).unwrap()) {
-                        ink += 1;
-                    }
-                }
-                if ink < best_ink {
-                    best_ink = ink;
-                    best = y;
-                    if ink == 0 {
-                        break;
-                    }
-                }
+
+    // Detect complete staff systems instead of cutting the portrait sheet at a
+    // fixed height. Gaps inside a grand staff remain joined; the larger gap
+    // between systems becomes a safe split point.
+    let gap_limit = ((cropped.height() as f32 * 0.024).round() as u32).clamp(34, 64);
+    let mut ranges = Vec::<(u32, u32)>::new();
+    let mut start = None;
+    let mut last_ink = 0u32;
+    for y in 0..cropped.height() {
+        if row_has_ink(&cropped, y) {
+            if start.is_none() {
+                start = Some(y);
             }
-            bottom = best.max(top + 1);
+            last_ink = y;
+        } else if let Some(top) = start {
+            if y.saturating_sub(last_ink) > gap_limit {
+                ranges.push((
+                    top.saturating_sub(12),
+                    (last_ink + 13).min(cropped.height()),
+                ));
+                start = None;
+            }
         }
-        let rect =
-            resvg::tiny_skia::IntRect::from_xywh(0, top as i32, cropped.width(), bottom - top)
-                .context("Invalid score band")?;
-        let band = cropped
-            .as_ref()
-            .clone_rect(rect)
-            .context("Unable to split score")?;
-        band.save_png(output_dir.join(format!("page-{}.png", first_page + written)))?;
+    }
+    if let Some(top) = start {
+        ranges.push((
+            top.saturating_sub(12),
+            (last_ink + 13).min(cropped.height()),
+        ));
+    }
+    // Keep title/composer metadata with the first musical system.
+    if ranges.len() > 1 && ranges[0].1 - ranges[0].0 < 150 {
+        let first = ranges.remove(0);
+        ranges[0].0 = first.0;
+    }
+    if ranges.is_empty() {
+        ranges.push((0, cropped.height()));
+    }
+    ranges
+        .into_iter()
+        .map(|(top, bottom)| {
+            let rect = resvg::tiny_skia::IntRect::from_xywh(
+                0,
+                top as i32,
+                cropped.width(),
+                bottom.saturating_sub(top).max(1),
+            )
+            .context("Invalid score system")?;
+            cropped
+                .as_ref()
+                .clone_rect(rect)
+                .context("Unable to crop score system")
+        })
+        .collect()
+}
+
+fn write_score_system_pages(
+    systems: Vec<resvg::tiny_skia::Pixmap>,
+    output_dir: &Path,
+) -> Result<usize> {
+    let page_width = 1536u32;
+    let page_height = 900u32;
+    let half_height = page_height / 2;
+    let paint = resvg::tiny_skia::PixmapPaint::default();
+    let mut written = 0usize;
+    for pair in systems.chunks(2) {
+        let mut page = resvg::tiny_skia::Pixmap::new(page_width, page_height)
+            .context("Invalid score output page size")?;
+        page.fill(resvg::tiny_skia::Color::from_rgba8(246, 241, 232, 255));
+        for (slot, system) in pair.iter().enumerate() {
+            let available_width = page_width - 36;
+            let available_height = half_height - 28;
+            let scale = (available_width as f32 / system.width() as f32)
+                .min(available_height as f32 / system.height() as f32);
+            let rendered_width = system.width() as f32 * scale;
+            let rendered_height = system.height() as f32 * scale;
+            let x = ((page_width as f32 - rendered_width) / 2.0).round() as i32;
+            let y = (slot as u32 * half_height + 14) as i32;
+            page.draw_pixmap(
+                x,
+                y,
+                system.as_ref(),
+                &paint,
+                resvg::tiny_skia::Transform::from_scale(scale, scale),
+                None,
+            );
+            // A lone final system stays at the top instead of floating in the center.
+            let _ = rendered_height;
+        }
+        page.save_png(output_dir.join(format!("page-{written}.png")))?;
         written += 1;
-        top = bottom;
     }
     Ok(written.max(1))
 }
-
 async fn prepare_midi_score(path: &Path, metadata: &fs::Metadata) -> Result<(PathBuf, Value)> {
     let mut hasher = DefaultHasher::new();
     path.hash(&mut hasher);
@@ -2480,7 +2531,7 @@ async fn prepare_midi_score(path: &Path, metadata: &fs::Metadata) -> Result<(Pat
         .modified()
         .unwrap_or(SystemTime::UNIX_EPOCH)
         .hash(&mut hasher);
-    "webmscore-1.2.1-piano-only-bands-v4".hash(&mut hasher);
+    "webmscore-1.2.1-piano-only-systems-v5".hash(&mut hasher);
     let directory = env::temp_dir()
         .join("obsidian-ar-score-cache")
         .join(format!("{:016x}", hasher.finish()));
@@ -2525,11 +2576,11 @@ async fn prepare_midi_score(path: &Path, metadata: &fs::Metadata) -> Result<(Pat
                 .collect::<Vec<_>>();
             let raster_directory = directory.clone();
             let raster_page_count = tokio::task::spawn_blocking(move || -> Result<usize> {
-                let mut next_page = 0usize;
+                let mut systems = Vec::new();
                 for svg in work {
-                    next_page += rasterize_score_svg(&svg, &raster_directory, next_page)?;
+                    systems.extend(rasterize_score_svg_systems(&svg)?);
                 }
-                Ok(next_page)
+                write_score_system_pages(systems, &raster_directory)
             })
             .await??;
             value["pageCount"] = json!(raster_page_count);

@@ -3243,7 +3243,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       midiVizScoreGroup.position.set(x,0,radius*(1-Math.cos(angle))); midiVizScoreGroup.rotation.y=angle;
       const panel=new THREE.Mesh(curvedPanelGeometry(AR_VIDEO_WIDTH,AR_VIDEO_HEIGHT,0.022,24),new THREE.MeshBasicMaterial({map:midiVizScoreTexture,transparent:false,depthTest:true,depthWrite:true,toneMapped:false}));
       applyRoundedPanelMask(panel);panel.raycast=()=>{};
-      midiVizScorePlayhead = new THREE.Mesh(new THREE.PlaneGeometry(AR_VIDEO_WIDTH * 0.9, 0.006), new THREE.MeshBasicMaterial({ color:0xffd166, transparent:true, opacity:0.7, depthTest:false, depthWrite:false, toneMapped:false }));
+      midiVizScorePlayhead = new THREE.Mesh(new THREE.RingGeometry(.009, .015, 28), new THREE.MeshBasicMaterial({ color:0xffc928, transparent:true, opacity:.96, depthTest:false, depthWrite:false, toneMapped:false }));
       midiVizScorePlayhead.position.z=0.024; midiVizScorePlayhead.renderOrder=1011; midiVizScorePlayhead.raycast=()=>{};
       const highlightCanvas=document.createElement('canvas');highlightCanvas.width=1024;highlightCanvas.height=600;
       const highlightTexture=new THREE.CanvasTexture(highlightCanvas);highlightTexture.colorSpace=THREE.SRGBColorSpace;highlightTexture.minFilter=THREE.LinearFilter;highlightTexture.generateMipmaps=false;
@@ -3255,7 +3255,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     function updateMidiVizScoreHighlight(currentTime,time){
       if(!midiVizScorePlayhead||!midiVizScoreHighlight||!midiVizData)return;
       if(time-midiVizLastScoreHighlightUpdate<40)return;midiVizLastScoreHighlightUpdate=time;
-      if(midiVizEngravedManifest?.pageCount){const pageDuration=Math.max(.001,(Number(midiVizData.duration)||1)/midiVizEngravedManifest.pageCount),page=Math.min(midiVizEngravedManifest.pageCount-1,Math.max(0,Math.floor(currentTime/pageDuration))),within=THREE.MathUtils.clamp((currentTime-page*pageDuration)/pageDuration,0,1);midiVizScorePlayhead.position.x=0;midiVizScorePlayhead.position.y=AR_VIDEO_HEIGHT*.42-within*AR_VIDEO_HEIGHT*.84;midiVizScorePlayhead.visible=true;midiVizScoreHighlight.visible=false;return;}
+      if(midiVizEngravedManifest?.pageCount){const pageDuration=Math.max(.001,(Number(midiVizData.duration)||1)/midiVizEngravedManifest.pageCount),page=Math.min(midiVizEngravedManifest.pageCount-1,Math.max(0,Math.floor(currentTime/pageDuration))),within=THREE.MathUtils.clamp((currentTime-page*pageDuration)/pageDuration,0,1),systemProgress=(within*2)%1,systemCenter=within<.5?AR_VIDEO_HEIGHT*.225:-AR_VIDEO_HEIGHT*.225,note=midiVizActiveNoteAt(currentTime),pitchOffset=THREE.MathUtils.clamp(((Number(note?.pitch)||60)-60)*.0018,-.045,.045);midiVizScorePlayhead.position.x=-AR_VIDEO_WIDTH*.42+systemProgress*AR_VIDEO_WIDTH*.84;midiVizScorePlayhead.position.y=systemCenter+pitchOffset;midiVizScorePlayhead.visible=Boolean(note);midiVizScoreHighlight.visible=false;return;}
       const ids=activeScoreNotes(scoreIndex(midiVizData),currentTime),layout=midiVizScoreLayout;
       if(!layout?.glyphs)return;
       const signature=layout.page+':'+ids.join(',');
@@ -5008,6 +5008,8 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           control.userData.noteAction = `fasta-open:${encodeURIComponent(hotspot.source)}`;
         } else if (hotspot.kind === "chronos") {
           control.userData.noteAction = `chronos-open:${encodeURIComponent(hotspot.source)}`;
+        } else if (hotspot.kind === "species-map") {
+          control.userData.noteAction = `species-map-region:${encodeURIComponent(hotspot.source)}`;
         }
         control.userData.highlightScale = false;
         (spatialReadingGroup??arNoteGroup).add(control);
@@ -6378,6 +6380,21 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let speciesRegionControls = [];
     let speciesRegionResult = null;
     let speciesRegionRequest = 0;
+    let speciesRegionMarker = null;
+    function markSpeciesRegionControl(control, uv) {
+      if (!control || !uv) return;
+      speciesRegionMarker?.removeFromParent();
+      speciesRegionMarker?.geometry?.dispose?.();
+      speciesRegionMarker?.material?.dispose?.();
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(.008, .012, 24),
+        new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, opacity:.92, depthTest:false, depthWrite:false, toneMapped:false })
+      );
+      const width = Number(control.geometry?.parameters?.width) || .1;
+      const height = Number(control.geometry?.parameters?.height) || .1;
+      ring.position.set((uv.x-.5)*width,(uv.y-.5)*height,.004);
+      ring.renderOrder=1015;ring.raycast=()=>{};control.add(ring);speciesRegionMarker=ring;
+    }
     function disposeSpeciesRegion() {
       const controls = new Set(speciesRegionControls); arNoteControls = arNoteControls.filter((control) => !controls.has(control));
       unregisterSpatialAuxWindow(speciesRegionGroup, false);
@@ -6709,6 +6726,16 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       }
       if (action === "note-media") {
         activateNoteMediaAtUv(options.uv);
+        return;
+      }
+      if (action.startsWith("species-map-region:")) {
+        const source = decodeURIComponent(action.slice("species-map-region:".length));
+        const uv = options.uv;
+        if (!uv || !Number.isFinite(uv.x) || !Number.isFinite(uv.y)) return;
+        markSpeciesRegionControl(options.control, uv);
+        void openSpeciesRegionAtHotspot({ source, x1:0, x2:1, y1:0, y2:1 }, uv).catch((error)=>{
+          console.warn("Species region failed.",error);setXrMessage("Could not load this region.");
+        });
         return;
       }
       if (action === "waveform") {
@@ -9654,6 +9681,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         }
         if (control) {
           activateNoteControl(control.userData.noteAction, event, {
+            control,
             ratio: controlUv?.x,
             uv: controlUv,
             seconds: control.userData.bookmarkSeconds,

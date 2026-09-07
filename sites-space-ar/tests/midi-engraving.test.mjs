@@ -4,6 +4,7 @@ import test from "node:test";
 
 const html = await readFile(new URL("../public/xr.html", import.meta.url), "utf8");
 const renderer = await readFile(new URL("../../score-renderer/render-score.mjs", import.meta.url), "utf8");
+const bridge = await readFile(new URL("../../note-bridge-rs/src/main.rs", import.meta.url), "utf8");
 
 test("loads optional engraved score pages without replacing the MIDI fallback", () => {
   assert.match(html, /prepareMidiVizEngraving/);
@@ -24,5 +25,8 @@ test("filters imported tracks into one acoustic piano score", () => {
   assert.match(renderer, /tracks: "piano-only"/);
   assert.match(renderer, /instrument: "acoustic-grand-piano"/);
   assert.match(html, /Math\.floor\(currentTime\/pageDuration\)/);
-  assert.match(html, /PlaneGeometry\(AR_VIDEO_WIDTH \* 0\.9, 0\.006\)/);
+  assert.match(html, /RingGeometry\(\.009, \.015/);
+  assert.match(html, /systemProgress=\(within\*2\)%1/);
+  assert.match(bridge, /write_score_system_pages/);
+  assert.match(bridge, /systems\.chunks\(2\)/);
 });

@@ -936,4 +936,6 @@ test("routes MIDI and species-map hotspots without duplicate regional windows", 
   assert.match(html, /new THREE\.CanvasTexture\(result\.canvas\)/);
   assert.match(html, /if \(speciesRegionGroup\).*Close the current regional window/s);
   assert.match(html, /\.note-chronos, \.note-species-map, \.note-audio-card/);
+  assert.match(html, /species-map-region:/);
+  assert.match(html, /markSpeciesRegionControl\(options\.control, uv\)/);
 });
