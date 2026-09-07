@@ -183,6 +183,7 @@ fn bridge_capabilities(_state: &AppState) -> Vec<&'static str> {
         "media-tickets",
         "youtube-video",
         "remote-video",
+        "remote-audio",
         "waveform",
         "mfcc-pca",
         "midi-viz",
@@ -3272,6 +3273,135 @@ async fn public_https_image_url_allowed(url: &reqwest::Url) -> bool {
     }
 }
 
+async fn create_remote_audio_ticket(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<RemoteVideoRequest>,
+) -> Response {
+    const MAX_AUDIO_BYTES: u64 = 64 * 1024 * 1024;
+    if !authorized(&headers, &state.token) {
+        return error(StatusCode::UNAUTHORIZED, "Token inválido.");
+    }
+    let note_path = normalize_note_path(&payload.note_path);
+    if !matches!(note_is_allowed(&state, &note_path).await, Ok(true)) {
+        return error(StatusCode::NOT_FOUND, "Nota não permitida.");
+    }
+    let mut url = match reqwest::Url::parse(&payload.url) {
+        Ok(url) if public_https_image_url_allowed(&url).await => url,
+        _ => return error(StatusCode::BAD_REQUEST, "O áudio deve usar HTTPS público."),
+    };
+    let response = {
+        let mut redirects = 0_u8;
+        loop {
+            let response = match state.remote_client.get(url.clone()).send().await {
+                Ok(response) => response,
+                Err(err) => return error(StatusCode::BAD_GATEWAY, err.to_string()),
+            };
+            if response.status().is_redirection() {
+                if redirects >= 5 {
+                    return error(StatusCode::BAD_GATEWAY, "Redirecionamentos demais.");
+                }
+                let Some(location) = response
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|v| v.to_str().ok())
+                else {
+                    return error(StatusCode::BAD_GATEWAY, "Redirecionamento sem destino.");
+                };
+                url = match url.join(location) {
+                    Ok(next) if public_https_image_url_allowed(&next).await => next,
+                    _ => {
+                        return error(
+                            StatusCode::BAD_GATEWAY,
+                            "Redirecionamento de áudio inseguro.",
+                        )
+                    }
+                };
+                redirects += 1;
+                continue;
+            }
+            break response;
+        }
+    };
+    if !response.status().is_success() {
+        return error(
+            StatusCode::BAD_GATEWAY,
+            "O servidor remoto recusou o áudio.",
+        );
+    }
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !content_type.starts_with("audio/") && content_type != "application/ogg" {
+        return error(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "A resposta remota não é áudio.",
+        );
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_AUDIO_BYTES)
+    {
+        return error(StatusCode::PAYLOAD_TOO_LARGE, "Áudio remoto excede 64 MB.");
+    }
+    let bytes = match response.bytes().await {
+        Ok(bytes) if bytes.len() as u64 <= MAX_AUDIO_BYTES => bytes,
+        Ok(_) => return error(StatusCode::PAYLOAD_TOO_LARGE, "Áudio remoto excede 64 MB."),
+        Err(err) => return error(StatusCode::BAD_GATEWAY, err.to_string()),
+    };
+    let extension = match content_type.as_str() {
+        "audio/mpeg" | "audio/mp3" => "mp3",
+        "audio/ogg" | "application/ogg" => "ogg",
+        "audio/wav" | "audio/x-wav" => "wav",
+        "audio/flac" => "flac",
+        "audio/mp4" | "audio/x-m4a" => "m4a",
+        _ => "audio",
+    };
+    let mut hasher = DefaultHasher::new();
+    "remote-species-audio-v1".hash(&mut hasher);
+    payload.url.hash(&mut hasher);
+    let directory = env::temp_dir().join("obsidian-ar-species-audio-cache");
+    if let Err(err) = tokio::fs::create_dir_all(&directory).await {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+    }
+    let path = directory.join(format!("{:016x}.{extension}", hasher.finish()));
+    if let Err(err) = tokio::fs::write(&path, &bytes).await {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+    }
+    let waveform_path = path.clone();
+    let spectral_path = path.clone();
+    let waveform = tokio::task::spawn_blocking(move || analyze_audio_waveform(&waveform_path))
+        .await
+        .ok()
+        .and_then(Result::ok);
+    let spectral = tokio::task::spawn_blocking(move || analyze_audio_spectral(&spectral_path))
+        .await
+        .ok()
+        .and_then(Result::ok);
+    let mut random = [0u8; 32];
+    rand::rng().fill_bytes(&mut random);
+    let ticket = random
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let now = Instant::now();
+    let mut tickets = state.media_tickets.write().await;
+    tickets.retain(|_, entry| entry.expires_at > now);
+    tickets.insert(
+        ticket.clone(),
+        MediaTicket {
+            path,
+            expires_at: now + MEDIA_TICKET_TTL,
+        },
+    );
+    Json(json!({"url":format!("/media/{ticket}"),"contentType":content_type,"size":bytes.len(),"waveform":waveform,"spectral":spectral})).into_response()
+}
 async fn read_remote_image(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -3611,6 +3741,7 @@ async fn main() -> Result<()> {
         .route("/asset", post(read_asset))
         .route("/media-ticket", post(create_media_ticket))
         .route("/youtube-ticket", post(create_youtube_ticket))
+        .route("/remote-audio-ticket", post(create_remote_audio_ticket))
         .route("/media/{ticket}", get(read_media_ticket))
         .route("/waveform", post(read_waveform))
         .route("/spectral-analysis", post(read_spectral_analysis))
