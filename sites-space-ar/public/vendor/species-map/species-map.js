@@ -33,8 +33,14 @@ function tileAt(lat, lon, zoom) {
 
 async function decodeImage(blob) {
   if (!blob.size) return null;
-  try { return await createImageBitmap(blob); }
-  catch {
+  try {
+    const source = await createImageBitmap(blob);
+    const scale = Math.min(1, 1920 / source.width, 1080 / source.height);
+    if (scale >= 1) return source;
+    const resized = await createImageBitmap(source, { resizeWidth: Math.max(1, Math.round(source.width * scale)), resizeHeight: Math.max(1, Math.round(source.height * scale)), resizeQuality: "high" });
+    source.close();
+    return resized;
+  } catch {
     const dataUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result);
@@ -48,7 +54,6 @@ async function decodeImage(blob) {
     return image;
   }
 }
-
 async function resilientFetch(url, options, attempts = 3) {
   let lastError;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
