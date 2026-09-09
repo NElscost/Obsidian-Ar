@@ -416,6 +416,19 @@ available in `Scripts/Update-SpaceModel.ps1` for users who want to export
 Blender scene. This pipeline is still more automated on Windows than on Linux
 or macOS.
 
+
+## Runtime memory budget
+
+Regular note images are resized by the Rust bridge to at most 1920x1080 and
+cached as WebP. The thumbnail cache is pruned asynchronously at 256 files or
+384 MB, whichever limit is reached first. Panoramic wallpapers keep their
+separate 8K path.
+
+The reading window captures only the current page and its immediate neighbours.
+Distant page canvases are released and recreated on demand. Rubik, molecule,
+timeline, and spectral objects outside the camera view update at a reduced
+frequency, preserving anchors and playback while lowering Quest GPU/CPU use.
+
 ## Current limitations
 
 - Obsidian Desktop must remain open because the plugin starts local processes;

@@ -23,5 +23,4 @@ export function createChronosExtension(THREE,api){
  function endDrag(source){if(drag?.source===source)drag=null;}
  function update(time,frame){if(state?.autoRotate&&!drag&&content){const dt=Math.min(40,time-(state.lastFrame||time));content.rotation.y+=dt*.00024;}if(state)state.lastFrame=time;if(!drag||!frame||!content)return;const point=api.pinchPoint?.(frame,drag.source);if(!point){drag=null;return;}const local=group.worldToLocal(point.clone()),dx=local.x-drag.point.x,dy=local.y-drag.point.y;content.rotation.y+=dx*7;content.rotation.x=THREE.MathUtils.clamp(content.rotation.x-dy*7,-1.15,1.15);drag.point.copy(local);}
  function handle(action){if(action==="chronos-drag")return true;if(action==="chronos-close"){dispose();api.message("Timeline closed.");return true;}if(action==="chronos-reset"){content.rotation.set(0,0,0);return true;}if(action==="chronos-rotate"){state.autoRotate=!state.autoRotate;api.message(`Timeline rotation ${state.autoRotate?"enabled":"disabled"}.`);return true;}if(action.startsWith("chronos-event:")){selectEvent(Number(action.slice(14)));return true;}return false;}
- return{parse,layout,drawPreview,renderBlocks,open,dispose,handle,beginDrag,endDrag,update};
-}
+ return{parse,layout,drawPreview,renderBlocks,open,dispose,handle,beginDrag,endDrag,update,getObject:()=>group};}

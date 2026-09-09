@@ -3936,7 +3936,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       const response = await fetch(`${config.url}/asset`, {
         method: "POST",
         headers: bridgeRequestHeaders(config, true),
-        body: JSON.stringify({ notePath, assetPath })
+        body: JSON.stringify({ notePath, assetPath, imageMaxWidth: 1920, imageMaxHeight: 1080 })
       });
       if (!response.ok) {
         const raw = await response.text().catch(() => "");
@@ -3956,7 +3956,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       const response = await fetch(`${config.url}/media-ticket`, {
         method: "POST",
         headers: bridgeRequestHeaders(config, true),
-        body: JSON.stringify({ notePath, assetPath })
+        body: JSON.stringify({ notePath, assetPath, imageMaxWidth: 1920, imageMaxHeight: 1080 })
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -4023,7 +4023,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       const response = await fetch(`${config.url}/waveform`, {
         method: "POST",
         headers: bridgeRequestHeaders(config, true),
-        body: JSON.stringify({ notePath, assetPath })
+        body: JSON.stringify({ notePath, assetPath, imageMaxWidth: 1920, imageMaxHeight: 1080 })
       });
       if (!response.ok) throw new Error(`Forma de onda HTTP ${response.status}`);
       return response.json();
@@ -4057,7 +4057,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       const response = await fetch(`${config.url}/remote-image`, {
         method: "POST",
         headers: bridgeRequestHeaders(config, true),
-        body: JSON.stringify({ url: source })
+        body: JSON.stringify({ url: source, maxWidth: 1920, maxHeight: 1080 })
       });
       if (!response.ok) {
         let detail = `HTTP ${response.status}`;
@@ -4509,6 +4509,27 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         state.requestedPage = null;
         if (Number.isInteger(requestedPage) && deferredNoteCapture === state) {
           void ensureDeferredNotePage(requestedPage);
+        }
+      }
+    }
+
+    async function warmDeferredNotePageWindow(centerIndex) {
+      const state = deferredNoteCapture;
+      if (!state || state.generation !== noteCaptureGeneration || state.path !== arNotePath) return;
+      const first = Math.max(0, centerIndex - 1);
+      const last = Math.min(state.pages.length - 1, centerIndex + 1);
+      for (let index = first; index <= last; index += 1) {
+        if (state !== deferredNoteCapture) return;
+        await ensureDeferredNotePage(index);
+      }
+      if (state.pages.length < 5 || state !== deferredNoteCapture) return;
+      for (let index = 0; index < state.pages.length; index += 1) {
+        if (index >= first && index <= last) continue;
+        const canvas = state.pages[index]?.canvas;
+        if (canvas instanceof HTMLCanvasElement) {
+          canvas.width = 1; canvas.height = 1;
+          state.pages[index].canvas = null;
+          state.pages[index].status = "pending";
         }
       }
     }
@@ -6794,7 +6815,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       if (action === "previous" && arNotePage > 0) { arNotePage -= 1; recordReadingActivity(arNotePath, "page"); }
       if (action === "next" && arNotePage < arNotePages.length - 1) { arNotePage += 1; recordReadingActivity(arNotePath, "page"); }
       drawArNotePage();
-      void ensureDeferredNotePage(arNotePage);
+      void warmDeferredNotePageWindow(arNotePage);
       setXrMessage(`Página ${arNotePage + 1} de ${arNotePages.length}.`);
     }
 
@@ -7081,11 +7102,11 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       arNoteGroup.visible = true;
       notePanel.classList.remove("visible");
       if (progressiveCapture) {
-        const deferRemaining = source.length >= LARGE_NOTE_CAPTURE_CHARACTERS
-          || progressiveCapture.pages.length >= LARGE_NOTE_CAPTURE_PAGES;
+        const deferRemaining = progressiveCapture.pages.length > 1;
         if (deferRemaining) {
           deferredNoteCapture = { ...progressiveCapture, path, title, source };
           finishNoteCapture(progressiveCapture.generation);
+          void warmDeferredNotePageWindow(arNotePage);
           setXrMessage(`Nota grande aberta. As ${progressiveCapture.pages.length} páginas serão preparadas conforme a navegação.`);
         } else {
           void captureRemainingNotePages(
@@ -8184,7 +8205,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
             snapdom, pages: entry.pages, generation, layoutEntries,
             path, title: entry.title, source: entry.source
           };
-          void ensureDeferredNotePage(arNotePage);
+          void warmDeferredNotePageWindow(arNotePage);
           return;
         }
         for (let index = 1; index < entry.pages.length; index += 1) {
@@ -10905,6 +10926,22 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       reticle.visible = true;
     }
 
+
+    const extensionLastUpdate = new WeakMap();
+    function extensionNeedsFrame(extension, time, interval = 650) {
+      const object = extension?.getObject?.();
+      if (!object) return true;
+      if (!object.parent || object.visible === false) return false;
+      const xrCamera = renderer.xr.getCamera(camera);
+      object.getWorldPosition(workingPosition);
+      workingPosition.project(xrCamera);
+      const inView = workingPosition.z >= -1.15 && workingPosition.z <= 1.15 && Math.abs(workingPosition.x) <= 1.35 && Math.abs(workingPosition.y) <= 1.35;
+      if (inView) { extensionLastUpdate.set(extension, time); return true; }
+      const previous = extensionLastUpdate.get(extension) ?? 0;
+      if (time - previous >= interval) { extensionLastUpdate.set(extension, time); return true; }
+      return false;
+    }
+
     function render(time, frame) {
       if (activeNoteVideoLoadingSpinner) activeNoteVideoLoadingSpinner.rotation.z = -time * 0.004;
       if (arNoteGroup.visible && arNotePath && time - dashboardLastReadingTick >= 5000) {
@@ -10930,10 +10967,10 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       updateVideoAmbilight(time);
       updateAbcHighlightPulse(time);
       updateMidiViz(time);
-      rubikExtension.update(time,frame);
-      proteinExtension.update(time,frame,referenceSpace);
-      chronosExtension.update(time,frame);
-      spectralTrailExtension.update(time,frame,referenceSpace);
+      if (extensionNeedsFrame(rubikExtension, time)) rubikExtension.update(time,frame);
+      if (extensionNeedsFrame(proteinExtension, time)) proteinExtension.update(time,frame,referenceSpace);
+      if (extensionNeedsFrame(chronosExtension, time)) chronosExtension.update(time,frame);
+      if (extensionNeedsFrame(spectralTrailExtension, time, 250)) spectralTrailExtension.update(time,frame,referenceSpace);
       if (forceGraph && dynamicGraphTicking) {
         forceGraph.tickFrame();
         syncDynamicNodeProxies();

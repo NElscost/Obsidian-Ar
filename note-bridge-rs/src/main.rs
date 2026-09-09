@@ -346,6 +346,10 @@ struct NoteRequest {
 struct AssetRequest {
     note_path: String,
     asset_path: String,
+    #[serde(default)]
+    image_max_width: Option<u32>,
+    #[serde(default)]
+    image_max_height: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -463,6 +467,10 @@ struct AmbilightResponse {
 #[serde(rename_all = "camelCase")]
 struct RemoteImageRequest {
     url: String,
+    #[serde(default)]
+    max_width: Option<u32>,
+    #[serde(default)]
+    max_height: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -2768,6 +2776,96 @@ async fn read_midi(
     );
     Json(response).into_response()
 }
+
+fn raster_thumbnail_extension(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "jpg" | "jpeg" | "png" | "webp"
+    )
+}
+
+fn thumbnail_cache_path(key: &str) -> PathBuf {
+    let mut hasher = DefaultHasher::new();
+    "note-image-thumbnail-v1".hash(&mut hasher);
+    key.hash(&mut hasher);
+    env::temp_dir()
+        .join("obsidian-ar-image-cache")
+        .join(format!("{:016x}.webp", hasher.finish()))
+}
+
+fn resize_raster_thumbnail(
+    bytes: &[u8],
+    max_width: u32,
+    max_height: u32,
+) -> Result<Option<Vec<u8>>> {
+    let image = image::load_from_memory(bytes).context("Invalid image")?;
+    if image.width() <= max_width && image.height() <= max_height {
+        return Ok(None);
+    }
+    let resized = image.resize(max_width, max_height, image::imageops::FilterType::Triangle);
+    let mut output = std::io::Cursor::new(Vec::new());
+    resized.write_to(&mut output, image::ImageFormat::WebP)?;
+    Ok(Some(output.into_inner()))
+}
+
+async fn cached_thumbnail_response(path: &Path) -> Option<Response> {
+    let bytes = tokio::fs::read(path).await.ok()?;
+    Some(
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "image/webp")
+            .header(header::CACHE_CONTROL, "private, max-age=86400")
+            .header(header::CONTENT_LENGTH, bytes.len())
+            .body(Body::from(bytes))
+            .unwrap(),
+    )
+}
+
+fn schedule_thumbnail_cache_prune(cache_path: &Path) {
+    let Some(directory) = cache_path.parent().map(Path::to_path_buf) else {
+        return;
+    };
+    tokio::spawn(async move {
+        let _ = tokio::task::spawn_blocking(move || {
+            const MAX_FILES: usize = 256;
+            const MAX_BYTES: u64 = 384 * 1024 * 1024;
+            let mut entries = fs::read_dir(&directory)
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| entry.ok())
+                .filter_map(|entry| {
+                    let metadata = entry.metadata().ok()?;
+                    if !metadata.is_file() {
+                        return None;
+                    }
+                    Some((
+                        entry.path(),
+                        metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                        metadata.len(),
+                    ))
+                })
+                .collect::<Vec<_>>();
+            entries.sort_by_key(|entry| entry.1);
+            let mut bytes = entries.iter().map(|entry| entry.2).sum::<u64>();
+            let mut count = entries.len();
+            for (path, _, size) in entries {
+                if count <= MAX_FILES && bytes <= MAX_BYTES {
+                    break;
+                }
+                if fs::remove_file(path).is_ok() {
+                    count = count.saturating_sub(1);
+                    bytes = bytes.saturating_sub(size);
+                }
+            }
+        })
+        .await;
+    });
+}
 async fn read_asset(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -2787,6 +2885,48 @@ async fn read_asset(
                 Ok(path) => path,
                 Err(err) => return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, err.to_string()),
             };
+            let max_width = payload.image_max_width.unwrap_or(0).clamp(0, 1920);
+            let max_height = payload.image_max_height.unwrap_or(0).clamp(0, 1080);
+            if max_width > 0 && max_height > 0 && raster_thumbnail_extension(&path) {
+                let metadata = tokio::fs::metadata(&path).await.ok();
+                let modified = metadata
+                    .as_ref()
+                    .and_then(|value| value.modified().ok())
+                    .and_then(|value| value.duration_since(SystemTime::UNIX_EPOCH).ok())
+                    .map(|value| value.as_secs())
+                    .unwrap_or_default();
+                let key = format!(
+                    "local|{}|{}|{}|{}",
+                    path.display(),
+                    modified,
+                    max_width,
+                    max_height
+                );
+                let cache_path = thumbnail_cache_path(&key);
+                if let Some(response) = cached_thumbnail_response(&cache_path).await {
+                    return response;
+                }
+                if let Ok(bytes) = tokio::fs::read(&path).await {
+                    let resized = tokio::task::spawn_blocking(move || {
+                        resize_raster_thumbnail(&bytes, max_width, max_height)
+                    })
+                    .await;
+                    if let Ok(Ok(Some(output))) = resized {
+                        if let Some(parent) = cache_path.parent() {
+                            let _ = tokio::fs::create_dir_all(parent).await;
+                        }
+                        let _ = tokio::fs::write(&cache_path, &output).await;
+                        schedule_thumbnail_cache_prune(&cache_path);
+                        return Response::builder()
+                            .status(StatusCode::OK)
+                            .header(header::CONTENT_TYPE, "image/webp")
+                            .header(header::CACHE_CONTROL, "private, max-age=86400")
+                            .header(header::CONTENT_LENGTH, output.len())
+                            .body(Body::from(output))
+                            .unwrap();
+                    }
+                }
+            }
             stream_media_file(&path, &headers, "private, max-age=300").await
         }
         Err(err) => error(StatusCode::NOT_FOUND, err.to_string()),
@@ -3420,6 +3560,15 @@ async fn read_remote_image(
             )
         }
     };
+    let max_width = payload.max_width.unwrap_or(0).clamp(0, 1920);
+    let max_height = payload.max_height.unwrap_or(0).clamp(0, 1080);
+    let thumbnail_path =
+        thumbnail_cache_path(&format!("remote|{}|{}|{}", url, max_width, max_height));
+    if max_width > 0 && max_height > 0 {
+        if let Some(response) = cached_thumbnail_response(&thumbnail_path).await {
+            return response;
+        }
+    }
     let response = {
         let mut redirects = 0_u8;
         loop {
@@ -3482,6 +3631,27 @@ async fn read_remote_image(
         Ok(_) => return error(StatusCode::PAYLOAD_TOO_LARGE, "Imagem remota excede 12 MB."),
         Err(err) => return error(StatusCode::BAD_GATEWAY, err.to_string()),
     };
+    if max_width > 0 && max_height > 0 {
+        let source = bytes.to_vec();
+        let resized = tokio::task::spawn_blocking(move || {
+            resize_raster_thumbnail(&source, max_width, max_height)
+        })
+        .await;
+        if let Ok(Ok(Some(output))) = resized {
+            if let Some(parent) = thumbnail_path.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+            let _ = tokio::fs::write(&thumbnail_path, &output).await;
+            schedule_thumbnail_cache_prune(&thumbnail_path);
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "image/webp")
+                .header(header::CACHE_CONTROL, "private, max-age=86400")
+                .header(header::CONTENT_LENGTH, output.len())
+                .body(Body::from(output))
+                .unwrap();
+        }
+    }
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)

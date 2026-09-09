@@ -863,5 +863,4 @@ export function createSpectralTrailExtension(THREE, api) {
     return true;
   }
 
-  return { open, dispose, update, handle, beginDrag, endDrag, setAnalysis, isPlacementArmed: () => placement, place };
-}
+  return{ open, dispose, update, handle, beginDrag, endDrag, setAnalysis, isPlacementArmed: () => placement, place ,getObject:()=>group};}
