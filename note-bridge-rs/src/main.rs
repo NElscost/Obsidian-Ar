@@ -1495,12 +1495,13 @@ fn mfcc_frame(
         .iter()
         .map(|v| v.norm_sqr() / n as f32)
         .collect();
-    let dominant = power
+    let spectral_energy = power.iter().copied().sum::<f32>().max(1e-12);
+    let spectral_centroid = power
         .iter()
         .enumerate()
-        .max_by(|a, b| a.1.total_cmp(b.1))
-        .map(|(i, _)| i)
-        .unwrap_or(0);
+        .map(|(bin, magnitude)| bin as f32 * sample_rate as f32 / n as f32 * magnitude)
+        .sum::<f32>()
+        / spectral_energy;
     let mut mel = [0.0_f32; MFCC_COUNT];
     for (filter, &(left, center, right)) in filters.iter().enumerate() {
         let mut sum = 0.0;
@@ -1528,9 +1529,7 @@ fn mfcc_frame(
             .sum();
     }
     let rms = (energy / frame.len().max(1) as f32).sqrt();
-    let hz = (dominant as f32 * sample_rate as f32 / n as f32)
-        .round()
-        .clamp(0.0, u16::MAX as f32) as u16;
+    let hz = spectral_centroid.round().clamp(0.0, u16::MAX as f32) as u16;
     (coefficients, rms, hz)
 }
 
@@ -1754,7 +1753,7 @@ fn analyze_audio_spectral(path: &Path) -> Result<SpectralAnalysisResponse> {
             0.0
         },
         coefficients: MFCC_COUNT as u8,
-        method: "mfcc40-pca3-v2",
+        method: "mfcc40-pca3-centroid-v3",
         points,
     })
 }
