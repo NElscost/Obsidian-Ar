@@ -6429,17 +6429,25 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let speciesRegionMarker = null;
     function markSpeciesRegionControl(control, uv) {
       if (!control || !uv) return;
-      speciesRegionMarker?.removeFromParent();
-      speciesRegionMarker?.geometry?.dispose?.();
-      speciesRegionMarker?.material?.dispose?.();
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(.008, .012, 24),
-        new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, opacity:.92, depthTest:false, depthWrite:false, toneMapped:false })
-      );
+      let ring = speciesRegionMarker;
+      if (!ring || ring.parent !== control) {
+        ring?.removeFromParent();
+        ring?.geometry?.dispose?.();
+        ring?.material?.dispose?.();
+        ring = new THREE.Mesh(
+          new THREE.RingGeometry(.009, .014, 28),
+          new THREE.MeshBasicMaterial({ color:0x00ff66, transparent:true, opacity:.95, depthTest:false, depthWrite:false, toneMapped:false })
+        );
+        ring.renderOrder=1015;
+        ring.raycast=()=>{};
+        control.add(ring);
+        speciesRegionMarker=ring;
+      }
       const width = Number(control.geometry?.parameters?.width) || .1;
       const height = Number(control.geometry?.parameters?.height) || .1;
       ring.position.set((uv.x-.5)*width,(uv.y-.5)*height,.004);
-      ring.renderOrder=1015;ring.raycast=()=>{};control.add(ring);speciesRegionMarker=ring;
+      const pulse = 1 + Math.sin(performance.now() * .008) * .12;
+      ring.scale.setScalar(pulse);
     }
     function disposeSpeciesRegion() {
       const controls = new Set(speciesRegionControls); arNoteControls = arNoteControls.filter((control) => !controls.has(control));
@@ -10657,6 +10665,17 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           );
         }
         if (nearestControl) {
+          const nearestAction = nearestControl.userData?.noteAction || "";
+          if (
+            nearestAction.startsWith("species-map-region:") &&
+            Number.isFinite(nearestControlRatio) &&
+            Number.isFinite(nearestControlRatioY)
+          ) {
+            markSpeciesRegionControl(nearestControl, {
+              x: THREE.MathUtils.clamp(nearestControlRatio, 0, 1),
+              y: THREE.MathUtils.clamp(nearestControlRatioY, 0, 1)
+            });
+          }
           lastNoteControlHitAt = time;
           if (pointedNoteControl === nearestControl) {
             pointedNoteControlRatio = nearestControlRatio;

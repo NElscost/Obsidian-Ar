@@ -26,6 +26,7 @@ export function createSpectralTrailExtension(THREE, api) {
   let pcaPoints = null;
   let pcaNetwork = null;
   let pcaTimes = null;
+  let dashboardGroup = null;
   let filterGroup = null;
   let filterControls = [];
   let filterInput = "";
@@ -518,6 +519,7 @@ export function createSpectralTrailExtension(THREE, api) {
   }
 
   function createPcaVisualization() {
+    disposeDashboard();
     disposePcaVisualization();
     const source=(analysisData?.points??[]).filter((point)=>Math.max(0,Number(point.frequencyHz)||0)>minHz);
     if(!content||!Array.isArray(source)||!source.length){applyMode();return;}
@@ -530,7 +532,7 @@ export function createSpectralTrailExtension(THREE, api) {
     applyMode();
   }
 
-  function setAnalysis(data) { analysisData=String(data?.method||'').startsWith('mfcc40-pca3')&&Array.isArray(data.points)?data:null; createPcaVisualization(); }
+  function setAnalysis(data) { analysisData=String(data?.method||'').startsWith('mfcc40-pca3')&&Array.isArray(data.points)?data:null; createPcaVisualization(); createDashboard(); }
 
   function lowerBound(values,target){let lo=0,hi=values?.length||0;while(lo<hi){const mid=(lo+hi)>>>1;if(values[mid]<target)lo=mid+1;else hi=mid;}return lo;}
 
@@ -550,6 +552,10 @@ export function createSpectralTrailExtension(THREE, api) {
     const highlighted=[...candidates].sort((a,b)=>b.amplitude-a.amplitude).slice(0,NETWORK_PEAKS);updatePeakPresentation(highlighted,api.getAnalyser?.(),candidates);
   }
 
+
+  function ui(pt,en){return String(document.documentElement.lang||"en").toLowerCase().startsWith("pt")?pt:en;}
+  function disposeDashboard(){if(!dashboardGroup)return;dashboardGroup.removeFromParent();dashboardGroup.traverse(o=>{o.geometry?.dispose?.();o.material?.map?.dispose?.();o.material?.dispose?.();});dashboardGroup=null;}
+  function createDashboard(){disposeDashboard();if(!group||!analysisData?.points?.length)return;dashboardGroup=new THREE.Group();dashboardGroup.name="spectral-analysis-arc";const specs=[[ui("DESCRITORES Hz","Hz DESCRIPTORS"),"hz"],[ui("DINÂMICA dB","dB DYNAMICS"),"amp"],[ui("MAPA TONAL","TONE MAP"),"tone"],[ui("JANELA TEMPORAL","TIME WINDOW"),"time"],[ui("PROJEÇÃO CEPSTRAL","CEPSTRAL PROJECTION"),"cep"],[ui("PERFIL CROMÁTICO","CHROMA PROFILE"),"chroma"]],sample=analysisData.points.filter((_,i)=>i%Math.max(1,Math.ceil(analysisData.points.length/220))===0);specs.forEach(([title,kind],i)=>{const canvas=document.createElement("canvas");canvas.width=420;canvas.height=190;const c=canvas.getContext("2d");c.clearRect(0,0,420,190);c.fillStyle="rgba(3,8,16,.76)";c.strokeStyle="rgba(125,166,214,.55)";c.lineWidth=2;c.beginPath();c.roundRect(2,2,416,186,14);c.fill();c.stroke();c.fillStyle="#b9c9dc";c.font="italic 700 17px Arial";c.fillText(title,16,25);for(let n=0;n<sample.length;n++){const q=sample[n],hz=Math.max(20,Number(q.frequencyHz)||20),amp=(Number(q.amplitude)||0)/255,x=n/Math.max(1,sample.length-1)*390+15,y=165-amp*120,ratio=frequencyRatioForHz(hz),color=new THREE.Color();setFrequencyColor(color,ratio);c.fillStyle="#"+color.getHexString();if(kind==="tone")c.fillRect(15+ratio*390,y,3,3);else if(kind==="cep"){const xyz=q.xyz||[0,0,0];c.fillRect(210+(Number(xyz[0])||0)/32767*175,95-(Number(xyz[1])||0)/32767*65,3,3);}else if(kind==="chroma")c.fillRect(15+(((Math.round(12*Math.log2(hz/440))+69)%12+12)%12)/12*390,y,3,165-y);else{const yy=kind==="hz"||kind==="time"?165-ratio*120:y;c.fillRect(x,yy,2,kind==="amp"?165-yy:2);}}const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;texture.minFilter=THREE.LinearFilter;texture.generateMipmaps=false;const panel=new THREE.Mesh(new THREE.PlaneGeometry(.145,.066),new THREE.MeshBasicMaterial({map:texture,transparent:true,depthTest:true,depthWrite:false,toneMapped:false}));if(i<3){const x=(i-1)*.155;panel.position.set(x,HEIGHT/2+.055,-Math.abs(x)*.055);panel.rotation.y=-x*1.25;}else{const row=i-3;panel.position.set(-WIDTH/2-.085,.085-row*.078,-.035-row*.012);panel.rotation.y=.3;}panel.renderOrder=8;panel.raycast=()=>{};dashboardGroup.add(panel);});group.add(dashboardGroup);}
 
   function dispose() {
     if (anchor?.delete) anchor.delete();
@@ -611,6 +617,7 @@ export function createSpectralTrailExtension(THREE, api) {
     });
     group.add(content);
     group.add(createFrequencyLegend());
+    createDashboard();
     syncStoredFilter(true);
     state = { scale: 1, autoRotate: false, mode: 0, drags: new Map(), layer: 0, lastSample: 0, previousPeaks: [], visualTime: 0, lastFrame: performance.now(), pcaLabelAt: -1 };
     applyMode();
@@ -863,4 +870,5 @@ export function createSpectralTrailExtension(THREE, api) {
     return true;
   }
 
-  return{ open, dispose, update, handle, beginDrag, endDrag, setAnalysis, isPlacementArmed: () => placement, place ,getObject:()=>group};}
+  return { open, dispose, update, handle, beginDrag, endDrag, setAnalysis, isPlacementArmed: () => placement, place };
+}
