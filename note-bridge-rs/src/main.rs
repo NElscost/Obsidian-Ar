@@ -3893,8 +3893,14 @@ async fn main() -> Result<()> {
         .allow_headers([
             header::AUTHORIZATION,
             header::CONTENT_TYPE,
+            header::RANGE,
             header::HeaderName::from_static("cf-access-client-id"),
             header::HeaderName::from_static("cf-access-client-secret"),
+        ])
+        .expose_headers([
+            header::ACCEPT_RANGES,
+            header::CONTENT_RANGE,
+            header::CONTENT_LENGTH,
         ]);
     println!(
         "Vídeo remoto: até {}p / {} MB; hosts: {:?}",
