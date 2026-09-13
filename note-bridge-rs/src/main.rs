@@ -376,6 +376,11 @@ struct SpectralPoint {
     xyz: [i16; 3],
     amplitude: u8,
     frequency_hz: u16,
+    spectral_flux: u8,
+    spectral_spread_hz: u16,
+    tonality: u8,
+    flatness: u8,
+    spectral_crest: u8,
 }
 
 #[derive(Clone, Serialize)]
@@ -809,6 +814,22 @@ mod tests {
         assert!(compatibility_video_candidate(Path::new("video.mp4")));
         assert!(compatibility_video_candidate(Path::new("video.mov")));
         assert!(!compatibility_video_candidate(Path::new("video.webm")));
+    }
+
+    #[test]
+    fn hybrid_pca_is_finite_and_robust_to_an_outlier() {
+        let mut rows = vec![[0.0_f32; HYBRID_FEATURE_COUNT]; 8];
+        for (row_index, row) in rows.iter_mut().enumerate() {
+            for (axis, value) in row.iter_mut().enumerate() {
+                *value = row_index as f32 * (axis as f32 + 1.0) * 0.01;
+            }
+        }
+        rows[7][12] = 1_000_000.0;
+        let projected = pca3(&rows);
+        assert_eq!(projected.len(), rows.len());
+        assert!(projected.iter().flatten().all(|value| value.is_finite()));
+        assert_eq!(percentile_u8(-1.0), 0);
+        assert_eq!(percentile_u8(2.0), 255);
     }
 
     #[test]
@@ -1457,10 +1478,21 @@ fn analyze_audio_waveform(path: &Path) -> Result<WaveformResponse> {
 }
 
 const MFCC_COUNT: usize = 40;
+const HYBRID_FEATURE_COUNT: usize = 64;
 const MFCC_MAX_RAW_FRAMES: usize = 180_000;
 const MFCC_POINTS_PER_SECOND: f64 = 12.0;
 const MFCC_MIN_POINTS: usize = 768;
 const MFCC_MAX_POINTS: usize = 32_768;
+
+#[derive(Clone, Copy)]
+struct FrameDescriptors {
+    centroid: f32,
+    spread: f32,
+    crest: f32,
+    flatness: f32,
+    flux: f32,
+    tonality: f32,
+}
 
 fn hz_to_mel(hz: f32) -> f32 {
     2595.0 * (1.0 + hz / 700.0).log10()
@@ -1468,13 +1500,20 @@ fn hz_to_mel(hz: f32) -> f32 {
 fn mel_to_hz(mel: f32) -> f32 {
     700.0 * (10.0_f32.powf(mel / 2595.0) - 1.0)
 }
+fn hz_for_bin(bin: usize, sample_rate: u32, fft_size: usize) -> f32 {
+    bin as f32 * sample_rate as f32 / fft_size as f32
+}
+fn percentile_u8(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
+}
 
-fn mfcc_frame(
+fn hybrid_frame(
     frame: &[f32],
     sample_rate: u32,
     fft: &dyn rustfft::Fft<f32>,
     filters: &[(usize, usize, usize)],
-) -> ([f32; MFCC_COUNT], f32, u16) {
+    previous_power: Option<&[f32]>,
+) -> ([f32; HYBRID_FEATURE_COUNT], f32, FrameDescriptors, Vec<f32>) {
     use rustfft::num_complex::Complex;
     let n = fft.len();
     let mut spectrum = vec![Complex::new(0.0, 0.0); n];
@@ -1495,13 +1534,84 @@ fn mfcc_frame(
         .iter()
         .map(|v| v.norm_sqr() / n as f32)
         .collect();
-    let spectral_energy = power.iter().copied().sum::<f32>().max(1e-12);
-    let spectral_centroid = power
+    let total = power.iter().sum::<f32>().max(1e-12);
+    let mean_power = total / half as f32;
+    let centroid = power
         .iter()
         .enumerate()
-        .map(|(bin, magnitude)| bin as f32 * sample_rate as f32 / n as f32 * magnitude)
+        .map(|(bin, p)| hz_for_bin(bin, sample_rate, n) * p)
         .sum::<f32>()
-        / spectral_energy;
+        / total;
+    let spread = (power
+        .iter()
+        .enumerate()
+        .map(|(bin, p)| {
+            let d = hz_for_bin(bin, sample_rate, n) - centroid;
+            d * d * p
+        })
+        .sum::<f32>()
+        / total)
+        .sqrt();
+    let (dominant_bin, maximum) = power
+        .iter()
+        .copied()
+        .enumerate()
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .unwrap_or((0, 0.0));
+    let crest = (maximum / mean_power.max(1e-12)).max(1.0);
+    let flatness = ((power.iter().map(|p| p.max(1e-16).ln()).sum::<f32>() / half as f32).exp()
+        / mean_power.max(1e-12))
+    .clamp(0.0, 1.0);
+    let normalized: Vec<f32> = power.iter().map(|p| p / total).collect();
+    let flux = previous_power
+        .map(|previous| {
+            normalized
+                .iter()
+                .zip(previous)
+                .map(|(a, b)| (a - b).max(0.0).powi(2))
+                .sum::<f32>()
+                .sqrt()
+        })
+        .unwrap_or(0.0);
+    let rolloff = |ratio: f32| {
+        let target = total * ratio;
+        let mut sum = 0.0;
+        let bin = power
+            .iter()
+            .position(|p| {
+                sum += *p;
+                sum >= target
+            })
+            .unwrap_or(half - 1);
+        hz_for_bin(bin, sample_rate, n)
+    };
+    let rolloff85 = rolloff(0.85);
+    let rolloff95 = rolloff(0.95);
+    let dominant_hz = hz_for_bin(dominant_bin, sample_rate, n);
+    let mut harmonic = 0.0;
+    if dominant_bin > 0 {
+        for multiple in 1..=((half - 1) / dominant_bin).min(16) {
+            let center = dominant_bin * multiple;
+            for bin in center.saturating_sub(1)..=(center + 1).min(half - 1) {
+                harmonic += power[bin];
+            }
+        }
+    }
+    let harmonic_ratio = (harmonic / total).clamp(0.0, 1.0);
+    let hnr = (harmonic_ratio / (1.0 - harmonic_ratio).max(1e-5))
+        .log10()
+        .max(0.0);
+    let tonality = (harmonic_ratio * (1.0 - flatness)).clamp(0.0, 1.0);
+    let mut contrast = 0.0;
+    for band in 0..6 {
+        let left = ((half as f32).powf(band as f32 / 6.0)).round() as usize;
+        let right = ((half as f32).powf((band + 1) as f32 / 6.0)).round() as usize;
+        let slice = &power[left.min(half - 1)..right.max(left + 1).min(half)];
+        let high = slice.iter().copied().fold(0.0, f32::max);
+        let low = slice.iter().copied().fold(f32::MAX, f32::min);
+        contrast += (10.0 * ((high + 1e-12) / (low + 1e-12)).log10()).clamp(0.0, 80.0) / 80.0;
+    }
+    contrast /= 6.0;
     let mut mel = [0.0_f32; MFCC_COUNT];
     for (filter, &(left, center, right)) in filters.iter().enumerate() {
         let mut sum = 0.0;
@@ -1513,11 +1623,11 @@ fn mfcc_frame(
             sum += power.get(bin).copied().unwrap_or(0.0) * (right - bin) as f32
                 / (right - center).max(1) as f32;
         }
-        mel[filter] = (sum.max(1e-12)).ln();
+        mel[filter] = sum.max(1e-12).ln();
     }
-    let mut coefficients = [0.0_f32; MFCC_COUNT];
+    let mut features = [0.0_f32; HYBRID_FEATURE_COUNT];
     for coefficient in 0..MFCC_COUNT {
-        coefficients[coefficient] = mel
+        features[coefficient] = mel
             .iter()
             .enumerate()
             .map(|(index, value)| {
@@ -1528,89 +1638,131 @@ fn mfcc_frame(
             })
             .sum();
     }
+    let nyquist = (sample_rate as f32 / 2.0).max(1.0);
+    features[40] = (centroid + 1.0).ln();
+    features[41] = (spread + 1.0).ln();
+    features[42] = crest.ln();
+    features[43] = flatness;
+    features[44] = flux;
+    features[45] = (rolloff85 + 1.0).ln();
+    features[46] = (rolloff95 + 1.0).ln();
+    features[47] = (dominant_hz + 1.0).ln();
+    features[48] = contrast;
+    features[49] = tonality;
+    features[50] = hnr;
+    features[51] = ((energy / frame.len().max(1) as f32).sqrt() + 1e-9).ln();
+    let mut chroma = [0.0_f32; 12];
+    for (bin, p) in power.iter().copied().enumerate().skip(1) {
+        let hz = hz_for_bin(bin, sample_rate, n);
+        if hz >= 20.0 && hz <= nyquist {
+            let midi = (69.0 + 12.0 * (hz / 440.0).log2()).round() as i32;
+            chroma[midi.rem_euclid(12) as usize] += p;
+        }
+    }
+    let chroma_sum = chroma.iter().sum::<f32>().max(1e-12);
+    for i in 0..12 {
+        features[52 + i] = chroma[i] / chroma_sum;
+    }
     let rms = (energy / frame.len().max(1) as f32).sqrt();
-    let hz = spectral_centroid.round().clamp(0.0, u16::MAX as f32) as u16;
-    (coefficients, rms, hz)
+    (
+        features,
+        rms,
+        FrameDescriptors {
+            centroid,
+            spread,
+            crest,
+            flatness,
+            flux,
+            tonality,
+        },
+        normalized,
+    )
 }
 
-fn pca3(features: &[[f32; MFCC_COUNT]]) -> Vec<[f32; 3]> {
+fn median(values: &mut [f32]) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.sort_by(f32::total_cmp);
+    values[values.len() / 2]
+}
+fn pca3(features: &[[f32; HYBRID_FEATURE_COUNT]]) -> Vec<[f32; 3]> {
     if features.is_empty() {
         return Vec::new();
     }
     let count = features.len() as f32;
-    let mut mean = [0.0_f32; MFCC_COUNT];
-    for row in features {
-        for i in 0..MFCC_COUNT {
-            mean[i] += row[i] / count;
+    let mut center = [0.0; HYBRID_FEATURE_COUNT];
+    let mut scale = [1.0; HYBRID_FEATURE_COUNT];
+    for axis in 0..HYBRID_FEATURE_COUNT {
+        let mut column: Vec<f32> = features.iter().map(|row| row[axis]).collect();
+        center[axis] = median(&mut column);
+        for value in &mut column {
+            *value = (*value - center[axis]).abs()
         }
+        scale[axis] = (median(&mut column) * 1.4826).max(1e-5)
     }
-    let mut deviation = [0.0_f32; MFCC_COUNT];
-    for row in features {
-        for i in 0..MFCC_COUNT {
-            let d = row[i] - mean[i];
-            deviation[i] += d * d / count;
-        }
-    }
-    for value in &mut deviation {
-        *value = value.sqrt().max(1e-5);
-    }
-    let normalized: Vec<[f32; MFCC_COUNT]> = features
+    let normalized: Vec<[f32; HYBRID_FEATURE_COUNT]> = features
         .iter()
         .map(|row| {
-            let mut out = [0.0; MFCC_COUNT];
-            for i in 0..MFCC_COUNT {
-                out[i] = (row[i] - mean[i]) / deviation[i];
+            let mut out = [0.0; HYBRID_FEATURE_COUNT];
+            for i in 0..HYBRID_FEATURE_COUNT {
+                out[i] = ((row[i] - center[i]) / scale[i]).clamp(-8.0, 8.0)
             }
             out
         })
         .collect();
-    let mut covariance = [[0.0_f32; MFCC_COUNT]; MFCC_COUNT];
+    let mut covariance = [[0.0_f32; HYBRID_FEATURE_COUNT]; HYBRID_FEATURE_COUNT];
     for row in &normalized {
-        for i in 0..MFCC_COUNT {
-            for j in i..MFCC_COUNT {
-                covariance[i][j] += row[i] * row[j] / count;
+        for i in 0..HYBRID_FEATURE_COUNT {
+            for j in i..HYBRID_FEATURE_COUNT {
+                covariance[i][j] += row[i] * row[j] / count
             }
         }
     }
-    for i in 0..MFCC_COUNT {
+    for i in 0..HYBRID_FEATURE_COUNT {
         for j in 0..i {
-            covariance[i][j] = covariance[j][i];
+            covariance[i][j] = covariance[j][i]
         }
     }
-    let mut vectors = [[0.0_f32; MFCC_COUNT]; 3];
+    let mut vectors = [[0.0_f32; HYBRID_FEATURE_COUNT]; 3];
     for component in 0..3 {
-        let mut vector = [0.0_f32; MFCC_COUNT];
-        vector[(component * 13 + 3) % MFCC_COUNT] = 1.0;
-        for _ in 0..36 {
-            let mut next = [0.0_f32; MFCC_COUNT];
-            for i in 0..MFCC_COUNT {
-                next[i] = (0..MFCC_COUNT).map(|j| covariance[i][j] * vector[j]).sum();
+        let mut vector = [0.0_f32; HYBRID_FEATURE_COUNT];
+        vector[(component * 21 + 3) % HYBRID_FEATURE_COUNT] = 1.0;
+        for _ in 0..42 {
+            let mut next = [0.0_f32; HYBRID_FEATURE_COUNT];
+            for i in 0..HYBRID_FEATURE_COUNT {
+                next[i] = (0..HYBRID_FEATURE_COUNT)
+                    .map(|j| covariance[i][j] * vector[j])
+                    .sum()
             }
             for previous in vectors.iter().take(component) {
-                let dot: f32 = (0..MFCC_COUNT).map(|i| next[i] * previous[i]).sum();
-                for i in 0..MFCC_COUNT {
-                    next[i] -= dot * previous[i];
+                let dot: f32 = (0..HYBRID_FEATURE_COUNT)
+                    .map(|i| next[i] * previous[i])
+                    .sum();
+                for i in 0..HYBRID_FEATURE_COUNT {
+                    next[i] -= dot * previous[i]
                 }
             }
             let norm = next.iter().map(|v| v * v).sum::<f32>().sqrt().max(1e-8);
-            for i in 0..MFCC_COUNT {
-                vector[i] = next[i] / norm;
+            for i in 0..HYBRID_FEATURE_COUNT {
+                vector[i] = next[i] / norm
             }
         }
-        vectors[component] = vector;
+        vectors[component] = vector
     }
     normalized
         .iter()
         .map(|row| {
             let mut point = [0.0; 3];
             for c in 0..3 {
-                point[c] = (0..MFCC_COUNT).map(|i| row[i] * vectors[c][i]).sum();
+                point[c] = (0..HYBRID_FEATURE_COUNT)
+                    .map(|i| row[i] * vectors[c][i])
+                    .sum()
             }
             point
         })
         .collect()
 }
-
 fn analyze_audio_spectral(path: &Path) -> Result<SpectralAnalysisResponse> {
     let file = std::fs::File::open(path)
         .with_context(|| format!("Não foi possível abrir o áudio: {}", path.display()))?;
@@ -1658,6 +1810,7 @@ fn analyze_audio_spectral(path: &Path) -> Result<SpectralAnalysisResponse> {
     let mut features = Vec::new();
     let mut metadata = Vec::new();
     let mut total_frames = 0u64;
+    let mut previous_power: Option<Vec<f32>> = None;
     loop {
         let packet = match format.next_packet() {
             Ok(v) => v,
@@ -1687,17 +1840,19 @@ fn analyze_audio_spectral(path: &Path) -> Result<SpectralAnalysisResponse> {
         }
         while buffer.len().saturating_sub(cursor) >= frame_samples {
             if window_index % stride == 0 && features.len() < MFCC_MAX_RAW_FRAMES {
-                let (mfcc, amp, hz) = mfcc_frame(
+                let (hybrid, amp, descriptors, power) = hybrid_frame(
                     &buffer[cursor..cursor + frame_samples],
                     sample_rate,
                     fft.as_ref(),
                     &filters,
+                    previous_power.as_deref(),
                 );
-                features.push(mfcc);
+                previous_power = Some(power);
+                features.push(hybrid);
                 metadata.push((
                     window_index as u64 * hop as u64 * 1000 / sample_rate as u64,
                     amp,
-                    hz,
+                    descriptors,
                 ));
             }
             cursor += hop;
@@ -1731,10 +1886,11 @@ fn analyze_audio_spectral(path: &Path) -> Result<SpectralAnalysisResponse> {
         }
     }
     let peak = metadata.iter().map(|v| v.1).fold(1e-8_f32, f32::max);
+    let flux_peak = metadata.iter().map(|v| v.2.flux).fold(1e-8_f32, f32::max);
     let points: Vec<SpectralPoint> = projected
         .iter()
         .zip(metadata.iter())
-        .map(|(p, (time, amp, hz))| SpectralPoint {
+        .map(|(p, (time, amp, d))| SpectralPoint {
             time_ms: (*time).min(u32::MAX as u64) as u32,
             xyz: [0, 1, 2].map(|axis| {
                 (p[axis] / maxima[axis] * 32767.0)
@@ -1742,7 +1898,12 @@ fn analyze_audio_spectral(path: &Path) -> Result<SpectralAnalysisResponse> {
                     .clamp(-32767.0, 32767.0) as i16
             }),
             amplitude: (amp / peak * 255.0).round().clamp(0.0, 255.0) as u8,
-            frequency_hz: *hz,
+            frequency_hz: d.centroid.round().clamp(0.0, u16::MAX as f32) as u16,
+            spectral_flux: percentile_u8(d.flux / flux_peak),
+            spectral_spread_hz: d.spread.round().clamp(0.0, u16::MAX as f32) as u16,
+            tonality: percentile_u8(d.tonality),
+            flatness: percentile_u8(d.flatness),
+            spectral_crest: (d.crest.min(32.0) / 32.0 * 255.0).round() as u8,
         })
         .collect();
     Ok(SpectralAnalysisResponse {
@@ -1752,8 +1913,8 @@ fn analyze_audio_spectral(path: &Path) -> Result<SpectralAnalysisResponse> {
         } else {
             0.0
         },
-        coefficients: MFCC_COUNT as u8,
-        method: "mfcc40-pca3-centroid-v3",
+        coefficients: HYBRID_FEATURE_COUNT as u8,
+        method: "hybrid64-robust-pca3-v4",
         points,
     })
 }
