@@ -510,7 +510,7 @@ export function createSpectralTrailExtension(THREE, api) {
     const context=canvas.getContext("2d");context.clearRect(0,0,512,72);context.fillStyle="rgba(3,8,16,.72)";context.fillRect(0,0,512,72);
     context.fillStyle="#dce9f8";context.font="700 28px Arial Narrow, sans-serif";context.textAlign="center";context.textBaseline="middle";context.fillText(label,256,37,490);
     const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;texture.minFilter=THREE.LinearFilter;texture.generateMipmaps=false;
-    const mesh=new THREE.Mesh(new THREE.PlaneGeometry(width,height),new THREE.MeshBasicMaterial({map:texture,transparent:true,depthTest:false,depthWrite:false,toneMapped:false}));mesh.renderOrder=9;mesh.raycast=()=>{};return mesh;
+    const mesh=new THREE.Mesh(new THREE.PlaneGeometry(width,height),new THREE.MeshBasicMaterial({map:texture,transparent:true,depthTest:true,depthWrite:false,toneMapped:false}));mesh.renderOrder=9;mesh.raycast=()=>{};return mesh;
   }
   function createReferenceGrid() {
     const grid=new THREE.Group(),positions=[],x=WIDTH*.43,y=HEIGHT*.43,z=.22,steps=8;
@@ -579,7 +579,7 @@ export function createSpectralTrailExtension(THREE, api) {
   function disposeDashboard(){if(!dashboardGroup)return;api.unregister(dashboardGroup,false);dashboardGroup.removeFromParent();dashboardGroup.traverse(object=>{object.geometry?.dispose?.();object.material?.map?.dispose?.();object.material?.dispose?.();});dashboardGroup=null;dashboardPanels=[];dashboardLastTime=-1;}
   function drawDashboardPanel(panel,playbackTime){
     const {canvas,context,kind,title}=panel,w=canvas.width,h=canvas.height,left=42,right=w-14,top=35,bottom=h-28;
-    context.clearRect(0,0,w,h);context.fillStyle="rgba(3,8,16,.94)";context.fillRect(0,0,w,h);context.strokeStyle="rgba(125,166,214,.45)";context.lineWidth=2;context.strokeRect(1,1,w-2,h-2);
+    context.clearRect(0,0,w,h);context.fillStyle="rgba(17,34,55,.97)";context.fillRect(0,0,w,h);context.strokeStyle="rgba(125,166,214,.45)";context.lineWidth=2;context.strokeRect(1,1,w-2,h-2);
     context.fillStyle="#c8d7e9";context.font="italic 700 17px Arial";context.fillText(title,14,22);context.fillStyle="#8295ab";context.font="12px Arial";context.textAlign="right";context.fillText(playbackTime.toFixed(2)+" s",right,22);context.textAlign="left";
     context.strokeStyle="rgba(100,140,180,.2)";context.lineWidth=1;for(let i=0;i<=4;i++){const y=top+(bottom-top)*i/4;context.beginPath();context.moveTo(left,y);context.lineTo(right,y);context.stroke()}for(let i=0;i<=5;i++){const x=left+(right-left)*i/5;context.beginPath();context.moveTo(x,top);context.lineTo(x,bottom);context.stroke()}
     context.fillStyle="#93a6bb";context.font="11px Arial";context.fillText(kind==="amp"?"dB":kind==="chroma"?"pitch class":kind==="cep"?"MFCC PC2":"Hz",5,top+4);context.fillText(ui("tempo","time"),right-28,h-8);
@@ -590,13 +590,13 @@ export function createSpectralTrailExtension(THREE, api) {
     }
     context.globalAlpha=1;context.strokeStyle="#f5f8ff";context.beginPath();context.moveTo(right-2,top);context.lineTo(right-2,bottom);context.stroke();panel.texture.needsUpdate=true;
   }
-  function updateDashboard(playbackTime,force=false){if(!api.isPlaying?.()){if(dashboardGroup)disposeDashboard();return;}if(!dashboardGroup){createDashboard();return;}if(!dashboardPanels.length)return;if(!force&&Math.abs(playbackTime-dashboardLastTime)<.12)return;dashboardLastTime=playbackTime;for(const panel of dashboardPanels)drawDashboardPanel(panel,playbackTime);}
+  function updateDashboard(playbackTime,force=false){if(!dashboardGroup){if(api.isPlaying?.())createDashboard();return;}if(!dashboardPanels.length)return;if(!force&&Math.abs(playbackTime-dashboardLastTime)<.12)return;dashboardLastTime=playbackTime;for(const panel of dashboardPanels)drawDashboardPanel(panel,playbackTime);}
   function createDashboard(){
     disposeDashboard();if(!api.isPlaying?.()||!analysisData?.points?.length)return;dashboardTimes=analysisData.points.map(point=>(Number(point.timeMs)||0)/1000);
     const width=.50,height=.36;dashboardGroup=new THREE.Group();dashboardGroup.name="spectral-analysis-dashboard-window";
-    const surface=new THREE.Mesh(api.geometry?.(width,height,.018,24)||new THREE.PlaneGeometry(width,height),new THREE.MeshBasicMaterial({color:0x07111d,transparent:true,opacity:.985,depthTest:true,depthWrite:true,toneMapped:false}));api.round?.(surface);surface.raycast=()=>{};dashboardGroup.add(surface);const frame=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(width+.012,height+.012)),new THREE.LineBasicMaterial({color:0x63e6be,transparent:true,opacity:.95,depthTest:false,toneMapped:false}));frame.position.z=.014;frame.renderOrder=1012;frame.raycast=()=>{};dashboardGroup.add(frame);
+    const surface=new THREE.Mesh(api.geometry?.(width,height,.018,24)||new THREE.PlaneGeometry(width,height),new THREE.MeshBasicMaterial({color:0x172c46,transparent:true,opacity:.97,depthTest:true,depthWrite:true,toneMapped:false}));api.round?.(surface);surface.raycast=()=>{};dashboardGroup.add(surface);const frame=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(width+.012,height+.012)),new THREE.LineBasicMaterial({color:0x63e6be,transparent:true,opacity:.95,depthTest:true,toneMapped:false}));frame.position.z=.014;frame.renderOrder=1012;frame.raycast=()=>{};dashboardGroup.add(frame);
     const specs=[[ui("DESCRITORES Hz","Hz DESCRIPTORS"),"hz"],[ui("DINÂMICA dB","dB DYNAMICS"),"amp"],[ui("MAPA TONAL","TONE MAP"),"tone"],[ui("JANELA TEMPORAL","TIME WINDOW"),"time"],[ui("PROJEÇÃO CEPSTRAL","CEPSTRAL PROJECTION"),"cep"],[ui("PERFIL CROMÁTICO","CHROMA PROFILE"),"chroma"]];
-    specs.forEach(([title,kind],index)=>{const canvas=document.createElement("canvas");canvas.width=360;canvas.height=150;const context=canvas.getContext("2d",{alpha:true}),texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;texture.minFilter=THREE.LinearFilter;texture.generateMipmaps=false;const panel={title,kind,canvas,context,texture};dashboardPanels.push(panel);const mesh=new THREE.Mesh(new THREE.PlaneGeometry(.226,.094),new THREE.MeshBasicMaterial({map:texture,transparent:true,depthTest:false,depthWrite:false,toneMapped:false}));mesh.position.set(index%2?.12:-.12,.115-Math.floor(index/2)*.108,.018);mesh.renderOrder=1010;mesh.raycast=()=>{};dashboardGroup.add(mesh)});
+    specs.forEach(([title,kind],index)=>{const canvas=document.createElement("canvas");canvas.width=360;canvas.height=150;const context=canvas.getContext("2d",{alpha:true}),texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;texture.minFilter=THREE.LinearFilter;texture.generateMipmaps=false;const panel={title,kind,canvas,context,texture};dashboardPanels.push(panel);const mesh=new THREE.Mesh(new THREE.PlaneGeometry(.226,.094),new THREE.MeshBasicMaterial({map:texture,transparent:true,depthTest:true,depthWrite:false,toneMapped:false}));mesh.position.set(index%2?.12:-.12,.115-Math.floor(index/2)*.108,.018);mesh.renderOrder=1010;mesh.raycast=()=>{};dashboardGroup.add(mesh)});
     api.register(dashboardGroup,width);updateDashboard(Math.max(0,Number(api.currentTime?.())||0),true);api.layout();
   }
 
@@ -639,7 +639,8 @@ export function createSpectralTrailExtension(THREE, api) {
     controls.push(dragSurface);
     api.addControl(dragSurface);
     content = new THREE.Group();
-    content.position.z = 0.04;
+    content.position.set(0, 0, 0.04);
+    content.scale.setScalar(0.78);
     content.add(createParticles());
     content.add(createPeakHighlights());
     content.add(createFrequencyLabels());

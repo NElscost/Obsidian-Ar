@@ -33,6 +33,9 @@ test("integrates an anchored, scalable spectral trail with the media analyser", 
   assert.match(spectral, /api\.register\(dashboardGroup,width\)/);
   assert.match(spectral, /if\(!api\.isPlaying\?\.\(\)\)/);
   assert.match(spectral, /new THREE\.EdgesGeometry/);
+  assert.match(spectral, /if\(api\.isPlaying\?\.\(\)\)createDashboard\(\)/);
+  assert.doesNotMatch(spectral, /if\(!api\.isPlaying\?\.\(\)\)\{if\(dashboardGroup\)disposeDashboard/);
+  assert.match(spectral, /content\.scale\.setScalar\(0\.78\)/);
 });
 
 test("offers optional automatic rotation for every requested 3D viewer", async () => {
