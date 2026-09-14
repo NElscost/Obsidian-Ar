@@ -375,6 +375,7 @@ $stateJson = @{
   serverPid = $server.Id
   tunnelPid = $tunnel.Id
   url = $publishedUrl
+  port = $Port
   tunnelMode = $tunnelMode
   startedAt = (Get-Date).ToUniversalTime().ToString("o")
 } | ConvertTo-Json

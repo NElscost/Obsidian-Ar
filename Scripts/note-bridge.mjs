@@ -265,7 +265,7 @@ async function startBridge(port, debug) {
       }
       if (!ready) throw new Error("O Quick Tunnel foi criado, mas sua URL pública não respondeu.");
     }
-    const state = { serverPid: server.pid, tunnelPid: tunnel.pid, url: publishedUrl, tunnelMode: mode, startedAt: new Date().toISOString() };
+    const state = { serverPid: server.pid, tunnelPid: tunnel.pid, url: publishedUrl, port, tunnelMode: mode, startedAt: new Date().toISOString() };
     writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
     console.log(`\nPonte pronta.\nURL:   ${publishedUrl}\nToken: ${token}\nVault: ${vaultPath}`);
     if (debug) {
