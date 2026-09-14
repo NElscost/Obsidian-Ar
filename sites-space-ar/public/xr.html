@@ -774,8 +774,8 @@
     import { createFastaExtension } from "/vendor/fasta/fasta-ar.js?v=1";
     import { createGeneCodeExtension } from "/vendor/gene-code/gene-code.js?v=2";
     import { createChronosExtension } from "/vendor/chronos/chronos-ar.js";
-    import { createSpectralTrailExtension } from "/vendor/audio/spectral-trail-ar.js?v=20";
-    import { renderSpeciesMapBlocks, speciesRegionPanelRaster, speciesStateOverlayRaster } from "/vendor/species-map/species-map.js?v=12";
+    import { createSpectralTrailExtension } from "/vendor/audio/spectral-trail-ar.js?v=21";
+    import { renderSpeciesMapBlocks, speciesRegionPanelRaster, speciesStateOverlayRaster } from "/vendor/species-map/species-map.js?v=13";
     import { marked } from "https://cdn.jsdelivr.net/npm/marked@15.0.12/+esm";
     import DOMPurify from "https://cdn.jsdelivr.net/npm/dompurify@3.2.6/+esm";
 
@@ -5298,6 +5298,12 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         audioWaveformGroup.position.set(0, -AR_VIDEO_HEIGHT / 2 - 0.034, 0.034);
         return;
       }
+      const belongsToSpeciesRegion = Boolean(speciesRegionGroup && activeNoteTrack?.kind === "remote-audio");
+      if (belongsToSpeciesRegion) {
+        speciesRegionGroup.add(audioWaveformGroup);
+        audioWaveformGroup.position.set(0, -AR_VIDEO_HEIGHT / 2 - 0.034, 0.034);
+        return;
+      }
       const belongsToVideo = Boolean(
         activeNoteVideoGroup &&
         (activeNoteTrack?.kind === "video" || noteVideoTracks.includes(activeNoteTrack))
@@ -5510,7 +5516,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
 
     async function prepareAudioWaveform(track, notePath, panelWidth, panelHeight) {
       if (!track || isBrowserLocalSource(track.source)) return;
-      if (isNetworkSource(track.source) && !remoteVideoPlatform(track.source) && track.kind !== "remote-video") return;
+      if (isNetworkSource(track.source) && !remoteVideoPlatform(track.source) && track.kind !== "remote-video" && track.kind !== "remote-audio") return;
       const config = JSON.parse(sessionStorage.getItem(NOTE_BRIDGE_STORAGE_KEY) ?? "null");
       if (!config?.url || !config?.token) return;
       const generation = audioWaveformGeneration;
@@ -6365,7 +6371,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
           object.material?.map?.dispose();
           object.material?.dispose();
         });
-        arNoteGroup.remove(audioWaveformGroup);
+        audioWaveformGroup.removeFromParent();
       }
       audioWaveformGroup = null;
       audioWaveformTexture = null;
@@ -6431,6 +6437,7 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
     let speciesStateOverlayTexture = null;
     let speciesStateHoverKey = "";
     let speciesStateHoverRequest = 0;
+    let speciesStateHoverSelection = null;
     function hideSpeciesStateHighlight() {
       if (speciesStateOverlay) speciesStateOverlay.visible = false;
     }
@@ -6443,9 +6450,11 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
         return;
       }
       speciesStateHoverKey = key;
+      speciesStateHoverSelection = null;
       const request = ++speciesStateHoverRequest;
       const result = await speciesStateOverlayRaster(source, u, 1 - v).catch(() => null);
       if (request !== speciesStateHoverRequest || !result) return;
+      speciesStateHoverSelection = { source, u, v: 1 - v, name: result.name, code: result.code, point: result.point };
       speciesStateOverlayTexture?.dispose?.();
       speciesStateOverlayTexture = new THREE.CanvasTexture(result.canvas);
       speciesStateOverlayTexture.colorSpace = THREE.SRGBColorSpace;
@@ -6499,12 +6508,15 @@ const VAULT_GROWTH_STORAGE_KEY = "space-ar-vault-growth-v1";
       speciesRegionGroup = null; speciesRegionControls = []; speciesRegionResult = null; layoutSpatialWindows();
     }
     async function openSpeciesRegionAtHotspot(hotspot, uv) {
-      if (speciesRegionGroup) { setXrMessage("Close the current regional window before selecting another region."); return; }
+      if (speciesRegionGroup) disposeSpeciesRegion();
       const request = ++speciesRegionRequest;
       const u = THREE.MathUtils.clamp((uv.x - hotspot.x1) / Math.max(.0001, hotspot.x2 - hotspot.x1), 0, 1);
       const v = THREE.MathUtils.clamp(1 - (uv.y - hotspot.y1) / Math.max(.0001, hotspot.y2 - hotspot.y1), 0, 1);
+      const selection = speciesStateHoverSelection?.source === hotspot.source ? speciesStateHoverSelection : null;
+      const selectedU = selection?.u ?? u;
+      const selectedV = selection?.v ?? v;
       setXrMessage("Marker selected. Loading regional photos and sounds…");
-      const result = await speciesRegionPanelRaster(hotspot.source, u, v);
+      const result = await speciesRegionPanelRaster(hotspot.source, selectedU, selectedV, selection);
       if (request !== speciesRegionRequest) return;
       disposeSpeciesRegion(); speciesRegionResult = result;
       const group = new THREE.Group(), texture = new THREE.CanvasTexture(result.canvas); texture.colorSpace=THREE.SRGBColorSpace;texture.minFilter=THREE.LinearFilter;texture.generateMipmaps=false;
