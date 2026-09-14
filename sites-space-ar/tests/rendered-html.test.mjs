@@ -922,7 +922,7 @@ test("renders Audio Player fenced blocks as selectable AR audio cards", async ()
 
 test("renders GBIF species maps as cached XR-safe rasters", async () => {
   const html = await readFile(xrUrl, "utf8");
-  assert.match(html, /species-map\.js\?v=11/);
+  assert.match(html, /species-map\.js\?v=12/);
   assert.match(html, /data-note-species-map/);
   assert.match(html, /await renderSpeciesMapBlocks\(noteContent\)/);
   assert.match(html, /request !== speciesRegionRequest/);
@@ -938,4 +938,7 @@ test("routes MIDI and species-map hotspots without duplicate regional windows", 
   assert.match(html, /\.note-chronos, \.note-species-map, \.note-audio-card/);
   assert.match(html, /species-map-region:/);
   assert.match(html, /markSpeciesRegionControl\(options\.control, uv\)/);
+  assert.match(html, /speciesStateOverlayRaster/);
+  assert.match(html, /updateSpeciesStateHighlight/);
+  assert.match(html, /if \(isNetworkSource\(source\)\) activeNoteAudio\.crossOrigin = "anonymous"/);
 });

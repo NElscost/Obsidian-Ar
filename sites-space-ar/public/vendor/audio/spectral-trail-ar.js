@@ -27,6 +27,9 @@ export function createSpectralTrailExtension(THREE, api) {
   let pcaNetwork = null;
   let pcaTimes = null;
   let dashboardGroup = null;
+  let dashboardPanels = [];
+  let dashboardTimes = [];
+  let dashboardLastTime = -1;
   let filterGroup = null;
   let filterControls = [];
   let filterInput = "";
@@ -502,6 +505,25 @@ export function createSpectralTrailExtension(THREE, api) {
     return network;
   }
 
+  function textPlane(label,width=.105,height=.018) {
+    const canvas=document.createElement("canvas");canvas.width=512;canvas.height=72;
+    const context=canvas.getContext("2d");context.clearRect(0,0,512,72);context.fillStyle="rgba(3,8,16,.72)";context.fillRect(0,0,512,72);
+    context.fillStyle="#dce9f8";context.font="700 28px Arial Narrow, sans-serif";context.textAlign="center";context.textBaseline="middle";context.fillText(label,256,37,490);
+    const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;texture.minFilter=THREE.LinearFilter;texture.generateMipmaps=false;
+    const mesh=new THREE.Mesh(new THREE.PlaneGeometry(width,height),new THREE.MeshBasicMaterial({map:texture,transparent:true,depthTest:false,depthWrite:false,toneMapped:false}));mesh.renderOrder=9;mesh.raycast=()=>{};return mesh;
+  }
+  function createReferenceGrid() {
+    const grid=new THREE.Group(),positions=[],x=WIDTH*.43,y=HEIGHT*.43,z=.22,steps=8;
+    const line=(x1,y1,z1,x2,y2,z2)=>positions.push(x1,y1,z1,x2,y2,z2);
+    for(let i=0;i<=steps;i++){const q=i/steps;line(-x,-y+q*y*2,-z,x,-y+q*y*2,-z);line(-x+q*x*2,-y,-z,-x+q*x*2,y,-z);line(-x,-y,-z+q*z*2,x,-y,-z+q*z*2);line(-x+q*x*2,-y,-z,-x+q*x*2,-y,z)}
+    const geometry=new THREE.BufferGeometry();geometry.setAttribute("position",new THREE.Float32BufferAttribute(positions,3));
+    const lines=new THREE.LineSegments(geometry,new THREE.LineBasicMaterial({color:0x6faee8,transparent:true,opacity:.28,depthTest:true,depthWrite:false,toneMapped:false}));lines.renderOrder=5;lines.raycast=()=>{};grid.add(lines);
+    const xLabel=textPlane(ui("TIMBRE PC1 · MFCC","TIMBRE PC1 · MFCC"));xLabel.position.set(x,-y-.014,-z);
+    const yLabel=textPlane(ui("TIMBRE PC2 · MFCC","TIMBRE PC2 · MFCC"));yLabel.position.set(-x-.018,y,-z);yLabel.rotation.z=Math.PI/2;
+    const zLabel=textPlane(ui("DINÂMICA PC3","DYNAMICS PC3"));zLabel.position.set(-x-.012,-y,z);
+    grid.add(xLabel,yLabel,zLabel);return grid;
+  }
+
   function applyMode() {
     if (!state) return;
     const pca = Boolean(analysisData?.points?.length);
@@ -554,8 +576,29 @@ export function createSpectralTrailExtension(THREE, api) {
 
 
   function ui(pt,en){return String(document.documentElement.lang||"en").toLowerCase().startsWith("pt")?pt:en;}
-  function disposeDashboard(){if(!dashboardGroup)return;dashboardGroup.removeFromParent();dashboardGroup.traverse(o=>{o.geometry?.dispose?.();o.material?.map?.dispose?.();o.material?.dispose?.();});dashboardGroup=null;}
-  function createDashboard(){disposeDashboard();if(!group||!analysisData?.points?.length)return;dashboardGroup=new THREE.Group();dashboardGroup.name="spectral-analysis-arc";const specs=[[ui("DESCRITORES Hz","Hz DESCRIPTORS"),"hz"],[ui("DINÂMICA dB","dB DYNAMICS"),"amp"],[ui("MAPA TONAL","TONE MAP"),"tone"],[ui("JANELA TEMPORAL","TIME WINDOW"),"time"],[ui("PROJEÇÃO CEPSTRAL","CEPSTRAL PROJECTION"),"cep"],[ui("PERFIL CROMÁTICO","CHROMA PROFILE"),"chroma"]],sample=analysisData.points.filter((_,i)=>i%Math.max(1,Math.ceil(analysisData.points.length/220))===0);specs.forEach(([title,kind],i)=>{const canvas=document.createElement("canvas");canvas.width=420;canvas.height=190;const c=canvas.getContext("2d");c.clearRect(0,0,420,190);c.fillStyle="rgba(3,8,16,.76)";c.strokeStyle="rgba(125,166,214,.55)";c.lineWidth=2;c.beginPath();c.roundRect(2,2,416,186,14);c.fill();c.stroke();c.fillStyle="#b9c9dc";c.font="italic 700 17px Arial";c.fillText(title,16,25);for(let n=0;n<sample.length;n++){const q=sample[n],hz=Math.max(20,Number(q.frequencyHz)||20),amp=(Number(q.amplitude)||0)/255,x=n/Math.max(1,sample.length-1)*390+15,y=165-amp*120,ratio=frequencyRatioForHz(hz),color=new THREE.Color();setFrequencyColor(color,ratio);c.fillStyle="#"+color.getHexString();if(kind==="tone")c.fillRect(15+ratio*390,y,3,3);else if(kind==="cep"){const xyz=q.xyz||[0,0,0];c.fillRect(210+(Number(xyz[0])||0)/32767*175,95-(Number(xyz[1])||0)/32767*65,3,3);}else if(kind==="chroma")c.fillRect(15+(((Math.round(12*Math.log2(hz/440))+69)%12+12)%12)/12*390,y,3,165-y);else{const yy=kind==="hz"||kind==="time"?165-ratio*120:y;c.fillRect(x,yy,2,kind==="amp"?165-yy:2);}}const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;texture.minFilter=THREE.LinearFilter;texture.generateMipmaps=false;const panel=new THREE.Mesh(new THREE.PlaneGeometry(.145,.066),new THREE.MeshBasicMaterial({map:texture,transparent:true,depthTest:true,depthWrite:false,toneMapped:false}));if(i<3){const x=(i-1)*.155;panel.position.set(x,HEIGHT/2+.055,-Math.abs(x)*.055);panel.rotation.y=-x*1.25;}else{const row=i-3;panel.position.set(-WIDTH/2-.085,.085-row*.078,-.035-row*.012);panel.rotation.y=.3;}panel.renderOrder=8;panel.raycast=()=>{};dashboardGroup.add(panel);});group.add(dashboardGroup);}
+  function disposeDashboard(){if(!dashboardGroup)return;api.unregister(dashboardGroup,false);dashboardGroup.removeFromParent();dashboardGroup.traverse(object=>{object.geometry?.dispose?.();object.material?.map?.dispose?.();object.material?.dispose?.();});dashboardGroup=null;dashboardPanels=[];dashboardLastTime=-1;}
+  function drawDashboardPanel(panel,playbackTime){
+    const {canvas,context,kind,title}=panel,w=canvas.width,h=canvas.height,left=42,right=w-14,top=35,bottom=h-28;
+    context.clearRect(0,0,w,h);context.fillStyle="rgba(3,8,16,.94)";context.fillRect(0,0,w,h);context.strokeStyle="rgba(125,166,214,.45)";context.lineWidth=2;context.strokeRect(1,1,w-2,h-2);
+    context.fillStyle="#c8d7e9";context.font="italic 700 17px Arial";context.fillText(title,14,22);context.fillStyle="#8295ab";context.font="12px Arial";context.textAlign="right";context.fillText(playbackTime.toFixed(2)+" s",right,22);context.textAlign="left";
+    context.strokeStyle="rgba(100,140,180,.2)";context.lineWidth=1;for(let i=0;i<=4;i++){const y=top+(bottom-top)*i/4;context.beginPath();context.moveTo(left,y);context.lineTo(right,y);context.stroke()}for(let i=0;i<=5;i++){const x=left+(right-left)*i/5;context.beginPath();context.moveTo(x,top);context.lineTo(x,bottom);context.stroke()}
+    context.fillStyle="#93a6bb";context.font="11px Arial";context.fillText(kind==="amp"?"dB":kind==="chroma"?"pitch class":kind==="cep"?"MFCC PC2":"Hz",5,top+4);context.fillText(ui("tempo","time"),right-28,h-8);
+    const points=analysisData?.points||[],startTime=Math.max(0,playbackTime-LIFETIME_SECONDS),start=lowerBound(dashboardTimes,startTime),end=lowerBound(dashboardTimes,playbackTime+.001),count=Math.max(0,end-start),stride=Math.max(1,Math.ceil(count/100)),color=new THREE.Color();
+    for(let i=start;i<end;i+=stride){const point=points[i],time=(Number(point.timeMs)||0)/1000,hz=Math.max(20,Number(point.frequencyHz)||20);if(hz<=minHz)continue;const amp=(Number(point.amplitude)||0)/255,ratio=frequencyRatioForHz(hz),progress=(time-startTime)/LIFETIME_SECONDS;let px=left+THREE.MathUtils.clamp(progress,0,1)*(right-left),py=bottom-ratio*(bottom-top);
+      if(kind==="amp")py=bottom-amp*(bottom-top);else if(kind==="tone"){px=left+ratio*(right-left);py=bottom-amp*(bottom-top)}else if(kind==="cep"){const xyz=point.xyz||[0,0,0];px=left+(THREE.MathUtils.clamp((Number(xyz[0])||0)/32767,-1,1)*.5+.5)*(right-left);py=bottom-(THREE.MathUtils.clamp((Number(xyz[1])||0)/32767,-1,1)*.5+.5)*(bottom-top)}else if(kind==="chroma"){const pitch=((Math.round(12*Math.log2(hz/440))+69)%12+12)%12;py=bottom-pitch/11*(bottom-top)}
+      setFrequencyColor(color,ratio);context.fillStyle="#"+color.getHexString();context.globalAlpha=.3+.7*amp;context.fillRect(px-1.5,py-1.5,3,3);
+    }
+    context.globalAlpha=1;context.strokeStyle="#f5f8ff";context.beginPath();context.moveTo(right-2,top);context.lineTo(right-2,bottom);context.stroke();panel.texture.needsUpdate=true;
+  }
+  function updateDashboard(playbackTime,force=false){if(!dashboardGroup||!dashboardPanels.length)return;if(!force&&Math.abs(playbackTime-dashboardLastTime)<.12)return;dashboardLastTime=playbackTime;for(const panel of dashboardPanels)drawDashboardPanel(panel,playbackTime);}
+  function createDashboard(){
+    disposeDashboard();if(!analysisData?.points?.length)return;dashboardTimes=analysisData.points.map(point=>(Number(point.timeMs)||0)/1000);
+    const width=.43,height=.30;dashboardGroup=new THREE.Group();dashboardGroup.name="spectral-analysis-dashboard-window";
+    const surface=new THREE.Mesh(api.geometry?.(width,height,.018,24)||new THREE.PlaneGeometry(width,height),new THREE.MeshBasicMaterial({color:0x07111d,transparent:true,opacity:.9,depthTest:true,depthWrite:true,toneMapped:false}));api.round?.(surface);surface.raycast=()=>{};dashboardGroup.add(surface);
+    const specs=[[ui("DESCRITORES Hz","Hz DESCRIPTORS"),"hz"],[ui("DINÂMICA dB","dB DYNAMICS"),"amp"],[ui("MAPA TONAL","TONE MAP"),"tone"],[ui("JANELA TEMPORAL","TIME WINDOW"),"time"],[ui("PROJEÇÃO CEPSTRAL","CEPSTRAL PROJECTION"),"cep"],[ui("PERFIL CROMÁTICO","CHROMA PROFILE"),"chroma"]];
+    specs.forEach(([title,kind],index)=>{const canvas=document.createElement("canvas");canvas.width=360;canvas.height=150;const context=canvas.getContext("2d",{alpha:true}),texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;texture.minFilter=THREE.LinearFilter;texture.generateMipmaps=false;const panel={title,kind,canvas,context,texture};dashboardPanels.push(panel);const mesh=new THREE.Mesh(new THREE.PlaneGeometry(.198,.082),new THREE.MeshBasicMaterial({map:texture,transparent:true,depthTest:false,depthWrite:false,toneMapped:false}));mesh.position.set(index%2?.105:-.105,.093-Math.floor(index/2)*.094,.012);mesh.renderOrder=1010;mesh.raycast=()=>{};dashboardGroup.add(mesh)});
+    api.register(dashboardGroup,width);updateDashboard(Math.max(0,Number(api.currentTime?.())||0),true);api.layout();
+  }
 
   function dispose() {
     if (anchor?.delete) anchor.delete();
@@ -601,6 +644,7 @@ export function createSpectralTrailExtension(THREE, api) {
     content.add(createPeakHighlights());
     content.add(createFrequencyLabels());
     content.add(createNetwork());
+    content.add(createReferenceGrid());
     createPcaVisualization();
     // Virtual hands write depth at renderOrder 4. Draw the transparent graph
     // afterwards so its points, links and labels are correctly hidden by hands.
@@ -777,7 +821,7 @@ export function createSpectralTrailExtension(THREE, api) {
     const playbackTime=Math.max(0,Number(api.currentTime?.())||0);
     if(pcaPoints)pcaPoints.material.uniforms.playback.value=playbackTime;
     if(pcaNetwork)pcaNetwork.material.uniforms.playback.value=playbackTime;
-    if(analysisData?.points?.length){updatePcaWindow(playbackTime);updatePcaPresentation(playbackTime);}
+    if(analysisData?.points?.length){updatePcaWindow(playbackTime);updatePcaPresentation(playbackTime);updateDashboard(playbackTime);}
     if (playing && !analysisData?.points?.length) sample(visualTime);
     if (anchor && frame && referenceSpace) {
       const pose = frame.getPose(anchor.anchorSpace, referenceSpace);

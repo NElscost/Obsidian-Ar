@@ -24,6 +24,13 @@ test("integrates an anchored, scalable spectral trail with the media analyser", 
   assert.match(spectral, /hz <= minHz/);
   assert.match(spectral, /binHz <= minHz/);
   assert.match(html, /mediaKey\(\)/);
+  assert.match(spectral, /spectral-analysis-dashboard-window/);
+  assert.match(spectral, /updateDashboard\(playbackTime\)/);
+  assert.match(spectral, /Math\.abs\(playbackTime-dashboardLastTime\)<\.12/);
+  assert.match(spectral, /createReferenceGrid/);
+  assert.match(spectral, /TIMBRE PC1/);
+  assert.match(spectral, /DINÂMICA PC3/);
+  assert.match(spectral, /api\.register\(dashboardGroup,width\)/);
 });
 
 test("offers optional automatic rotation for every requested 3D viewer", async () => {
