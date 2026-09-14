@@ -946,3 +946,11 @@ test("routes MIDI and species-map hotspots without duplicate regional windows", 
   assert.match(html, /audioWaveformGroup\.removeFromParent\(\)/);
   assert.match(html, /if \(isNetworkSource\(source\)\) activeNoteAudio\.crossOrigin = "anonymous"/);
 });
+
+
+test("exibe faixa vocal estimada no rastro espectral AR", async () => {
+  const spectral = await readFile(new URL("../public/vendor/audio/spectral-trail-ar.js", import.meta.url), "utf8");
+  assert.match(spectral, /analysisFrequencyRange/);
+  assert.match(spectral, /Faixa vocal estimada/);
+  assert.match(spectral, /hybrid64-robust-pca3/);
+});

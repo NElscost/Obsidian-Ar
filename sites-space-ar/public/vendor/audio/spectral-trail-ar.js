@@ -554,7 +554,8 @@ export function createSpectralTrailExtension(THREE, api) {
     applyMode();
   }
 
-  function setAnalysis(data) { analysisData=String(data?.method||'').startsWith('mfcc40-pca3')&&Array.isArray(data.points)?data:null; createPcaVisualization(); createDashboard(); }
+  function analysisFrequencyRange(data){const source=(data?.points||[]).map(point=>({hz:Number(point.frequencyHz),weight:Math.max(0,Number(point.amplitude)||0)})).filter(point=>Number.isFinite(point.hz)&&point.hz>=20&&point.weight>=18).sort((x,y)=>x.hz-y.hz);if(!source.length)return null;const total=source.reduce((sum,point)=>sum+point.weight,0),at=ratio=>{let sum=0;for(const point of source){sum+=point.weight;if(sum>=total*ratio)return point.hz;}return source.at(-1).hz;};return{minHz:Math.round(at(.03)),maxHz:Math.round(at(.97))};}
+  function setAnalysis(data) { analysisData=/^(?:hybrid64-robust-pca3|mfcc40-pca3)/.test(String(data?.method||''))&&Array.isArray(data.points)?data:null; const range=analysisFrequencyRange(analysisData);if(range)api.message(ui("Faixa vocal estimada: "+range.minHz.toLocaleString()+"–"+range.maxHz.toLocaleString()+" Hz","Estimated vocal range: "+range.minHz.toLocaleString()+"–"+range.maxHz.toLocaleString()+" Hz"));createPcaVisualization();createDashboard(); }
 
   function lowerBound(values,target){let lo=0,hi=values?.length||0;while(lo<hi){const mid=(lo+hi)>>>1;if(values[mid]<target)lo=mid+1;else hi=mid;}return lo;}
 
